@@ -1,0 +1,56 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP043 NFR and integration coverage (spec.json#SP043 non_functional_requirements[0..4]; NFR4 and
+# acceptance[7] belong to the EG-6 gated v2 mutation routes), boundary and error cases and the
+# golden re-run of the Room.* / Subsection.* fixtures through the staged scripts.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234}
+
+test sp043-nfr0 {NFR0: addChannel with an unknown channel id answers true whenever the room exists - no validation in Tcl} -body {
+  result [call Room.addChannel [list {*}$S id 1201 channelId 424242] -sessions {{AbCdEf1234 8 1 Admin}} -rega {{*.Add(channelId)* true}}]
+} -result true
+
+test sp043-nfr1 {NFR1: channels of not completely configured devices are part of channelIds (no filtering in Tcl)} -body {
+  set j [result [call Room.get [list {*}$S id 1201] -sessions $GUEST -rega {{{*EnumInfo()*} {ID 1201 NAME R DESCRIPTION d CHANNELS {1 2 3}}}}]]
+  llength [regexp -all -inline {"[0-9]+"} [lindex [split $j \[] end]]
+} -result 3
+
+test sp043-nfr3 {NFR3 (frozen v1): braces in a room name break the Tcl list protocol - internal error 200} -body {
+  lindex [err [call Room.getAll $S -sessions $GUEST -rega [list [list {*ID_ROOMS*EnumUsedIDs()*} [list "ID 1 NAME \{x DESCRIPTION d CHANNELS {}"]]]]] 0
+} -result 200
+
+test sp043-ord {listProgramIds keeps the order of first occurrence (not sorted)} -body {
+  result [call Room.listProgramIds [list {*}$S id 1201] -sessions $GUEST -rega {{*ChnEnumDPUsagePrograms* {{9} {3} {9} {5} {3}}}}]
+} -result {["9","3","5"]}
+
+test sp043-err1 {error case: an id with quotes is escaped before it reaches the ReGa script; a control character is error 403 centrally} -body {
+  set r [call Room.get [list _session_id_ AbCdEf1234 id "1\"; Write(\"x\");"] -sessions $GUEST]
+  set s [lindex [dict get $r rega_calls] end]
+  set body "\{\"method\":\"Room.get\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"id\":\"1\\u0007\"\},\"id\":1\}"
+  set c [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::GUEST]]]
+  list [string match {*var id = "1\\"; Write(\\"x\\");";*} $s] [err $c]
+} -result [list 1 {403 {invalid argument (id)}}]
+
+test sp043-golden {golden re-run: the Room.* / Subsection.* fixtures replay byte-identical through the staged scripts (listProgramIds excluded: v1 failed there)} -body {
+  golden::compare_all -candidate only:rega-model -only {Room.listAll Room.getAll Room.get Room.addChannel Room.removeChannel Subsection.listAll Subsection.getAll Subsection.get Subsection.addChannel Subsection.removeChannel}
+} -result {}
+
+cleanupTests

@@ -1,0 +1,85 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP038 NFR and integration coverage (spec.json#SP038 non_functional_requirements[0..5]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set FWLIB {
+  proc Firewall_setLoggingEnabled {b} {}
+  proc Firewall_loadConfiguration {} {}
+  proc Firewall_set_service_access {s m} {}
+  proc Firewall_saveConfiguration {} {}
+  proc Firewall_configureFirewall {} {}
+}
+set SECLIB {
+  proc SEC_setAuthEnabled {b} { return 1 }
+  proc SEC_setsecuritylevel {l} { return 1 }
+}
+
+test sp038-nfr0 {NFR0/5: getSNMPEnabled is 1 for an existing but empty snmpd-ccu3.conf (the emptiness test compares the literal word 'data'); v1 kept} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/snmp/snmpd-ccu3.conf ""
+  set r [result [call CCU.getSNMPEnabled $S -fs $fs]]
+  mock::fs::destroy $fs
+  set r
+} -result 1
+
+test sp038-nfr1 {NFR1: enabled is compared as the exact strings 'true'/'false' - 1, TRUE and 0 are not accepted (false)} -body {
+  set out {}
+  foreach v {1 0 TRUE False} {
+    lappend out [result [call CCU.setAuthEnabled [list _session_id_ AbCdEf1234 enabled $v] -files [list lib/libsecuritylevel.tcl $SECLIB]]]
+    lappend out [result [call CCU.setHttpsRedirectEnabled [list _session_id_ AbCdEf1234 enabled $v]]]
+  }
+  lsort -unique $out
+} -result false
+
+test sp038-nfr2 {NFR2: setSNMPEnabled with a non-boolean 'enabled' is the v1 internal error 200} -body {
+  lindex [err [call CCU.setSNMPEnabled [concat $S {enabled maybe usr u pass p}] -files [list lib/libfirewall.tcl $FWLIB]]] 0
+} -result 200
+
+test sp038-nfr3 {NFR3: usr and pass with shell characters are exec arguments after '--' (no shell)} -body {
+  set r [call CCU.setSNMPEnabled [list _session_id_ AbCdEf1234 enabled true usr {u;touch x} pass {`id` $(id) | x}] -files [list lib/libfirewall.tcl $FWLIB]]
+  set cmd [lindex [dict get $r exec_calls] 0]
+  list [lindex $cmd 0] [lindex $cmd 1] [lindex $cmd 2] [llength $cmd]
+} -result [list /bin/setSNMPUser.sh {u;touch x} {`id` $(id) | x} 4]
+
+test sp038-nfr4 {NFR4: a legacyName with '/' or a space does not delete the legacy file} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs "etc/config/userprofiles/userAckInstallWizard_a b" x
+  call CCU.setUserAckInstallWizard [list _session_id_ AbCdEf1234 legacyName "a b"] -sessions $GUEST -fs $fs
+  set kept [file exists [file join $fs etc config userprofiles "userAckInstallWizard_a b"]]
+  mock::fs::destroy $fs
+  set kept
+} -result 1
+
+test sp038-err1 {setSecurityLevel answers exactly one document on every path (v1 sent two on success)} -body {
+  set out {}
+  foreach lvl {LOW HIGH bogus} {
+    set r [call CCU.setSecurityLevel [list _session_id_ AbCdEf1234 level $lvl] -files [list lib/libsecuritylevel.tcl $SECLIB]]
+    lappend out [regexp -all {"version": "1.1"} [dict get $r stdout]]
+  }
+  set out
+} -result {1 1 1}
+
+test sp038-golden {golden re-run: the security methods replay byte-identical (setSecurityLevel excluded: v1 answered two documents on success)} -body {
+  golden::compare_all -candidate only:system-admin -only {CCU.getSecurityLevel CCU.setAuthEnabled CCU.getAuthEnabled CCU.getHttpsRedirectEnabled CCU.setHttpsRedirectEnabled CCU.getSNMPEnabled CCU.setSNMPEnabled CCU.setSecurityHint CCU.setFirewallConfigured CCU.setUserAckInstallWizard}
+} -result {}
+
+cleanupTests

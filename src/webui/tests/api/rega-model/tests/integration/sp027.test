@@ -1,0 +1,70 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP027 NFR and integration coverage (spec.json#SP027 non_functional_requirements[0..7]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 id 1234}
+set LR {{*ChnDPUsageCount* false} {*ChnLinkCount* true} {*Write(dom.GetObject(device.Interface()))* BidCos-RF} {*Write(device.Address())* NEQ1} {*channel.Address()#* {NEQ1:0 NEQ1:1}}}
+
+test sp027-nfr0 {NFR0: only the four interface names are known; HmIP-Wired resolves through the interface list} -body {
+  set xml "<interfaces>\n<ipc><name>HmIP-Wired</name><url>http://127.0.0.1:2011</url><info>w</info></ipc>\n</interfaces>"
+  set r [call Device.hasLinksOrPrograms $S -interfaces 0 -files [list etc/config/InterfacesList.xml $xml] \
+    -rega {{*ChnDPUsageCount* false} {*ChnLinkCount* true} {*Write(dom.GetObject(device.Interface()))* HmIP-Wired} {*Write(device.Address())* NEQ1} {*channel.Address()#* {NEQ1:0 NEQ1:1}}} \
+    -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER NEQ2:1}}} {getDeviceDescription {DIRECTION 1}}}]
+  list [result $r] [lindex [lindex [dict get $r xmlrpc_calls] 0] 0]
+} -result {true http://127.0.0.1:2011}
+
+test sp027-nfr1 {NFR1: a channel with a direction other than 1/2 ends the link loop - the link is ignored} -body {
+  result [call Device.hasLinksOrPrograms $S -rega $LR -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER NEQ2:1}}} {getDeviceDescription {DIRECTION 0}}}]
+} -result false
+
+test sp027-nfr2 {NFR2: getDeviceDescription is requested once per link inside the loop} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega $LR -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER NEQ1:2} {SENDER NEQ1:1 RECEIVER NEQ1:3}}} {getDeviceDescription {DIRECTION 1}}}]
+  set n 0
+  foreach c [dict get $r xmlrpc_calls] { if {[lindex $c 1] eq "getDeviceDescription"} { incr n } }
+  list [result $r] $n
+} -result {false 2}
+
+test sp027-nfr3 {NFR3: unknown device - Device.hasPrograms answers false, the failing ReGa script of listProgramIds yields []} -body {
+  list [result [call Device.hasPrograms $S]] [result [call Device.listProgramIds $S -sessions $GUEST -regafail {*ChnEnumDPUsagePrograms*}]]
+} -result {false {[]}}
+
+test sp027-nfr4 {NFR4: Channel.hasProgramIds finds no channel - result null} -body {
+  result [call Channel.hasProgramIds $S -sessions $GUEST]
+} -result null
+
+test sp027-nfr5 {NFR5: a hidden channel is excluded by the script, "" is returned} -body {
+  result [call Channel.getName {_session_id_ AbCdEf1234 address NEQ1:9}]
+} -result {""}
+
+test sp027-nfr6 {NFR6: Channel.getValue / getChannelType of an unknown id give "" without an error} -body {
+  list [result [call Channel.getValue $S]] [result [call Channel.getChannelType $S]]
+} -result {{""} {""}}
+
+test sp027-nfr7 {NFR7: the staged Device.hasPrograms keeps the 'break' after hasPrograms = "true"} -body {
+  set fd [open [file join $gen rega-model methods device hasprograms.tcl] r]; set c [read $fd]; close $fd
+  regexp {hasPrograms = "true"; break;} $c
+} -result 1
+
+test sp027-golden {golden re-run: the ten usage/fact methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:rega-model -only {Device.hasPrograms Device.hasLinksOrPrograms Device.listProgramIds Channel.hasProgramIds Channel.listProgramIds Channel.getName Channel.getValue Channel.getChannelType}
+} -result {}
+
+cleanupTests

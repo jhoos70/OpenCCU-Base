@@ -1,0 +1,55 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP028 NFR and integration coverage (spec.json#SP028 non_functional_requirements[0..4]),
+# boundary and error cases, golden re-run (the seeded fixtures carry a well-formed testId).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 id 1234}
+
+test sp028-nfr0 {NFR0: the comparison is done by ReGa; a testId of the right shape but an impossible date is passed through (only the shape is validated)} -body {
+  result [call Device.pollComTest [concat $S [list testId "9999-99-99 99:99:99"]] -sessions $GUEST -rega {{*LastTestCompletedTime()* false}}]
+} -result false
+
+test sp028-nfr1 {NFR1: the test id is wall-clock time with one-second resolution (format YYYY-MM-DD HH:MM:SS)} -body {
+  set r [call Device.startComTest $S -sessions $GUEST -rega {{*system.Date* {2026-10-13 12:00:00}}}]
+  list [regexp {^"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"$} [result $r]] [string match {*system.Date("%Y-%m-%d %H:%M:%S")*} [lindex [dict get $r rega_calls] end]]
+} -result {1 1}
+
+test sp028-nfr2 {NFR2: the id is written before the test is invoked - it is returned regardless of the outcome} -body {
+  set s [lindex [dict get [call Channel.startComTest $S -sessions $GUEST -rega {{*ChnStartComTest* x}}] rega_calls] end]
+  expr {[string first {Write(system.Date} $s] < [string first {ChnStartComTest()} $s]}
+} -result 1
+
+test sp028-nfr3 {NFR3: Device.startComTest takes a device id (not a channel id)} -body {
+  set s [lindex [dict get [call Device.startComTest $S -sessions $GUEST -rega {{*DevStartComTest* x}}] rega_calls] end]
+  list [string match *DevStartComTest* $s] [string match *ChnStartComTest* $s]
+} -result {1 0}
+
+test sp028-nfr4 {NFR4: comtest methods are reachable at GUEST level} -body {
+  set out {}
+  foreach m {Device.startComTest Channel.startComTest} { lappend out [dict get [golden::registry] $m LEVEL] }
+  foreach m {Device.pollComTest Channel.pollComTest} { lappend out [dict get [golden::registry] $m LEVEL] }
+  lsort -unique $out
+} -result GUEST
+
+test sp028-golden {golden re-run: the four comtest methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:rega-model -only {Device.startComTest Device.pollComTest Channel.startComTest Channel.pollComTest}
+} -result {}
+
+cleanupTests

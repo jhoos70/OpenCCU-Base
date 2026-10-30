@@ -1,0 +1,71 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP034 acceptance[0], BD-06 (T253v): the audit helper admin_audit exists exactly once, in the
+# shared library eq3/admin_audit.tcl. It writes one syslog line
+#   cid=<16 hex> method=<name> uid=<uid|-> action=<text>
+# through api_syslog (fallback: logger -t webui-api -p daemon.notice), never redefines an
+# existing proc, and no system-admin script carries its own copy.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set LIB [file join $gen security-session eq3 admin_audit.tcl]
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/syslog.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/hmscript.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher,security-session {*}$args] }
+proc count {text needle} { return [llength [regexp -all -inline -- $needle $text]] }
+proc slurp {f} { set fd [open $f r]; fconfigure $fd -encoding iso8859-1; set c [read $fd]; close $fd; return $c }
+
+test adminaudit-1 {the shared library exists, is complete Tcl and defines admin_audit exactly once} -body {
+  if {![file exists $LIB]} { error "missing $LIB" }
+  set c [slurp $LIB]
+  list [info complete $c] [count $c {proc admin_audit }]
+} -result {1 1}
+
+test adminaudit-2 {admin_audit writes one syslog line cid/method/uid/action through api_syslog} -body {
+  set r [drv {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/admin_audit.tcl]
+    set JSONRPC(METHOD) CCU.restartReGa
+    set args(_session_id_) AbCdEf1234
+    admin_audit "restart ReGaHss"
+  } -rega {{*GetSessionVarStr* 1000}}]
+  set lines [dict get $r syslog]
+  list [llength $lines] [lrange [lindex $lines 0] 0 3] \
+    [regexp {^cid=[0-9a-f]{16} method=CCU\.restartReGa uid=1000 action=restart ReGaHss$} [lindex [lindex $lines 0] end]]
+} -result {1 {-t webui-api -p daemon.notice} 1}
+
+test adminaudit-3 {the uid is - when the session variable cannot be read} -body {
+  set r [drv {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/admin_audit.tcl]
+    set JSONRPC(METHOD) SafeMode.enter
+    set args(_session_id_) AbCdEf1234
+    admin_audit "enter safe mode"
+  } -regafail {{*GetSessionVarStr*}}]
+  regexp {method=SafeMode\.enter uid=- action=enter safe mode$} [lindex [lindex [dict get $r syslog] end] end]
+} -result 1
+
+test adminaudit-4 {an existing admin_audit proc is not redefined by the library} -body {
+  set r [drv {
+    proc admin_audit { action } { puts "custom:$action" }
+    source [file join $env(DOCUMENT_ROOT) api/eq3/admin_audit.tcl]
+    admin_audit x
+  }]
+  list [string trim [dict get $r stdout]] [llength [dict get $r syslog]]
+} -result {custom:x 0}
+
+test adminaudit-5 {no staged system-admin script defines its own admin_audit} -body {
+  set bad {}
+  foreach f [glob -directory [file join $gen system-admin methods] -types f */*.tcl] {
+    if {[string first "proc admin_audit" [slurp $f]] >= 0} { lappend bad [file join [file tail [file dirname $f]] [file tail $f]] }
+  }
+  lsort $bad
+} -result {}
+
+cleanupTests

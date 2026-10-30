@@ -1,0 +1,119 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP007 - the shared session library (/www/tcl/eq3/session.tcl, rega.tcl and eq3/checksid.hms):
+# contracts/behavioral-contracts.json#SP007. The sid-shape validator ^@?[A-Za-z0-9]{10}@?$ is gated
+# by EG-8 (sp007-eq3-sidshape.test) and not part of this test: the v1 shape (12 characters, '@'
+# wrapped) is kept, plus the fail-closed and escaping rules.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source /www/tcl/eq3/rega.tcl
+  source /www/tcl/eq3/session.tcl
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:security-session {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+set SESS {{@AbCdEf1234@ 8 1000 Admin}}
+set OK302 {{{HTTP/1.1 302 Found} {Location http://127.0.0.1/index.htm?sid=@AbCdEf1234@}}}
+proc clears {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *system.ClearSessionID* $c]} { incr n } }
+  return $n
+}
+
+test sp007-0 {the staged session library files exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {session.tcl rega.tcl checksid.hms} {
+    set p [file join $gen security-session eq3 $f]
+    if {![file exists $p]} { lappend bad $f }
+  }
+  foreach f {session.tcl rega.tcl} {
+    set p [file join $gen security-session eq3 $f]
+    if {[file exists $p]} { set fd [open $p r]; set c [read $fd]; close $fd; if {![info complete $c]} { lappend bad $f } }
+  }
+  set bad
+} -result {}
+
+test sp007-1 {session_login: tbUsername/tbPassword are posted to login.htm, the inner id of 'sid=@...@' is returned} -body {
+  set r [drv { puts [session_login Admin secret] } -http $OK302]
+  list [lines $r] [dict get $r http_calls]
+} -result [list AbCdEf1234 [list {http://127.0.0.1/login.htm -query tbUsername=Admin&tbPassword=secret}]]
+
+test sp007-2 {session_login throws 'create' for a 503 and 'credentials' without a sid; a connection error is propagated} -body {
+  set r [drv {
+    puts [catch {session_login a b} m1]:$m1
+    puts [catch {session_login a b} m2]:$m2
+  } -http {{{HTTP/1.1 503 X} {}} {{HTTP/1.1 200 OK} {}}}]
+  set r2 [drv { puts [catch {session_login a b} m]:[string match *mock* $m] }]
+  list [lines $r] [lines $r2]
+} -result {{1:create 1:credentials} 1:1}
+
+test sp007-3 {session_isValid for a '@'-wrapped 12 character id asks ReGa (var _session_id_ = "<sid>") and returns the literal true/false} -body {
+  set r [drv {
+    puts [session_isValid @AbCdEf1234@]
+    puts [session_isValid @Unknown0000@]
+  } -sessions $SESS]
+  set script [lindex [dict get $r rega_calls] 0]
+  list [lines $r] [expr {[string first {var _session_id_ = "@AbCdEf1234@";} $script] == 0}]
+} -result {{true false} 1}
+
+test sp007-4 {session_isValid for an id failing the shape test is 'false' without contacting ReGa} -body {
+  set r [drv {
+    foreach sid {AbCdEf1234 @AbCdEf1234 AbCdEf1234@ @AbCdEf123@ @AbCdEf12345@ {} @} { lappend res [session_isValid $sid] }
+    puts $res
+  } -sessions $SESS]
+  list [lines $r] [llength [dict get $r rega_calls]]
+} -result [list [list "false false false false false false false"] 0]
+
+test sp007-5 {[TARGET] fail-closed: a failing ReGa or an unexpected answer makes session_isValid return 'false' (v1 returned '')} -body {
+  set a [drv { puts "<[session_isValid @AbCdEf1234@]>" } -regafail {*GetSessionVarStr*}]
+  set b [drv { puts "<[session_isValid @AbCdEf1234@]>" } -rega {{*GetSessionVarStr* garbage}}]
+  list [lines $a] [lines $b]
+} -result {<false> <false>}
+
+test sp007-6 {[TARGET] a sid with a quote, backslash, newline or control character is refused without contacting ReGa by session_isValid, session_getUserId and session_logout} -body {
+  set r [drv {
+    foreach sid [list "@AbCdEf\"234@" "@AbCdEf\\234@" "@AbCdEf'234@" "@AbCdEf\n234@" "@AbCd\u0001f1234@"] {
+      lappend res [session_isValid $sid] [session_getUserId $sid]
+      catch { session_logout $sid }
+    }
+    puts [llength $res]
+    puts [lsort -unique $res]
+  } -sessions $SESS]
+  list [lines $r] [llength [dict get $r rega_calls]]
+} -result [list [list 10 "{} false"] 0]
+
+test sp007-7 {session_getUserId returns StrValueByIndex(';',0) of a known session, '' otherwise} -body {
+  set r [drv {
+    puts [session_getUserId @AbCdEf1234@]
+    puts <[session_getUserId @Unknown0000@]>
+  } -sessions $SESS]
+  lines $r
+} -result {1000 <>}
+
+test sp007-8 {session_logout executes system.ClearSessionID for a valid session; for an invalid one nothing happens and no error is raised} -body {
+  set a [drv { puts [catch {session_logout @AbCdEf1234@} m]:$m } -sessions $SESS]
+  set b [drv { puts [catch {session_logout @Unknown0000@} m]:$m } -sessions $SESS]
+  list [lines $a] [clears $a] [lines $b] [clears $b]
+} -result {0: 1 0: 0}
+
+test sp007-9 {session_renew hits index.htm?sid=@<sid>@ and discards the answer} -body {
+  set r [drv { session_renew AbCdEf1234 } -http {{{HTTP/1.1 200 OK} {}}}]
+  dict get $r http_calls
+} -result [list {http://127.0.0.1/pages/index.htm?sid=@AbCdEf1234@}]
+
+test sp007-10 {rega_exec returns STDOUT or '' on failure (v1 frozen); rega_escape is defined but unused} -body {
+  set r [drv {
+    puts [rega_exec {Write(1);}]
+    puts <[rega_exec {Write(2);}]>
+    puts [rega_escape "a\"b"]
+  } -rega {{*Write(1)* ONE}} -regafail {*Write(2)*}]
+  lines $r
+} -result [list ONE <> {a\"b}]
+
+cleanupTests

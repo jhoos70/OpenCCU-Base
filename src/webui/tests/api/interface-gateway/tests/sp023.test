@@ -1,0 +1,101 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP023 - gateway status, assignment, RSSI and key plumbing: contracts/behavioral-contracts.json#SP023
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF}
+set URL xmlrpc_bin://127.0.0.1:2001
+
+test sp023-0 {the staged method scripts of SP023 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {listbidcosinterfaces changekey getlgwconnectionstatus getlgwstatus init rssiinfo setbidcosinterface settempkey} {
+    set p [file join $gen interface-gateway methods interface $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp023-1 {listBidcosInterfaces (USER): structs mapped to address/description/dutyCycle(string)/isConnected/isDefault/fwVersion/type} -body {
+  set gw {ADDRESS GW1 DESCRIPTION LAN DUTY_CYCLE 12 CONNECTED 1 DEFAULT 0 FIRMWARE_VERSION 1.2 TYPE LGW}
+  result [call Interface.listBidcosInterfaces $S -sessions $USER -xmlrpc [list [list listBidcosInterfaces [list $gw]]]]
+} -result {[{"address":"GW1","description":"LAN","dutyCycle":"12","isConnected":true,"isDefault":false,"fwVersion":"1.2","type":"LGW"}]}
+
+test sp023-2 {setBidcosInterface (ADMIN): setBidcosInterface(string, string, bool) and true} -body {
+  set r [call Interface.setBidcosInterface [concat $S {deviceId D1 interfaceId GW1 roaming true}] -xmlrpc {{setBidcosInterface 1}}]
+  list [result $r] [lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end]
+} -result {true {setBidcosInterface {string D1} {string GW1} {bool true}}}
+
+test sp023-3 {rssiInfo (GUEST): [{name, partner:[{name, rssiData:[a,b]}]}]} -body {
+  result [call Interface.rssiInfo $S -sessions $GUEST -xmlrpc {{rssiInfo {DEV1 {PARTNER1 {-70 -80}}}}}]
+} -result {[{"name":"DEV1","partner": [{"name":"PARTNER1","rssiData":[-70,-80]}]}]}
+
+test sp023-4 {getLGWStatus (GUEST): {serial, connected}} -body {
+  result [call Interface.getLGWStatus $S -sessions $GUEST -xmlrpc {{getLGWStatus {SERIAL OEQ1 CONNECTED 1}}}]
+} -result {{"serial":"OEQ1","connected":true}}
+
+test sp023-5 {getLGWConnectionStatus (GUEST) reads /var/status/<serial>.connstat} -body {
+  set r [call Interface.getLGWConnectionStatus [concat $S {serial OEQ1234567}] -sessions $GUEST -files [list var/status/OEQ1234567.connstat CONNECTED]]
+  result $r
+} -result {{"connstat":"CONNECTED", "serial":"OEQ1234567"}}
+
+test sp023-6 {init (ADMIN): init(string url, string interfaceId) and true} -body {
+  set r [call Interface.init [concat $S {url http://127.0.0.1:1234 interfaceId ID1}] -xmlrpc {{init 1}}]
+  list [result $r] [lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end]
+} -result {true {init {string http://127.0.0.1:1234} {string ID1}}}
+
+test sp023-7 {changeKey (ADMIN): v1 defect kept - the call has no method name (the passphrase list is the method); setTempKey sends the literal 'passphrase'} -body {
+  set a [call Interface.changeKey [concat $S {passphrase s3cret}] -xmlrpc {{{string s3cret} 1}}]
+  set b [call Interface.setTempKey [concat $S {passphrase s3cret}] -xmlrpc {{setTempKey 1}}]
+  list [result $a] [lindex [dict get $a xmlrpc_calls] 0] [result $b] [lrange [lindex [dict get $b xmlrpc_calls] 0] 1 end]
+} -result {true {xmlrpc_bin://127.0.0.1:2001 {string s3cret}} true {setTempKey {string passphrase}}}
+
+test sp023-8 {the ADMIN methods deny a USER session (400)} -body {
+  set codes {}
+  foreach {m extra} {Interface.setBidcosInterface {deviceId D interfaceId G roaming true} Interface.init {url u interfaceId i} Interface.changeKey {passphrase p}} {
+    lappend codes [lindex [err [call $m [concat $S $extra] -sessions $USER]] 0]
+  }
+  set codes
+} -result {400 400 400}
+
+test sp023-9 {a failing interface call is mapped (601), a gateway struct lacking a key is the v1 internal error 200} -body {
+  set a [call Interface.listBidcosInterfaces $S -sessions $USER]
+  set b [call Interface.listBidcosInterfaces $S -sessions $USER -xmlrpc {{listBidcosInterfaces {{{ADDRESS G}}}}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {601 200}
+
+test sp023-10 {[TARGET] getLGWConnectionStatus rejects a serial that does not match ^[A-Za-z0-9_-]{1,32}$ with 403 before any file is built} -body {
+  set out {}
+  foreach bad {../../etc/passwd OEQ.123 {} AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA} {
+    set r [call Interface.getLGWConnectionStatus [concat $S [list serial $bad]] -sessions $GUEST -files [list etc/passwd root var/status/.connstat x]]
+    lappend out [err $r]
+  }
+  set out
+} -result {{403 {invalid argument (serial)}} {403 {invalid argument (serial)}} {403 {invalid argument (serial)}} {403 {invalid argument (serial)}}}
+
+test sp023-11 {[TARGET] a missing connstat file is error 200 with a correlation id and no path in the message} -body {
+  set r [call Interface.getLGWConnectionStatus [concat $S {serial OEQ1234567}] -sessions $GUEST]
+  set e [err $r]
+  list [lindex $e 0] [regexp {^internal error \(ref: [0-9a-f]{16}\)$} [lindex $e 1]] [string match */var/status* [dict get $r body]] \
+    [regexp {cid=[0-9a-f]{16} } [lindex [dict get $r syslog] end]]
+} -result {200 1 0 1}
+
+cleanupTests

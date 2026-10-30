@@ -1,0 +1,130 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# RecoveryMode.enter (SP034 acceptance[9]-[15], re-baseline BD-15, upstream #194): the platform is
+# read from /VERSION, the ReGa state is saved, /usr/local/.recoveryMode is written ('1'), a
+# background '/sbin/reboot -d 2' is launched, true is returned. Contract:
+# contracts/behavioral-contracts.json#SP034
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+set CAND only:dispatcher,security-session,system-admin
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c [string map [list {\/} /] $m]] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc saves {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *system.Save()* $c]} { incr n } }
+  return $n
+}
+proc flag {fs} {
+  set p [file join $fs usr local .recoveryMode]
+  if {[file exists $p]} { return [mock::fs::read $fs usr/local/.recoveryMode] }
+  return MISSING
+}
+set S {_session_id_ AbCdEf1234}
+set SESS {{AbCdEf1234 8 1000 Admin}}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+set RPI {VERSION "VERSION=3.75.6\nPLATFORM=rpi4\n"}
+
+test recovery-0 {the staged RecoveryMode.enter script exists and is complete Tcl} -body {
+  set p [file join $gen system-admin methods recoverymode enter.tcl]
+  if {![file exists $p]} { return missing }
+  set fd [open $p r]; set c [read $fd]; close $fd
+  info complete $c
+} -result 1
+
+test recovery-1 {acceptance[9]: PLATFORM=rpi4 - system.Save() once, flag file contains '1', background reboot, answer true} -body {
+  set fs [mock::fs::create]
+  set r [call RecoveryMode.enter $S -sessions $SESS -fs $fs -files $::RPI]
+  set out [list [result $r] [flag $fs] [saves $r] [dict get $r exec_calls]]
+  mock::fs::destroy $fs
+  set out
+} -result [list true "1\n" 1 [list {/sbin/reboot -d 2 2>/dev/null >/dev/null &}]]
+
+test recovery-2 {acceptance[10]: /VERSION missing or without PLATFORM - error 500, no Save, no flag, no reboot} -body {
+  set out {}
+  foreach files [list {} {VERSION "VERSION=3.75.6\n"}] {
+    set fs [mock::fs::create]
+    set r [call RecoveryMode.enter $S -sessions $SESS -fs $fs -files $files]
+    lappend out [err $r] [saves $r] [flag $fs] [llength [dict get $r exec_calls]]
+    mock::fs::destroy $fs
+  }
+  set out
+} -result [list {500 {could not determine the platform from /VERSION}} 0 MISSING 0 {500 {could not determine the platform from /VERSION}} 0 MISSING 0]
+
+test recovery-3 {acceptance[11]: PLATFORM=oci or lxc - error 501 and nothing is written} -body {
+  set out {}
+  foreach p {oci lxc} {
+    set fs [mock::fs::create]
+    set r [call RecoveryMode.enter $S -sessions $SESS -fs $fs -files [list VERSION "PLATFORM=$p\n"]]
+    lappend out [err $r] [saves $r] [flag $fs]
+    mock::fs::destroy $fs
+  }
+  set out
+} -result [list {501 {recovery mode is not supported on platform oci}} 0 MISSING {501 {recovery mode is not supported on platform lxc}} 0 MISSING]
+
+test recovery-4 {acceptance[12]: system.Save() fails - error 500 "could not save the settings: ..." and no flag file, no reboot} -body {
+  set fs [mock::fs::create]
+  set r [call RecoveryMode.enter $S -sessions $SESS -fs $fs -files $::RPI -regafail {*system.Save()*}]
+  set out [list [lindex [err $r] 0] [string match {could not save the settings: *} [lindex [err $r] 1]] [flag $fs] [llength [dict get $r exec_calls]]]
+  mock::fs::destroy $fs
+  set out
+} -result {500 1 MISSING 0}
+
+test recovery-5 {acceptance[13]: /usr/local not writable - error 500 "could not create the recovery mode flag: ...", no flag file, no reboot} -constraints unixNotRoot -body {
+  set fs [mock::fs::create]
+  file attributes [file join $fs usr local] -permissions 0555
+  set r [call RecoveryMode.enter $S -sessions $SESS -fs $fs -files $::RPI]
+  file attributes [file join $fs usr local] -permissions 0755
+  set out [list [lindex [err $r] 0] [string match {could not create the recovery mode flag: *} [lindex [err $r] 1]] [flag $fs] [llength [dict get $r exec_calls]]]
+  mock::fs::destroy $fs
+  set out
+} -result {500 1 MISSING 0}
+
+test recovery-6 {acceptance[14]: the reboot cannot be started - the flag file is removed and error 500 "could not restart: ..."} -body {
+  set fs [mock::fs::create]
+  set r [call RecoveryMode.enter $S -sessions $SESS -fs $fs -files $::RPI -execfail {{*reboot* {boom}}}]
+  set out [list [lindex [err $r] 0] [string match {could not restart: *} [lindex [err $r] 1]] [flag $fs]]
+  mock::fs::destroy $fs
+  set out
+} -result {500 1 MISSING}
+
+test recovery-7 {acceptance[15]: a USER session is denied with 400, a request without _session_id_ is 402; the script does not run (no Save, no flag)} -body {
+  set fs [mock::fs::create]
+  set a [call RecoveryMode.enter $S -sessions {{AbCdEf1234 2 1000 User}} -fs $fs -files $::RPI]
+  set b [call RecoveryMode.enter {} -sessions $SESS -fs $fs -files $::RPI]
+  set out [list [lindex [err $a] 0] [lindex [err $b] 0] [saves $a] [saves $b] [flag $fs]]
+  mock::fs::destroy $fs
+  set out
+} -result {400 402 0 0 MISSING}
+
+test recovery-8 {acceptance[15]: request parameters never reach the command line - extra params do not change the fixed argument list} -body {
+  set fs [mock::fs::create]
+  set r [call RecoveryMode.enter [list {*}$S x {; reboot -f}] -sessions $SESS -fs $fs -files $::RPI]
+  set out [dict get $r exec_calls]
+  mock::fs::destroy $fs
+  set out
+} -result [list {/sbin/reboot -d 2 2>/dev/null >/dev/null &}]
+
+test recovery-9 {acceptance[15] [TARGET]: on /api/v2/rpc the 500/501 messages carry no file path or error text} -body {
+  set fs [mock::fs::create]
+  set a [call RecoveryMode.enter {} -sessions $SESS -fs $fs {*}$::V2]
+  set b [call RecoveryMode.enter {} -sessions $SESS -fs $fs -files {VERSION "PLATFORM=oci\n"} {*}$::V2]
+  set c [call RecoveryMode.enter {} -sessions $SESS -fs $fs -files $::RPI -regafail {*system.Save()*} {*}$::V2]
+  mock::fs::destroy $fs
+  list [err $a] [err $b] [err $c] [regexp {Status: 500} [dict get $a headers]] [regexp {Status: 502} [dict get $b headers]]
+} -result {{500 {could not determine the platform}} {501 {recovery mode is not supported on platform oci}} {500 {could not save the settings}} 1 1}
+
+cleanupTests

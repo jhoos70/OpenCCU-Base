@@ -1,0 +1,154 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP033 - user profile and preference queries (User.getUserName, getUserFirstName, hasUserPWD,
+# isNoExpert, getLanguage, setLanguage) and the v2 profile route: contracts/behavioral-contracts.json#SP033
+# (re-baselined: User.getReGaVersion / setReGaVersion are gone, BD-15)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+set CAND only:dispatcher,security-session,user-profile
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set USER {{AbCdEf1234 2 1234 Admin}}
+set S {_session_id_ AbCdEf1234 userID 1234}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+# the ReGa answer for the v2 profile read
+set PROFILE {{*UserFirstName()* {NAME {Admin} FIRST {Max} PWD {true} NOEXPERT {false}}}}
+proc profile {args} {
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/profile} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} {*}$args]]]
+}
+
+test sp033-0 {the staged method scripts of SP033 and the v2 profile route exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {methods/user/getusername methods/user/getuserfirstname methods/user/hasuserpwd methods/user/isnoexpert methods/user/getlanguage methods/user/setlanguage v2/profile} {
+    set p [file join $gen user-profile {*}[split $f /]].tcl
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp033-1 {acceptance[0],NFR0: User.getUserName / getUserFirstName answer the v1 JavaScript expression text with .UserName (byte-for-byte)} -body {
+  list [result [call User.getUserName $S -sessions $USER -rega {{*user.Name()* {NAME {Admin}}}}]] [result [call User.getUserFirstName $S -sessions $USER -rega {{*UserFirstName()* {NAME {Max}}}}]]
+} -result {{{"UserName" : "Admin"}.UserName} {{"UserName" : "Max"}.UserName}}
+
+test sp033-2 {acceptance[1],NFR0: User.hasUserPWD answers {"UserPWD" :  true|false }.UserPWD} -body {
+  list [result [call User.hasUserPWD $S -sessions $USER -rega {{*UserPwd()* {VAL { true } }}}]] [result [call User.hasUserPWD $S -sessions $USER -rega {{*UserPwd()* {VAL { false } }}}]]
+} -result {{{"UserPWD" :  true }.UserPWD} {{"UserPWD" :  false }.UserPWD}}
+
+test sp033-3 {acceptance[2]: User.isNoExpert returns the raw token unquoted} -body {
+  list [result [call User.isNoExpert {_session_id_ AbCdEf1234 id 1234} -sessions $USER -rega {{*UserEasyLinkMode()* true}}]] [result [call User.isNoExpert {_session_id_ AbCdEf1234 id 1234} -sessions $USER -rega {{*UserEasyLinkMode()* false}}]]
+} -result {true false}
+
+test sp033-4 {acceptance[5]: an unknown user id makes getUserName / getUserFirstName / hasUserPWD fail with internal error 200} -body {
+  list [lindex [err [call User.getUserName $S -sessions $USER -rega {{*user.Name()* false}}]] 0] [lindex [err [call User.hasUserPWD $S -sessions $USER -rega {{*UserPwd()* false}}]] 0]
+} -result {200 200}
+
+test sp033-5 {NFR1,NFR3: User.getLanguage reads /etc/config/userprofiles/<UserFirstName>.lang, answers the first line as a bare token, '0' if there is no file} -body {
+  set a [call User.getLanguage $S -sessions $USER -rega {{*UserFirstName()* Max}} -files [list etc/config/userprofiles/Max.lang "de\nxx\n"]]
+  set b [call User.getLanguage $S -sessions $USER -rega {{*UserFirstName()* Max}}]
+  list [result $a] [result $b]
+} -result {de 0}
+
+test sp033-6 {acceptance[3],NFR2: User.setLanguage writes <file tail of userName>.lang without a trailing newline and answers true} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/.keep ""
+  set r [call User.setLanguage {_session_id_ AbCdEf1234 userName ../../evil userLang en} -sessions $USER -fs $fs]
+  set content [mock::fs::read $fs etc/config/userprofiles/evil.lang]
+  set escaped [file exists [file join $fs etc evil.lang]]
+  mock::fs::destroy $fs
+  list [result $r] $content $escaped
+} -result {true en 0}
+
+test sp033-7 {acceptance[4]: an unwritable profile directory is error 500 'could not write user profile'} -constraints unixNotRoot -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/.keep ""
+  file attributes [file join $fs etc config userprofiles] -permissions 0555
+  set r [call User.setLanguage {_session_id_ AbCdEf1234 userName Max userLang en} -sessions $USER -fs $fs]
+  file attributes [file join $fs etc config userprofiles] -permissions 0755
+  mock::fs::destroy $fs
+  err $r
+} -result {500 {could not write user profile}}
+
+test sp033-8 {acceptance[6] (re-baseline BD-15): the removed ReGa-version methods are error 401 'method not found'} -body {
+  set a [call User.getReGaVersion {} -sessions $USER]
+  set b [call User.setReGaVersion {_session_id_ AbCdEf1234 ReGaVersion LEGACY} -sessions $USER]
+  list [err $a] [err $b] [file exists [file join $gen user-profile methods user getregaversion.tcl]] [file exists [file join $gen user-profile methods user setregaversion.tcl]]
+} -result {{401 {method not found (User.getReGaVersion)}} {401 {method not found (User.setReGaVersion)}} 0 0}
+
+test sp033-9 {acceptance[9] [V2]: on /api/v2/rpc getUserName / getUserFirstName / hasUserPWD answer plain JSON values} -body {
+  set a [call User.getUserName {userID 1234} -sessions $USER -rega {{*user.Name()* {NAME {Admin}}}} {*}$::V2]
+  set b [call User.getUserFirstName {userID 1234} -sessions $USER -rega {{*UserFirstName()* {NAME {Max}}}} {*}$::V2]
+  set c [call User.hasUserPWD {userID 1234} -sessions $USER -rega {{*UserPwd()* {VAL { true } }}} {*}$::V2]
+  list [result $a] [result $b] [result $c] [status $a]
+} -result {{"Admin"} {"Max"} true 200}
+
+test sp033-10 {acceptance[7] [V2]: GET /api/v2/profile answers strict JSON with the locked attribute set (no reGaVersion)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/Max.lang "de"
+  set r [profile -sessions $::USER -rega $::PROFILE -fs $fs]
+  mock::fs::destroy $fs
+  list [status $r] [string trim [dict get $r body]]
+} -result [list 200 {{"userId":"1234","userName":"Admin","firstName":"Max","hasPassword":true,"isNoExpert":false,"language":"de"}}]
+
+test sp033-11 {acceptance[7]/BD-11 [V2]: GET without a sid is HTTP 401; ?userId= of another user needs ADMIN (HTTP 403); a malformed userId is HTTP 422} -body {
+  set a [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/profile} -header {X-Requested-With XMLHttpRequest} -sessions $::USER]]]
+  set b [profile -sessions $::USER -rega $::PROFILE -query userId=999]
+  set c [profile -sessions $::USER -rega $::PROFILE -query userId=abc]
+  set d [profile -sessions {{AbCdEf1234 8 1 Admin}} -rega $::PROFILE -query userId=999]
+  list [status $a] [status $b] [status $c] [status $d]
+} -result {401 403 422 200}
+
+test sp033-12 {acceptance[8] [V2]: PUT /api/v2/profile replaces <UserFirstName>.lang atomically with 'en' and answers {"language":"en"}} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/Max.lang "de"
+  set r [golden::call_raw {{"language":"en"}} [golden::prepare [list -candidate $::CAND -method PUT -contenttype application/json -setenv {REQUEST_URI /api/v2/profile} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::USER -rega $::PROFILE -fs $fs]]]
+  set content [mock::fs::read $fs etc/config/userprofiles/Max.lang]
+  set left [lsort [lmap f [glob -directory [file join $fs etc config userprofiles] *] {file tail $f}]]
+  mock::fs::destroy $fs
+  list [status $r] [string trim [dict get $r body]] $content $left
+} -result [list 200 {{"language":"en"}} en {Max.lang}]
+
+test sp033-13 {NFR4 [V2]: a language not matching ^[a-z]{2}$ is HTTP 422 with error 403 'invalid argument (language)'; nothing is written} -body {
+  set out {}
+  foreach lang {EN english e {de;rm} {}} {
+    set fs [mock::fs::create]
+    set r [golden::call_raw "\{\"language\":\"$lang\"\}" [golden::prepare [list -candidate $::CAND -method PUT -contenttype application/json -setenv {REQUEST_URI /api/v2/profile} \
+      -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::USER -rega $::PROFILE -fs $fs]]]
+    lappend out [status $r] [err $r] [file exists [file join $fs etc config userprofiles Max.lang]]
+    mock::fs::destroy $fs
+  }
+  lsort -unique $out
+} -result {0 {403 {invalid argument (language)}} 422}
+
+test sp033-14 {acceptance[8] [V2]: a GUEST session cannot PUT (403); a USER session cannot change another user's profile (403); a wrong verb is 405 with Allow} -body {
+  set a [golden::call_raw {{"language":"en"}} [golden::prepare [list -candidate $::CAND -method PUT -contenttype application/json -setenv {REQUEST_URI /api/v2/profile} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions {{AbCdEf1234 1 1234 Guest}} -rega $::PROFILE]]]
+  set b [golden::call_raw {{"language":"en"}} [golden::prepare [list -candidate $::CAND -method PUT -contenttype application/json -setenv {REQUEST_URI /api/v2/profile} \
+    -query userId=999 -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::USER -rega $::PROFILE]]]
+  set c [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method DELETE -contenttype {} -setenv {REQUEST_URI /api/v2/profile} -header {X-Requested-With XMLHttpRequest} -sessions $::USER]]]
+  regexp {Allow: ([^\r\n]+)} [dict get $c headers] -> allow
+  list [status $a] [status $b] [status $c] $allow
+} -result {403 403 405 {GET, PUT}}
+
+cleanupTests

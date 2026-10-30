@@ -1,0 +1,123 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP001 acceptance[14] and NFR9/NFR10: the per-sid limiter on /api/v2 is always enforced (also with
+# rate_limit=false): HTTP 429, Retry-After 1..10 and the JSON-RPC error body 429 "rate limit
+# exceeded"; nothing is sourced; a batch counts once (EG-26).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set T0 1700000000
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc v2 {path body fs t args} {
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::SESS -fs $fs -now $t \
+    -setenv [list REQUEST_URI $path] -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} {*}$args]]]
+}
+proc rpc {fs t} {
+  return [v2 /api/v2/rpc {{"method":"Device.listAll","params":{"interface":"BidCos-RF"},"id":1}} $fs $t]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc seed {fs sid stamps} {
+  set d [file join $fs tmp webui-ratelimit]
+  file mkdir $d
+  set fd [open [file join $d sid-$sid] w]; puts $fd [join $stamps \n]; close $fd
+}
+proc stamps {fs sid} {
+  set f [file join $fs tmp webui-ratelimit sid-$sid]
+  if {![file exists $f]} { return {} }
+  set fd [open $f r]; set c [string trim [read $fd]]; close $fd
+  return [split $c \n]
+}
+
+test rl2-1 {the 61st /api/v2/rpc request within 10 s: HTTP 429, Retry-After as integer 1..10, error 429 "rate limit exceeded", nothing sourced - with the default rate_limit=false} -setup {
+  set fs [mock::fs::create]
+} -body {
+  set codes {}
+  for {set i 0} {$i < 60} {incr i} { lappend codes [status [rpc $fs [expr {$T0 + ($i / 20)}]]] }
+  set r [rpc $fs [expr {$T0 + 4}]]
+  regexp {Retry-After: (\d+)} [dict get $r headers] -> ra
+  list [lsort -unique $codes] [status $r] [expr {$ra >= 1 && $ra <= 10}] [err $r] [llength [dict get $r rega_calls]]
+} -cleanup { mock::fs::destroy $fs } -result {200 429 1 {429 {rate limit exceeded}} 0}
+
+test rl2-2 {Retry-After is the number of seconds until the oldest counted request leaves the window} -setup {
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [concat [lrepeat 30 [expr {$T0 - 3}]] [lrepeat 30 $T0]]
+} -body {
+  set r [rpc $fs $T0]
+  regexp {Retry-After: (\d+)} [dict get $r headers] -> ra
+  list [status $r] $ra
+} -cleanup { mock::fs::destroy $fs } -result {429 7}
+
+test rl2-3 {also enforced with rate_limit=true and with a different sid unaffected} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set a [rpc $fs [expr {$T0 + 1}]]
+  set b [v2 /api/v2/rpc {{"method":"Interface.isPresent","params":{"interface":"BidCos-RF"},"id":1}} $fs [expr {$T0 + 1}] -header {X-Session-Id ZyXwVu9876}]
+  list [status $a] [status $b]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {429 200}
+
+test rl2-4 {the window expires: a request at t+11 s restarts the counter at 1} -setup {
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set r [rpc $fs [expr {$T0 + 11}]]
+  list [status $r] [stamps $fs AbCdEf1234]
+} -cleanup { mock::fs::destroy $fs } -result [list 200 [list [expr {$T0 + 11}]]]
+
+test rl2-5 {EG-26: a batch of 3 elements counts as ONE request} -setup {
+  set fs [mock::fs::create]
+} -body {
+  set body {[{"id":1,"method":"Interface.isPresent","params":{"interface":"BidCos-RF"}},{"id":2,"method":"Interface.isPresent","params":{"interface":"BidCos-RF"}},{"id":3,"method":"Interface.isPresent","params":{"interface":"BidCos-RF"}}]}
+  set r [v2 /api/v2/batch $body $fs $T0]
+  list [status $r] [llength [stamps $fs AbCdEf1234]]
+} -cleanup { mock::fs::destroy $fs } -result {200 1}
+
+test rl2-6 {a limited batch is HTTP 429 as a whole and executes no element} -setup {
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set body {[{"id":1,"method":"Device.listAll","params":{"interface":"BidCos-RF"}}]}
+  set r [v2 /api/v2/batch $body $fs $T0]
+  list [status $r] [llength [dict get $r rega_calls]] [err $r]
+} -cleanup { mock::fs::destroy $fs } -result {429 0 {429 {rate limit exceeded}}}
+
+test rl2-7 {a v2 request without any sid is not counted by the per-sid limiter} -setup {
+  set fs [mock::fs::create]
+} -body {
+  set r [golden::call_raw {{"method":"system.listMethods","params":{},"id":1}} [golden::prepare [list -candidate $::CAND -fs $fs -now $T0 \
+    -setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest}]]]
+  list [status $r] [file exists [file join $fs tmp webui-ratelimit]]
+} -cleanup { mock::fs::destroy $fs } -result {200 0}
+
+test rl2-8 {EG-26: an empty REMOTE_ADDR is not limited per IP (Session.login) - the per-sid limiter has no IP part} -setup {
+  set fs [mock::fs::create]
+} -body {
+  set out {}
+  for {set i 0} {$i < 3} {incr i} {
+    set r [golden::call_raw {{"method":"Interface.isPresent","params":{"interface":"BidCos-RF"},"id":1}} [golden::prepare [list -candidate $::CAND -fs $fs -now $T0 \
+      -remote_addr {} -setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest}]]]
+    lappend out [status $r]
+  }
+  set out
+} -cleanup { mock::fs::destroy $fs } -result {200 200 200}
+
+cleanupTests

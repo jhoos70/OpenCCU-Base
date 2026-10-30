@@ -1,0 +1,72 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# manifest.tsv assigns every file of the API change to a component. The tests rebuild the
+# per-component tree (::mock::generated) from it, so a changed file that is missing there would be
+# invisible to the component tests. These tests keep the manifest complete.
+set here [file dirname [file normalize [info script]]]
+source [file join $here helpers mocks.tcl]
+source [file join $here helpers drift.tcl]
+
+proc manifest_rows {} {
+  set rows {}
+  foreach line [split [mock::readfile [file join $::mock::tests_root manifest.tsv]] "\n"] {
+    if {$line eq ""} continue
+    lappend rows [split $line "\t"]
+  }
+  return $rows
+}
+
+test manifest-1 {every manifest row names a component, a relative path and an existing repository file} -body {
+  set bad {}
+  foreach r [manifest_rows] {
+    lassign $r comp rel path
+    if {$comp ni $::mock::components || $rel eq "" || ![file isfile [file join $::mock::repo {*}[split $path /]]]} {
+      lappend bad $r
+    }
+  }
+  set bad
+} -result {}
+
+test manifest-2 {a component-relative path occurs once per component} -body {
+  set seen [dict create]; set dup {}
+  foreach r [manifest_rows] {
+    lassign $r comp rel path
+    if {[dict exists $seen $comp/$rel]} { lappend dup $comp/$rel }
+    dict set seen $comp/$rel 1
+  }
+  set dup
+} -result {}
+
+test manifest-3 {every file below www/api and www/tcl that differs from the legacy tree is in the manifest} -body {
+  set listed [dict create]
+  foreach r [manifest_rows] { dict set listed [lindex $r 2] 1 }
+  set missing {}
+  foreach {sub} {api tcl} {
+    set cur [file join $::mock::repo src webui www $sub]
+    set old [file join $::mock::legacy_root src webui www $sub]
+    foreach rel [::drift::files $cur] {
+      set repopath src/webui/www/$sub/$rel
+      if {[dict exists $listed $repopath]} continue
+      set o [file join $old {*}[split $rel /]]
+      if {![file exists $o] || [::drift::slurp [file join $cur {*}[split $rel /]]] ne [::drift::slurp $o]} {
+        lappend missing $repopath
+      }
+    }
+  }
+  set missing
+} -result {}
+
+test manifest-4 {the per-component tree holds every manifest file with the repository bytes} -body {
+  set bad {}
+  foreach r [manifest_rows] {
+    lassign $r comp rel path
+    set g [file join $::mock::generated $comp {*}[split $rel /]]
+    if {![file isfile $g] || [::drift::slurp $g] ne [::drift::slurp [file join $::mock::repo {*}[split $path /]]]} {
+      lappend bad $comp/$rel
+    }
+  }
+  set bad
+} -result {}
+
+cleanupTests

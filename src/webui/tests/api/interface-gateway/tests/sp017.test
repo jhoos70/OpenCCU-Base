@@ -1,0 +1,97 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP017 - device descriptions and device/team listing: contracts/behavioral-contracts.json#SP017
+# (the [V2] batch acceptance is exercised by the dispatcher v2 batch tests, IC/CF flows)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GD {_session_id_ AbCdEf1234 interface HmIP-RF address NEQ0123456}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set XMLIF "<interfaces>\n<ipc><name>HmIP-RF</name><url>http://127.0.0.1:2010</url><info>HmIP-RF</info></ipc>\n</interfaces>"
+set IF [list -interfaces 0 -files [list etc/config/InterfacesList.xml $XMLIF]]
+
+set DEVICE {TYPE HmIP-X ADDRESS NEQ0123456 PARAMSETS {MASTER VALUES} VERSION 3 FLAGS 1 CHILDREN {NEQ0123456:0 NEQ0123456:1} FIRMWARE 1.0 AVAILABLE_FIRMWARE 1.2 UPDATABLE true FIRMWARE_UPDATE_STATE UP_TO_DATE}
+set CHANNEL {TYPE SWITCH ADDRESS NEQ0123456:1 PARAMSETS {MASTER VALUES} VERSION 2 FLAGS 3 PARENT NEQ0123456 PARENT_TYPE HmIP-X INDEX 1 AES_ACTIVE 1 LINK_SOURCE_ROLES {SW} LINK_TARGET_ROLES {SW LEVEL} DIRECTION 2 GROUP NEQ0123456:2 TEAM *NEQ0123457 TEAM_TAG T}
+
+test sp017-0 {the staged method scripts of SP017 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {getdevicedescription adddevice listdevices listteams} {
+    set p [file join $gen interface-gateway methods interface $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp017-1 {getDeviceDescription of a device (struct with CHILDREN): general + device fields, XML-RPC call with the address} -body {
+  set r [call Interface.getDeviceDescription $GD {*}$IF -sessions $GUEST -xmlrpc [list [list getDeviceDescription $DEVICE]]]
+  list [result $r] [dict get $r xmlrpc_calls]
+} -result [list {{"type":"HmIP-X","address":"NEQ0123456","paramsets":["MASTER","VALUES"],"version":3,"flags":1,"children":["NEQ0123456:0","NEQ0123456:1"],"firmware":"1.0","availableFirmware":"1.2","updatable":"true","firmwareUpdateState":"UP_TO_DATE"}} {{http://127.0.0.1:2010 getDeviceDescription {string NEQ0123456}}}]
+
+test sp017-2 {getDeviceDescription of a channel (no CHILDREN): parent, index, roles, direction, group, team, teamTag} -body {
+  result [call Interface.getDeviceDescription [dict replace $GD address NEQ0123456:1] {*}$IF -sessions $GUEST -xmlrpc [list [list getDeviceDescription $CHANNEL]]]
+} -result {{"type":"SWITCH","address":"NEQ0123456:1","paramsets":["MASTER","VALUES"],"version":2,"flags":3,"parent":"NEQ0123456","parentType":"HmIP-X","index":1,"aesActive":true,"linkSourceRoles":["SW"],"linkTargetRoles":["SW","LEVEL"],"direction":2,"group":"NEQ0123456:2","team":"*NEQ0123457","teamTag":"T"}}
+
+test sp017-3 {listDevices serialises every struct into a JSON array} -body {
+  result [call Interface.listDevices {_session_id_ AbCdEf1234 interface HmIP-RF} {*}$IF -sessions $GUEST -xmlrpc [list [list listDevices [list $DEVICE $CHANNEL]]]]
+} -match glob -result {\[\{"type":"HmIP-X",*\},\{"type":"SWITCH",*\}\]}
+
+test sp017-4 {listTeams calls xmlrpc listTeams and serialises the structs} -body {
+  set r [call Interface.listTeams {_session_id_ AbCdEf1234 interface HmIP-RF} {*}$IF -sessions $GUEST -xmlrpc [list [list listTeams [list $CHANNEL]]]]
+  list [string match "\\\[\{\"type\":\"SWITCH\"*\}\\\]" [result $r]] [dict get $r xmlrpc_calls]
+} -result {1 {{http://127.0.0.1:2010 listTeams}}}
+
+test sp017-5 {addDevice (ADMIN) calls xmlrpc addDevice(serialNumber) and serialises the learned device} -body {
+  set r [call Interface.addDevice {_session_id_ AbCdEf1234 interface HmIP-RF serialNumber NEQ0123456} {*}$IF -xmlrpc [list [list addDevice $DEVICE]]]
+  list [string match "\{\"type\":\"HmIP-X\",\"address\":\"NEQ0123456\",*" [result $r]] [dict get $r xmlrpc_calls]
+} -result {1 {{http://127.0.0.1:2010 addDevice {string NEQ0123456}}}}
+
+test sp017-6 {addDevice is ADMIN only: a USER session gets access denied (400) and no XML-RPC call} -body {
+  set r [call Interface.addDevice {_session_id_ AbCdEf1234 interface HmIP-RF serialNumber NEQ0123456} {*}$IF -sessions {{AbCdEf1234 2 1000 User}} -xmlrpc [list [list addDevice $DEVICE]]]
+  list [lindex [err $r] 0] [llength [dict get $r xmlrpc_calls]]
+} -result {400 0}
+
+test sp017-7 {a failing XML-RPC call is mapped by checkXmlRpcStatus: Tcl error 601, fault -2 502} -body {
+  set a [call Interface.getDeviceDescription $GD {*}$IF -sessions $GUEST]
+  set b [call Interface.listDevices {_session_id_ AbCdEf1234 interface HmIP-RF} {*}$IF -sessions $GUEST -fault {{listDevices -2 gone}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {601 502}
+
+test sp017-8 {NFR typo kept (EG-15): TEAM_CHANNELS without TEAM_CHANNELD is never emitted as teamChannels} -body {
+  set ch [concat $CHANNEL {TEAM_CHANNELS {NEQ0123456:1 NEQ0123457:1}}]
+  string match *teamChannels* [result [call Interface.getDeviceDescription [dict replace $GD address NEQ0123456:1] {*}$IF -sessions $GUEST -xmlrpc [list [list getDeviceDescription $ch]]]]
+} -result 0
+
+test sp017-9 {listDevices with an empty list returns []} -body {
+  result [call Interface.listDevices {_session_id_ AbCdEf1234 interface HmIP-RF} {*}$IF -sessions $GUEST -xmlrpc {{listDevices {}}}]
+} -result {[]}
+
+test sp017-10 {a missing required key (VERSION) is a v1 internal error 200} -body {
+  set d $DEVICE
+  dict unset d VERSION
+  lindex [err [call Interface.getDeviceDescription $GD {*}$IF -sessions $GUEST -xmlrpc [list [list getDeviceDescription $d]]]] 0
+} -result 200
+
+test sp017-11 {AES_ACTIVE 'true' (string) maps to false, ROAMING/INTERFACE are emitted with a space after the colon} -body {
+  set ch [dict replace $CHANNEL AES_ACTIVE true]
+  lappend ch INTERFACE BidCos-RF ROAMING 1
+  set j [result [call Interface.getDeviceDescription [dict replace $GD address NEQ0123456:1] {*}$IF -sessions $GUEST -xmlrpc [list [list getDeviceDescription $ch]]]]
+  list [regexp {"aesActive":false} $j] [regexp {,"interface": "BidCos-RF",\s*"roaming": true\}$|,"interface": "BidCos-RF","roaming": true\}$} $j]
+} -result {1 1}
+
+cleanupTests

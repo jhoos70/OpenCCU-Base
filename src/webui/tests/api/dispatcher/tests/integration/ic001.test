@@ -1,0 +1,68 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC001 dispatcher -> security-session: checkPrivilegeLevel method_array args_array.
+# Request shape: method(LEVEL) NONE|GUEST|USER|ADMIN, args(_session_id_) (v2: from X-Session-Id).
+# Error: 400 access denied ("<LEVEL>" needed, session level <upl>) - v2 HTTP 403, or 401 without a
+# valid sid. The provider side is the real staged eq3/privilege.tcl behind the mock ReGa sessions.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set SESS {{GuestSid001 1 1001 Guest} {UserSid0002 2 1002 User} {AdminSid003 8 1003 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc lookups {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *StrValueByIndex* $c]} { incr n } }
+  return $n
+}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest}}
+
+test ic001-1 {request shape: LEVEL NONE needs no sid and no lookup; every other level looks the sid of args(_session_id_) up exactly once} -body {
+  set a [call system.listMethods {}]
+  set b [call Device.listAll {_session_id_ GuestSid001}]
+  set c [call CCU.getSerial {_session_id_ AdminSid003}]
+  list [lookups $a] [lookups $b] [lookups $c] [string match {*var _session_id_ = "GuestSid001";*} [lindex [dict get $b rega_calls] 0]]
+} -result {0 1 1 1}
+
+test ic001-2 {error 400: a level that is too low is 'access denied ("<LEVEL>" needed, session level <upl>)' for every level pair} -body {
+  set out {}
+  lappend out [err [call Device.listAll {_session_id_ Unknown0001}]]
+  lappend out [err [call SysVar.getAll {_session_id_ GuestSid001}]]
+  lappend out [err [call CCU.getSerial {_session_id_ UserSid0002}]]
+  set out
+} -result {{400 {access denied (\"GUEST\" needed, session level 0)}} {400 {access denied (\"USER\" needed, session level 1)}} {400 {access denied (\"ADMIN\" needed, session level 2)}}}
+
+test ic001-3 {a sufficient level proceeds: GUEST on GUEST, USER on USER, ADMIN on ADMIN (and above)} -body {
+  set out {}
+  foreach {m sid} {Device.listAll GuestSid001 SysVar.getAll UserSid0002 SysVar.getAll AdminSid003 CCU.getSerial AdminSid003} {
+    lappend out [lindex [err [call $m [list _session_id_ $sid]]] 0]
+  }
+  set out
+} -result {none none none 200}
+
+test ic001-4 {v2: args(_session_id_) is taken from X-Session-Id; too low a level is HTTP 403, an unknown or missing sid HTTP 401} -body {
+  set a [call CCU.getSerial {} -header {X-Session-Id UserSid0002} {*}$V2]
+  set b [call CCU.getSerial {} -header {X-Session-Id Unknown0001} {*}$V2]
+  set c [call CCU.getSerial {} {*}$V2]
+  list [status $a] [status $b] [status $c] [lindex [err $a] 0]
+} -result {403 401 401 400}
+
+test ic001-5 {fail closed: a lookup answer that is not a non-negative integer is denied (level 0), never allowed} -body {
+  set r [call Device.listAll {_session_id_ GuestSid001} -rega {{*StrValueByIndex* abc}}]
+  err $r
+} -result {400 {access denied (\"GUEST\" needed, session level 0)}}
+
+cleanupTests

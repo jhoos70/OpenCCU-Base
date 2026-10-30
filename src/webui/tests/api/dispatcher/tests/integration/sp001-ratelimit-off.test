@@ -1,0 +1,83 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP001 acceptance[17], NFR9-NFR11, NFR-045, NFR-055: with the default configuration (rate_limit=false,
+# strict_mode=false) the v1 path never touches the limiter: the 61st and the 200th request with the
+# same _session_id_ return the unchanged v1 bytes, no 429, no file operation under /tmp/webui-ratelimit,
+# and the golden fixtures stay green. The limiter procedure is stubbed to fail loudly if it is reached.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test rloff-1 {the gate: sidlimit::enabled is 0 by default, 1 with rate_limit, strict_mode or API_V2} -body {
+  set out {}
+  foreach pre {{} {array set API_CONFIG {rate_limit true}} {array set API_CONFIG {strict_mode true}} {set API_V2 1}} {
+    set r [golden::tcl "
+      source \[file join \$env(DOCUMENT_ROOT) api/eq3/common.tcl\]
+      source \[file join \$env(DOCUMENT_ROOT) api/eq3/syslog.tcl\]
+      source \[file join \$env(DOCUMENT_ROOT) api/eq3/apiconfig.tcl\]
+      source \[file join \$env(DOCUMENT_ROOT) api/eq3/sidlimit.tcl\]
+      apiconfig_load apiconfig.conf
+      $pre
+      puts \[sidlimit::enabled\]
+    " -candidate $::CAND]
+    lappend out [string trim [dict get $r stdout]]
+  }
+  set out
+} -result {0 1 1 1}
+
+test rloff-2 {the 1st, 61st and 200th v1 request return identical bytes; sidlimit::check is never called (stub fails the request) and nothing is created under /tmp/webui-ratelimit} -body {
+  # the stub is placed in a staged overlay of the api tree: a copy of the composed root with a sidlimit.tcl whose check dies
+  set root [golden::root $::CAND]
+  set stubroot [mock::tmpdir]
+  mock::copytree $root $stubroot
+  set f [file join $stubroot api eq3 sidlimit.tcl]
+  set fd [open $f a]; puts $fd "\nproc ::sidlimit::check {sid} { error {LIMITER-REACHED} }"; close $fd
+  set fs [mock::fs::create]
+  set body {{"method":"system.listMethods","params":{"_session_id_":"AbCdEf1234"},"id":1}}
+  set outs {}
+  foreach n {1 61 200} {
+    set cenv [mock::cgi_env::build POST -body $body -contenttype application/json]
+    set res [mock::run_cgi [file join $stubroot api homematic.cgi] $cenv -docroot $stubroot -alias /www/ -fsroot $fs -now 1700000000]
+    lappend outs [dict get $res stdout]
+  }
+  set exists [file exists [file join $fs tmp webui-ratelimit]]
+  mock::fs::destroy $fs
+  file delete -force $stubroot
+  list [llength [lsort -unique $outs]] [string match *LIMITER-REACHED* [lindex $outs 0]] [string match {*"error": null*} [lindex $outs 0]] $exists
+} -result {1 0 1 0}
+
+test rloff-3 {rate_limit=false stated explicitly in apiconfig.conf behaves like the default} -body {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd {array set API_CONFIG {rate_limit false strict_mode false}}; close $fd
+  set fs [mock::fs::create]
+  set d [file join $fs tmp webui-ratelimit]; file mkdir $d
+  set fd [open [file join $d sid-AbCdEf1234] w]; puts $fd [join [lrepeat 100 1700000000] \n]; close $fd
+  set r [golden::call_raw {{"method":"Interface.isPresent","params":{"interface":"BidCos-RF","_session_id_":"AbCdEf1234"},"id":1}} \
+    [golden::prepare [list -candidate $::CAND -sessions $::SESS -fs $fs]]]
+  file delete -force $f
+  mock::fs::destroy $fs
+  err $r
+} -result none
+
+test rloff-4 {golden re-run: all fixtures replay byte-identical in the default configuration (staged dispatcher + security-session), documented deliberate changes excluded} -body {
+  set names {}
+  foreach fx [golden::fixtures] {
+    set m [dict get $fx method]
+    if {$m in {Channel.setName Channel.setMode Interface.setTeam system.describe system.listMethods system.methodHelp ReGa.getAllDatapoints Session.setSessionVar CCU.setSecurityLevel CCU.setHttpsRedirectEnabled CCU.downloadFirmware CCU.setSSHPassword CCU.setConfigurationRF CCU.setConfigurationWired CCU.getLGWConnectionStatus}} continue
+    lappend names $m
+  }
+  golden::compare_all -candidate only:dispatcher,security-session -only $names
+} -result {}
+
+cleanupTests

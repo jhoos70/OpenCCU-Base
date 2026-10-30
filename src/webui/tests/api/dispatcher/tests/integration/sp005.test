@@ -1,0 +1,88 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP005 NFR and integration coverage (spec.json#SP005 non_functional_requirements[0..6]),
+# boundary and error cases and the golden re-run of all registry fixtures through the staged
+# serializer (internal errors compare as the class 'internal error': the sanitised text with the
+# correlation id is a deliberate change).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher {*}$args] }
+proc raw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:dispatcher {*}$args]]] }
+
+test sp005-nfr0 {NFR0: an empty or whitespace result is null} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_response ""
+    jsonrpc_response "   \n"
+  }]
+  regexp -all {"result": null,} [dict get $r stdout]
+} -result 2
+
+test sp005-nfr3 {NFR3: a method that never calls jsonrpc_response leaves the CGI without a document} -body {
+  set r [drv { jsonrpc_parse {{"method":"x","params":{},"id":1}} }]
+  string trim [dict get $r stdout]
+} -result {}
+
+test sp005-nfr4 {NFR4: on v1 the HTTP status stays 200 - no Status header, errors only in the JSON member} -body {
+  set r [raw {{"method":"No.such","params":{},"id":1}} -sessions {}]
+  list [string match "Status:*" [dict get $r stdout]] [string match "CONTENT-TYPE: application/json*" [dict get $r stdout]]
+} -result {0 1}
+
+test sp005-nfr5 {NFR5: jsonrpc_error ends the script - a second call is unreachable} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_error 401 first
+    jsonrpc_error 401 second
+  }]
+  list [regexp -all {"version": "1.1"} [dict get $r stdout]] [string match *second* [dict get $r stdout]]
+} -result {1 0}
+
+test sp005-nfr6 {NFR6 [TARGET]: coercion of a non-integer code leaves a valid document (no raw token in the code position)} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_error {12;drop} boom
+  }]
+  set out [dict get $r stdout]
+  list [regexp {"code": 200,} $out] [string match *drop* $out]
+} -result {1 0}
+
+test sp005-err1 {every internal error of the staged tree is logged once per request with the same correlation id as in the body} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"Foo.bar","params":{},"id":9}}
+    jsonrpc_error 200 "internal error:\nboom"
+  }]
+  regexp {\(ref: ([0-9a-f]{16})\)} [dict get $r stdout] -> cid
+  set n 0
+  foreach s [dict get $r syslog] { if {[string match "*cid=$cid method=Foo.bar*" $s]} { incr n } }
+  set n
+} -result 1
+
+test sp005-err2 {a request with a Unicode id and message keeps valid UTF-8 end to end} -body {
+  set body "\{\"method\":\"No.suchä\",\"params\":\{\},\"id\":\"ü1\"\}"
+  set r [raw $body -sessions {}]
+  list [regexp {"code": 401} [dict get $r body]] [string match "*ü1*" [dict get $r body]]
+} -result {1 1}
+
+test sp005-golden {golden re-run: all 180 registry fixtures replay through the staged serializer, error mapper and logger} -body {
+  # documented deliberate changes of the corrected registry (see integration/sp002.test) are excluded
+  set names {}
+  foreach fx [golden::fixtures] {
+    set m [dict get $fx method]
+    if {$m in {Channel.setName Channel.setMode Interface.setTeam system.describe system.listMethods system.methodHelp ReGa.getAllDatapoints Session.setSessionVar}} continue
+    lappend names $m
+  }
+  golden::compare_all -candidate only:dispatcher -only $names
+} -result {}
+
+cleanupTests

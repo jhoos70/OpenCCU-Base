@@ -1,0 +1,111 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP001 NFR and integration coverage (spec.json#SP001 non_functional_requirements[0..11]; NFR9-11
+# (limiter) are in sp001-ratelimit-*.test), boundary and error cases and the golden re-run of the
+# registry fixtures through the staged homematic.cgi.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc post {json args} {
+  return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::SESS {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test sp001-nfr0 {NFR0/NFR8: PUT, OPTIONS and HEAD on the v1 path give an empty body and no headers} -body {
+  set out {}
+  foreach m {PUT OPTIONS HEAD} {
+    set r [post {} -method $m]
+    lappend out [string length [dict get $r stdout]]
+  }
+  set out
+} -result {0 0 0}
+
+test sp001-nfr1 {NFR1: an unset REQUEST_METHOD is a Tcl error before any output (exit status 1)} -body {
+  set root [golden::root $::CAND]
+  set fs [mock::fs::create]
+  set cenv [mock::cgi_env::build POST -body {{}} -contenttype application/json]
+  dict unset cenv env REQUEST_METHOD
+  set res [mock::run_cgi [file join $root api homematic.cgi] $cenv -docroot $root -alias /www/ -fsroot $fs]
+  mock::fs::destroy $fs
+  list [dict get $res status] [string length [dict get $res stdout]]
+} -result {1 0}
+
+test sp001-nfr2 {NFR2: a params array of even length is read as key/value pairs, an odd length is error 200} -body {
+  set a [post {{"method":"Session.setSessionVar","params":["_session_id_","AbCdEf1234","var","a"],"id":1}}]
+  set b [post {{"method":"Session.setSessionVar","params":["_session_id_","AbCdEf1234","var"],"id":1}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {402 200}
+
+test sp001-nfr4 {NFR4: a missing methods.conf gives an empty registry and every call is 401} -setup {
+  set f [file join [golden::root $::CAND] api methods.conf]
+  file rename -force $f $f.off
+} -body {
+  lindex [err [post {{"method":"system.listMethods","params":{},"id":1}}]] 0
+} -cleanup { file rename -force $f.off $f } -result 401
+
+test sp001-nfr6 {NFR6: the method name is matched case-sensitively} -body {
+  lindex [err [post {{"method":"DEVICE.LISTALL","params":{"_session_id_":"AbCdEf1234"},"id":1}}]] 0
+} -result 401
+
+test sp001-nfr7 {NFR7: a method name that looks like a path never selects a script} -body {
+  set out {}
+  foreach m {../../etc/passwd device/listall ../methods/device/listall.tcl} {
+    lappend out [lindex [err [post "\{\"method\":\"$m\",\"params\":\{\},\"id\":1\}"]] 0]
+  }
+  set out
+} -result {401 401 401}
+
+test sp001-nfr3 {NFR3 [TARGET] / error: the response of an internal error contains no errorInfo, path or stack trace} -body {
+  set r [post {{"method":"CCU.getSerial","params":{"_session_id_":"AbCdEf1234"},"id":1}}]
+  set leak 0
+  foreach bad {errorInfo {while executing} .tcl /www/ procedure} { if {[string first $bad [dict get $r body]] >= 0} { incr leak } }
+  list [lindex [err $r] 0] $leak
+} -result {200 0}
+
+test sp001-err1 {boundary: a request without a method is 102, without params 103, invalid JSON 100 - none needs a session} -body {
+  list [lindex [err [post {{"params":{},"id":1}}]] 0] [lindex [err [post {{"method":"x","id":1}}]] 0] [lindex [err [post {not json}]] 0]
+} -result {102 103 100}
+
+test sp001-err2 {boundary: a v2 request on an unknown route is HTTP 404, a v2 batch that is not an array is error 100} -body {
+  set a [post {} -method GET -setenv {REQUEST_URI /api/v2/nothing} -header {X-Requested-With x}]
+  set b [post {{"method":"x"}} -setenv {REQUEST_URI /api/v2/batch} -header {X-Requested-With x} -header {X-Session-Id AbCdEf1234}]
+  list [regexp {Status: 404} [dict get $a headers]] [lindex [err $b] 0] [regexp {Status: 400} [dict get $b headers]]
+} -result {1 100 1}
+
+test sp001-err3 {boundary: an empty v2 batch is rejected before anything runs} -body {
+  set r [post {[]} -setenv {REQUEST_URI /api/v2/batch} -header {X-Requested-With x} -header {X-Session-Id AbCdEf1234}]
+  list [lindex [err $r] 0] [llength [dict get $r rega_calls]]
+} -result {403 0}
+
+test sp001-lazy {SP009 NFR5: INTERFACE_LIST is resolved on first use - system.listMethods does not read InterfacesList.xml, Interface.listInterfaces does} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/InterfacesList.xml "<interfaces><ipc><name>BidCos-RF</name><url>xmlrpc_bin://127.0.0.1:2001</url><info>BidCos-RF</info></ipc></interfaces>"
+  set a [post {{"method":"system.listMethods","params":{},"id":1}} -fs $fs -interfaces 0]
+  set cacheAfterA [file exists [file join $fs var tmp api_ipc.cache]]
+  set b [post {{"method":"Interface.listInterfaces","params":{"_session_id_":"AbCdEf1234"},"id":1}} -fs $fs -interfaces 0]
+  set cacheAfterB [file exists [file join $fs var tmp api_ipc.cache]]
+  mock::fs::destroy $fs
+  list $cacheAfterA $cacheAfterB [regexp {BidCos-RF} [dict get $b body]]
+} -result {0 1 1}
+
+test sp001-golden {golden re-run: the registry fixtures replay byte-identical through the staged homematic.cgi (documented deliberate changes excluded)} -body {
+  set names {}
+  foreach fx [golden::fixtures] {
+    set m [dict get $fx method]
+    if {$m in {Channel.setName Channel.setMode Interface.setTeam system.describe system.listMethods system.methodHelp ReGa.getAllDatapoints Session.setSessionVar CCU.setSecurityLevel CCU.setHttpsRedirectEnabled CCU.downloadFirmware CCU.setSSHPassword CCU.setConfigurationRF CCU.setConfigurationWired CCU.getLGWConnectionStatus}} continue
+    lappend names $m
+  }
+  golden::compare_all -candidate only:dispatcher,security-session -only $names
+} -result {}
+
+cleanupTests

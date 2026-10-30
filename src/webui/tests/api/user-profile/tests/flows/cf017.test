@@ -1,0 +1,68 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF017 WebUI.getColors / setWebUIColors (flow-model.md#cf017): getColors (NONE) loads the system
+# color.map and (central) merges /etc/config/color.map; setWebUIColors (USER) seeds the user map,
+# replaces the line of the key and moves the new content over the file atomically.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,user-profile
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions {{AbCdEf1234 2 1000 User}} {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc sysmap {text} {
+  set d [file join [golden::root $::CAND] webui]
+  file mkdir $d
+  set fd [open [file join $d color.map] w]; puts -nonewline $fd $text; close $fd
+}
+sysmap "active #3678c9\nattention red\n"
+
+test cf017-1 {getColors: system map merged with the user map (the user value wins); NONE: no session needed} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/color.map "attention #ff0000\n"
+  set r [call WebUI.getColors {} -sessions {} -fs $fs]
+  mock::fs::destroy $fs
+  set j [result $r]
+  list [regexp {"active":"#3678c9"} $j] [regexp {"attention":"#ff0000"} $j]
+} -result {1 1}
+
+test cf017-2 {setWebUIColors: seeds the user map from the system map, replaces the key line, atomic rename, true} -body {
+  set fs [mock::fs::create]
+  set r [call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key attention color #112233 cpFile 0} -fs $fs]
+  set c [mock::fs::read $fs etc/config/color.map]
+  set tmp [llength [glob -nocomplain -directory [file join $fs etc config] *.tmp]]
+  mock::fs::destroy $fs
+  list [result $r] $c $tmp
+} -result [list true "active #3678c9\nattention  #112233\n" 0]
+
+test cf017-3 {error path: the map cannot be written - error 200 with a reference, the original stays} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/color.map "attention red\n"
+  file attributes [file join $fs etc config] -permissions 0555
+  set r [call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key attention color #1 cpFile 0} -fs $fs -interfaces 0]
+  file attributes [file join $fs etc config] -permissions 0755
+  set same [expr {[mock::fs::read $fs etc/config/color.map] eq "attention red\n"}]
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $same
+} -result {200 1}
+
+test cf017-4 {error path: a GUEST session is denied (400) and the user map is not created} -body {
+  set fs [mock::fs::create]
+  set r [call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key a color #1 cpFile 0} -fs $fs -sessions {{AbCdEf1234 1 1 G}}]
+  set made [file exists [file join $fs etc config color.map]]
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $made
+} -result {400 0}
+
+cleanupTests

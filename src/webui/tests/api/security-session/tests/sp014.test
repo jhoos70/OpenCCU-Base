@@ -1,0 +1,250 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP014 - classic-UI session and privilege layer (eq3_old/{session,common,once,user}.tcl):
+# contracts/behavioral-contracts.json#SP014. v1 behaviour is frozen; only the id source changes
+# (/dev/urandom, rejection sampling over the 62 symbols, -1 when the source is unreadable).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+# the classic pages run in their own directory with cgi.tcl next to the eq3_old libraries
+set PRE {
+  file copy -force ../tcl/extern/cgi.tcl ../tcl/cgi.tcl
+  cd ../tcl/eq3_old
+  proc rega_script {script} { return [list sd $::ISE_SD linkmode false] }
+  set ISE_SD ""
+}
+proc drv {script args} {
+  # SP014_CANDIDATE=legacy replays the tests against the unchanged v1 classic libraries (RED check)
+  set cand only:security-session
+  if {[info exists ::env(SP014_CANDIDATE)]} { set cand $::env(SP014_CANDIDATE) }
+  return [golden::tcl "$::PRE\n$script" -candidate $cand \
+    -setenv {QUERY_STRING {} HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi} {*}$args]
+}
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc flat {r} { return [join [lines $r] " "] }
+
+# a replacement of /dev/urandom feeding the given byte values (test-side shim of ::open)
+proc urandom_shim {bytes} {
+  return "
+    set ::URANDOM_FILE \[file join \[pwd\] urandom.bin\]
+    set fd \[open \$::URANDOM_FILE w\]
+    fconfigure \$fd -translation binary
+    puts -nonewline \$fd \[binary format c* {$bytes}\]
+    close \$fd
+    rename ::open ::__t_open
+    proc ::open {path args} {
+      if {\$path eq \"/dev/urandom\"} { set path \$::URANDOM_FILE }
+      return \[uplevel 1 \[list ::__t_open \$path {*}\$args\]\]
+    }
+  "
+}
+set NOURANDOM {
+  rename ::open ::__t_open
+  proc ::open {path args} {
+    if {$path eq "/dev/urandom"} { error "couldn't open \"/dev/urandom\": permission denied" }
+    return [uplevel 1 [list ::__t_open $path {*}$args]]
+  }
+}
+
+test sp014-0 {the staged classic libraries exist} -body {
+  set out {}
+  foreach f {session common once user} { lappend out [file exists [file join $gen security-session eq3_old $f.tcl]] }
+  set out
+} -result {1 1 1 1}
+
+test sp014-1 {constants are frozen: sid_length 10, 900 s timeout, 10 sessions, /var/SESSIONS.dat} -body {
+  flat [drv {
+    source session.tcl
+    puts "$sid_length $session_timeout $MAX_SESSIONS $SESSIONS_FILE"
+  }]
+} -result {10 900 10 /var/SESSIONS.dat}
+
+test sp014-2 {[TARGET] acceptance[4]: a generated id is @ + 10 characters of [A-Za-z0-9] + @} -body {
+  lines [drv {
+    source session.tcl
+    set bad 0
+    for {set i 0} {$i < 200} {incr i} {
+      set s [session_generatesid 10]
+      if {![regexp {^@[A-Za-z0-9]{10}@$} $s]} { incr bad }
+    }
+    puts $bad
+  }]
+} -result 0
+
+test sp014-3 {[TARGET] acceptance[4]: all 62 symbols are reachable, in particular 'z' (v1 never produced it)} -body {
+  flat [drv {
+    source session.tcl
+    array set seen {}
+    for {set i 0} {$i < 600} {incr i} {
+      foreach c [split [string range [session_generatesid 10] 1 10] ""] { set seen($c) 1 }
+    }
+    puts "[array size seen] [info exists seen(z)]"
+  }]
+} -result {62 1}
+
+test sp014-4 {[TARGET] acceptance[4]: bytes of /dev/urandom are used with rejection sampling (>= 248 is dropped, no modulo bias)} -body {
+  lines [drv "
+    source session.tcl
+    [urandom_shim {255 250 248 0 61 62 123 247 1 2 3 4 5 -1}]
+    puts \[session_generatesid 10\]
+  "]
+} -result {@AzAzzBCDEF@}
+
+test sp014-5 {[TARGET] acceptance[4]: generatesid draws no value from rand()} -body {
+  lines [drv {
+    source session.tcl
+    puts [string match *rand()* [info body session_generatesid]]
+  }]
+} -result 0
+
+test sp014-6 {[TARGET] acceptance[5]: /dev/urandom unreadable - generatesid answers -1 and generatesession creates no session} -body {
+  lines [drv "
+    source session.tcl
+    $::NOURANDOM
+    puts \[session_generatesid 10\]
+    puts \[session_generatesession 5\]
+    puts \[array size sessions_uid\]
+  "]
+} -result {-1 -1 0}
+
+test sp014-7 {[TARGET] acceptance[5]: an empty random source terminates with -1 (no hang, no weak fallback)} -body {
+  lines [drv "
+    source session.tcl
+    [urandom_shim {}]
+    puts \[session_generatesid 10\]
+  "]
+} -result {-1}
+
+test sp014-8 {acceptance[2]: a new session is refused with -1 when 10 exist} -body {
+  lines [drv {
+    source session.tcl
+    for {set i 0} {$i < 10} {incr i} { lappend sids [session_generatesession 5] }
+    puts [llength [lsort -unique $sids]]
+    puts [session_generatesession 5]
+    puts [array size sessions_uid]
+  }]
+} -result {10 -1 10}
+
+test sp014-9 {acceptance[2]: write_sessions purges timed-out sessions and keeps the file format SID;UID;LastActivity;RedirectURL ... <.} -body {
+  set r [drv {
+    source session.tcl
+    set now [clock seconds]
+    session_generatesession 7 http://x/a
+    array set sessions_uid          [list @Old0000000@ 3]
+    array set sessions_lastactivity [list @Old0000000@ [expr {$now - 901}]]
+    array set sessions_redirect     [list @Old0000000@ http://x/old]
+    write_sessions
+    set fd [open /var/SESSIONS.dat r]; puts [read $fd]; close $fd
+  } -now 1700000000]
+  set l [lines $r]
+  list [lindex $l 0] [llength $l] [lindex $l end] [regexp {^@[A-Za-z0-9]{10}@;7;1700000000;http://x/a$} [lindex $l 1]] [string match *Old0000000* [dict get $r stdout]]
+} -result {{SID;UID;LastActivity;RedirectURL} 3 <. 1 0}
+
+test sp014-10 {acceptance[1]: file-session return codes -3 (no sid), -2 (unknown), -1 (timed out), uid (valid)} -body {
+  set files {var/SESSIONS.dat "SID;UID;LastActivity;RedirectURL\n@Live000001@;4;1699999900;\n@Old0000002@;5;1699990000;\n<.\n"}
+  set out {}
+  foreach {q} {{} icsessionid=@Nope000000@ icsessionid=@Old0000002@ icsessionid=@Live000001@} {
+    set r [drv "
+      source session.tcl
+      puts \[session_isvalid\]
+    " -files $files -now 1700000000 -setenv [list QUERY_STRING $q HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi]]
+    lappend out [lindex [lines $r] end]
+  }
+  set out
+} -result {-3 -2 -1 4}
+
+test sp014-11 {acceptance[1]: session_requestisvalid answers -3 with the 'Unauthorized' page when no sid is given} -body {
+  set r [drv {
+    source session.tcl
+    puts "RC=[session_requestisvalid 0]"
+  }]
+  list [string match *Unauthorized* [dict get $r stdout]] [string match *RC=-3* [dict get $r stdout]]
+} -result {1 1}
+
+test sp014-12 {acceptance[1]: unknown or expired session -> 'reloadPage' stub, code -2} -body {
+  set r [drv {
+    source session.tcl
+    puts "RC=[session_requestisvalid 0]"
+  } -setenv {QUERY_STRING icsessionid=@Nope000000@ HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi}]
+  list [string match *reloadPage* [dict get $r stdout]] [string match *RC=-2* [dict get $r stdout]]
+} -result {1 1}
+
+test sp014-13 {acceptance[1],[3]: USERS.dat is matched in plaintext; UPL below the needed level -> -4 and the timeout is reset} -body {
+  set files {
+    var/SESSIONS.dat "SID;UID;LastActivity;RedirectURL\n@Live000001@;4;1699999900;\n<.\n"
+    etc/config/USERS.dat "UID;Name;Password;UPL;EQ3\n4;guest;secret;1;1\n<.\n"
+  }
+  set r [drv {
+    source session.tcl
+    puts "RC=[session_requestisvalid 8]"
+    puts "LA=$sessions_lastactivity(@Live000001@)"
+  } -files $files -now 1700000000 -setenv {QUERY_STRING icsessionid=@Live000001@ HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi}]
+  set out [dict get $r stdout]
+  list [regexp {RC=-4} $out] [regexp {zu wenig Rechte|wenig Rechte} $out] [regexp {LA=1700000000} $out]
+} -result {1 1 1}
+
+test sp014-14 {acceptance[1]: enough rights - the uid is returned, the timeout is reset and SESSIONS.dat is rewritten} -body {
+  set files {
+    var/SESSIONS.dat "SID;UID;LastActivity;RedirectURL\n@Live000001@;4;1699999900;\n<.\n"
+    etc/config/USERS.dat "UID;Name;Password;UPL;EQ3\n4;adm;secret;8;1\n<.\n"
+  }
+  set r [drv {
+    source session.tcl
+    puts "RC=[session_requestisvalid 8]"
+    set fd [open /var/SESSIONS.dat r]; puts [read $fd]; close $fd
+  } -files $files -now 1700000000 -setenv {QUERY_STRING icsessionid=@Live000001@ HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi}]
+  set out [dict get $r stdout]
+  list [regexp {RC=4} $out] [regexp {@Live000001@;4;1700000000;http://ccu/pages/x.cgi\?icsessionid=@Live000001@} $out]
+} -result {1 1}
+
+test sp014-15 {acceptance[3]: user_verify needs name, password and eq3==1; user_upl is -1 for an eq3==0 user} -body {
+  set files {etc/config/USERS.dat "UID;Name;Password;UPL;EQ3\n1;admin;elv;8;1\n2;legacy;pw;8;0\n<.\n"}
+  flat [drv {
+    source session.tcl
+    puts "[user_verify admin elv] [user_verify admin wrong] [user_verify legacy pw] [user_upl 1] [user_upl 2] [user_upl 99]"
+  } -files $files]
+} -result {1 -1 -1 8 -1 -1}
+
+test sp014-16 {acceptance[0]: ISE mode - the ReGa session string decides; uid>0 and upl>=needed continue, otherwise the reloadPage stub and -4} -body {
+  set ok [drv {
+    source session.tcl
+    set ISE_SD "17;2;user;First;Last;"
+    puts "RC=[session_requestisvalid 2]"
+  } -setenv {QUERY_STRING sid=@AbCdEf1234@ HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi}]
+  set low [drv {
+    source session.tcl
+    set ISE_SD "17;1;user;First;Last;"
+    puts "RC=[session_requestisvalid 2]"
+  } -setenv {QUERY_STRING sid=@AbCdEf1234@ HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi}]
+  list [regexp {RC=17} [dict get $ok stdout]] [regexp {RC=-4} [dict get $low stdout]] [string match *reloadPage* [dict get $low stdout]]
+} -result {1 1 1}
+
+test sp014-17 {the HTML stubs keep the ISO-8859-1 umlauts of v1 as single bytes} -body {
+  set files {
+    var/SESSIONS.dat "SID;UID;LastActivity;RedirectURL\n@Live000001@;4;1699999900;\n<.\n"
+    etc/config/USERS.dat "UID;Name;Password;UPL;EQ3\n4;guest;secret;1;1\n<.\n"
+  }
+  set d [file join [mock::tmpdir] out]
+  set r [drv "
+    source session.tcl
+    fconfigure stdout -encoding iso8859-1
+    session_requestisvalid 8
+  " -files $files -now 1700000000 -setenv {QUERY_STRING icsessionid=@Live000001@ HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi}]
+  set out [dict get $r stdout]
+  list [regexp "Rechte f.r diese" $out] [regexp "Zur.ck" $out]
+} -result {1 1}
+
+test sp014-18 {acceptance[6] (re-baseline BD-15): get_platform returns the PLATFORM value of /VERSION, placed after get_version} -body {
+  set a [drv {
+    source session.tcl
+    puts "<[get_platform]> <[get_version]>"
+  } -files {VERSION "VERSION=3.75.6\nPLATFORM=raspmatic_rpi4\n"}]
+  lines $a
+} -result {{<raspmatic_rpi4> <3.75.6>}}
+
+cleanupTests

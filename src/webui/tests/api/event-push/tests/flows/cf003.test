@@ -1,0 +1,95 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF003 Event queue (Event.subscribe / poll / unsubscribe, producers; flow-model.md#cf003):
+# subscribe (sid shape, exclusive lock, truncate queue, checksid of the others, register, fire
+# init) -> producers (hm_deldev, init) fire events to every subscriber below the limit -> poll
+# reads, clears and resets the counter -> unsubscribe; v2 long-poll.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,event-push
+set SESS {{AAA111 1 1000 A} {BBB222 1 1001 B}}
+proc call {method sid args} { return [golden::call $method [list _session_id_ $sid] -candidate $::CAND -sessions $::SESS {*}$args] }
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR"
+}
+proc rd {fs rel} { if {[file exists [file join $fs {*}[split $rel /]]]} { return [mock::fs::read $fs $rel] }; return MISSING }
+proc fire {fs type data} {
+  golden::tcl "source \[file join \$env(DOCUMENT_ROOT) api/eq3/common.tcl\]\nsource \[file join \$env(DOCUMENT_ROOT) api/eq3/event.tcl\]\nevent_fire $type [list $data]" -candidate $::CAND -fs $fs
+}
+
+test cf003-1 {steps 1-6: subscribe registers the session, keeps the other valid subscriber and queues 'init' for both} -body {
+  set fs [mock::fs::create]
+  call Event.subscribe AAA111 -fs $fs
+  set r [call Event.subscribe BBB222 -fs $fs]
+  array set l [rd $fs tmp/event/subscriber.list]
+  set out [list [result $r] [lsort [array names l]] [rd $fs tmp/event/AAA111] [rd $fs tmp/event/BBB222]]
+  mock::fs::destroy $fs
+  set out
+} -result [list true {AAA111 BBB222} "{TYPE init DATA null}\n{TYPE init DATA null}\n" "{TYPE init DATA null}\n"]
+
+test cf003-2 {step 7: a producer (hm_deldev) fires 'delete' to every subscriber; step 8: poll reads and clears the queue} -body {
+  set fs [mock::fs::create]
+  call Event.subscribe AAA111 -fs $fs
+  call Event.poll AAA111 -fs $fs
+  golden::tcl {
+    set argv [list {NEQ01}]
+    source rega/bin/hm_deldev
+  } -candidate $::CAND -fs $fs
+  set r [call Event.poll AAA111 -fs $fs]
+  set again [call Event.poll AAA111 -fs $fs]
+  mock::fs::destroy $fs
+  list [result $r] [result $again]
+} -result {{[{"type":"delete" ,"data":"NEQ01"}]} {[]}}
+
+test cf003-3 {step 7/8 overflow: at 64 pending events further events are dropped; the poll resets the counter and the next event is delivered (NFR-018)} -body {
+  set fs [mock::fs::create]
+  call Event.subscribe AAA111 -fs $fs
+  call Event.poll AAA111 -fs $fs
+  for {set i 1} {$i <= 66} {incr i} { fire $fs delete "\"d$i\"" }
+  set r [call Event.poll AAA111 -fs $fs]
+  set n [regexp -all {"type":"delete"} [dict get $r body]]
+  fire $fs delete {"d67"}
+  set r2 [call Event.poll AAA111 -fs $fs]
+  mock::fs::destroy $fs
+  list $n [result $r2]
+} -result {64 {[{"type":"delete" ,"data":"d67"}]}}
+
+test cf003-4 {step 9: unsubscribe deletes the queue and the list entry} -body {
+  set fs [mock::fs::create]
+  call Event.subscribe AAA111 -fs $fs
+  set r [call Event.unsubscribe AAA111 -fs $fs]
+  array unset l
+  array set l [rd $fs tmp/event/subscriber.list]
+  set out [list [result $r] [array size l] [file exists [file join $fs tmp event AAA111]]]
+  mock::fs::destroy $fs
+  set out
+} -result {true 0 0}
+
+test cf003-5 {error path: the lock is not obtained - subscribe false, poll [], no path is built outside /tmp/event} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/lock 4711
+  set a [call Event.subscribe AAA111 -fs $fs -now 1700000000]
+  set b [call Event.poll AAA111 -fs $fs -now 1700000000]
+  mock::fs::destroy $fs
+  list [result $a] [result $b]
+} -result {false {[]}}
+
+test cf003-6 {error path: an invalid sid shape is refused (403) before a path is built; step 10: v2 long-poll without a valid sid is HTTP 401} -body {
+  set fs [mock::fs::create]
+  set a [golden::call Event.subscribe {_session_id_ ../../x} -candidate $::CAND -sessions {{../../x 1 1 x}} -fs $fs]
+  set b [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/events} -query timeout=1 \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id Unknown0001} -sessions $::SESS -fs $fs]]]
+  regexp {"code": (\d+)} [dict get $a body] -> code
+  set out [list $code [regexp {Status: 401} [dict get $b headers]] [file exists [file join $fs etc x]]]
+  mock::fs::destroy $fs
+  set out
+} -result {403 1 0}
+
+cleanupTests

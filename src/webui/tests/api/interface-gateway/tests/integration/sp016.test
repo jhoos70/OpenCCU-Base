@@ -1,0 +1,68 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP016 NFR and integration coverage (spec.json#SP016 non_functional_requirements[0..6]),
+# boundary/error cases and golden re-run of the dispatched Interface.* methods.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+set GP {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ0123456:1 paramsetKey VALUES}
+
+test sp016-nfr0 {NFR0: a Tcl error inside catch (unscripted xmlrpc, no tclrpc status) is always 601 'TCL error'} -body {
+  err [call Interface.getParamset $GP]
+} -result {601 {TCL error}}
+
+test sp016-nfr1 {NFR1: a bare jsonrpc_error 501 (getMasterValue 'invalid value key') keeps code 501 (frozen, EG-15)} -body {
+  err [call Interface.getMasterValue {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ0123456:1 valueKey NOPE} -xmlrpc {{getParamset {A 1}}}]
+} -result {501 {invalid value key}}
+
+test sp016-nfr1b {NFR1: Device.get 'device not found' keeps code 501} -body {
+  err [call Device.get {_session_id_ AbCdEf1234 id 1234}]
+} -result {501 {device not found}}
+
+test sp016-nfr2 {NFR2: an INTERFACE_LIST URL without :port is reported with port 0} -body {
+  set xml "<interfaces>\n<ipc><name>Local</name><url>local</url><info>Loc</info></ipc>\n</interfaces>"
+  set r [call Interface.listInterfaces {_session_id_ AbCdEf1234} -interfaces 0 -files [list etc/config/InterfacesList.xml $xml]]
+  dict get $r body
+} -result {{"id": 1,"version": "1.1","result": [{"name":"Local","port":0,"info":"Loc"}],"error": null}}
+
+test sp016-nfr3 {NFR3: all interfaces are listed (order follows array names and is not asserted)} -body {
+  set xml "<interfaces>\n<ipc><name>A</name><url>x:1</url><info>a</info></ipc>\n<ipc><name>B</name><url>x:2</url><info>b</info></ipc>\n</interfaces>"
+  set r [call Interface.listInterfaces {_session_id_ AbCdEf1234} -interfaces 0 -files [list etc/config/InterfacesList.xml $xml]]
+  set names {}
+  foreach {- n} [regexp -all -inline {"name":"([^"]*)"} [dict get $r body]] { lappend names $n }
+  lsort $names
+} -result {A B}
+
+test sp016-nfr4 {NFR4: an INTERFACE_LIST entry without INFO makes listInterfaces fail with the v1 internal error 200} -body {
+  set r [call Interface.listInterfaces {_session_id_ AbCdEf1234} -interfaces 0 -files [list var/tmp/api_ipc.cache {X {PORT 1 URL u}} etc/config/InterfacesList.xml ""]]
+  lindex [err $r] 0
+} -result 200
+
+test sp016-nfr5 {NFR5: Interface.isPresent with a bad interface name is 500 'unknown interface', never false} -body {
+  err [call Interface.isPresent {interface Nope} -sessions {}]
+} -result {500 {unknown interface (Nope)}}
+
+test sp016-nfr6 {NFR6: the XML-RPC fault text never reaches the client body or headers for any mapped status} -body {
+  set leaked 0
+  foreach st {-1 -2 -3 -4 -5 -6 -10 77 1} {
+    set r [call Interface.getParamset $GP -fault [list [list getParamset $st {LEAKME /usr/local/x.tcl}]]]
+    if {[string match *LEAKME* [dict get $r stdout]] || [string match */usr/local* [dict get $r stdout]]} { incr leaked }
+  }
+  set leaked
+} -result 0
+
+test sp016-golden {golden re-run: the dispatched Interface.* methods replay byte-identical through the staged tree (v1 frozen)} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.isPresent Interface.listInterfaces Interface.getParamset Interface.getValue Interface.getMasterValue Interface.getParamsetDescription Interface.getParamsetId}
+} -result {}
+
+cleanupTests

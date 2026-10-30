@@ -1,0 +1,143 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP031 acceptance[10], [11], [12], [14] and NFR6/NFR7: the per-IP Session.login limiter
+# (login_ip_limit 10, login_ip_window_seconds 60), active when rate_limit=true, strict_mode=true
+# or on /api/v2. Contract: contracts/behavioral-contracts.json#SP031, integration-contracts.json#rate_limit
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+set T0 1700000000
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc setconf {text} {
+  set f [file join [golden::root only:security-session] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root only:security-session] api apiconfig.conf] }
+# one Session.login (wrong credentials -> 501 when the limiter lets it pass) from addr at time t
+proc login {fs addr t args} {
+  return [golden::call Session.login {username u password p} -candidate only:security-session -sessions {} -fs $fs \
+    -remote_addr $addr -now $t -http {{{HTTP/1.1 200 OK} {}}} {*}$args]
+}
+proc codes {fs addr t n} {
+  set out {}
+  for {set i 0} {$i < $n} {incr i} { lappend out [lindex [err [login $fs $addr $t]] 0] }
+  return $out
+}
+proc tsfile {fs addr} { return [file join $fs tmp webui-ratelimit login-$addr] }
+
+test rl-0 {the staged limiter library exists} -body {
+  file exists [file join $gen security-session eq3 ratelimit.tcl]
+} -result 1
+
+test rl-1 {rate_limit=true: logins 1-10 from 192.0.2.10 within 60 s are processed, the 11th is 429 'rate limit exceeded' and login.htm is not contacted} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  set first [codes $fs 192.0.2.10 $T0 10]
+  set r [login $fs 192.0.2.10 [expr {$T0 + 5}]]
+  list $first [err $r] [llength [dict get $r http_calls]]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result [list [lrepeat 10 501] {429 {rate limit exceeded}} 0]
+
+test rl-2 {the counter is per client IP: 192.0.2.11 is processed while 192.0.2.10 is at 10 of 10} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  codes $fs 192.0.2.10 $T0 10
+  list [lindex [err [login $fs 192.0.2.10 [expr {$T0 + 1}]]] 0] [lindex [err [login $fs 192.0.2.11 [expr {$T0 + 1}]]] 0]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {429 501}
+
+test rl-3 {a login at t=61 s restarts the counter at 1 and is processed} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  codes $fs 192.0.2.10 $T0 10
+  set r [login $fs 192.0.2.10 [expr {$T0 + 61}]]
+  set n [llength [split [string trim [mock::fs::read $fs tmp/webui-ratelimit/login-192.0.2.10]]]]
+  list [lindex [err $r] 0] $n
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {501 1}
+
+test rl-4 {strict_mode=true enforces the limiter even with rate_limit=false} -setup {
+  setconf {array set API_CONFIG {rate_limit false strict_mode true}}
+  set fs [mock::fs::create]
+} -body {
+  codes $fs 192.0.2.10 $T0 10
+  lindex [err [login $fs 192.0.2.10 [expr {$T0 + 1}]]] 0
+} -cleanup { clearconf; mock::fs::destroy $fs } -result 429
+
+test rl-5 {the client IP is REMOTE_ADDR only: X-Forwarded-For is ignored (no bypass, no victim)} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  set out {}
+  for {set i 0} {$i < 11} {incr i} {
+    lappend out [lindex [err [login $fs 192.0.2.10 $T0 -header [list X-Forwarded-For "198.51.100.$i"]]] 0]
+  }
+  list [lindex $out end] [file exists [tsfile $fs 198.51.100.1]]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {429 0}
+
+test rl-6 {an empty REMOTE_ADDR is not limited per IP (EG-26)} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  lsort -unique [codes $fs {} $T0 12]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result 501
+
+test rl-7 {the counter file name maps characters outside [A-Za-z0-9._-] to '_' and is replaced by rename (no temp file left)} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  login $fs {fe80::1%eth0} $T0
+  set files [lmap f [glob -nocomplain -directory [file join $fs tmp webui-ratelimit] *] {file tail $f}]
+  set files
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {login-fe80__1_eth0}
+
+test rl-8 {library: ratelimit::login_ip_check returns {limited retry-after} with a Retry-After of 1..60 seconds for the 11th attempt} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  set r [golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/ratelimit.tcl]
+    set res {}
+    for {set i 0} {$i < 11} {incr i} { lappend res [ratelimit::login_ip_check 192.0.2.10] }
+    puts [lindex $res 9]
+    puts [lindex $res 10]
+  } -candidate only:security-session -fs $fs -now $T0]
+  lassign [split [string trim [dict get $r stdout]] \n] tenth eleventh
+  list $tenth [lindex $eleventh 0] [expr {[lindex $eleventh 1] >= 1 && [lindex $eleventh 1] <= 60}]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {{0 0} 1 1}
+
+test rl-9 {library: on /api/v2 (API_V2) the limiter is enforced even with rate_limit=false} -setup {
+  set fs [mock::fs::create]
+} -body {
+  set r [golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/ratelimit.tcl]
+    set API_V2 1
+    for {set i 0} {$i < 10} {incr i} { ratelimit::login_ip_check 192.0.2.10 }
+    puts [lindex [ratelimit::login_ip_check 192.0.2.10] 0]
+  } -candidate only:security-session -fs $fs -now $T0]
+  string trim [dict get $r stdout]
+} -cleanup { mock::fs::destroy $fs } -result 1
+
+test rl-10 {NFR7: an unavailable counter store fails open - the login is processed and one syslog line 'rate limiter unavailable' with a correlation id is written} -constraints unixNotRoot -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  file attributes [file join $fs tmp] -permissions 0555
+} -body {
+  set r [login $fs 192.0.2.10 $T0]
+  set n 0
+  foreach s [dict get $r syslog] { if {[regexp {cid=[0-9a-f]{16} .*rate limiter unavailable} $s]} { incr n } }
+  list [lindex [err $r] 0] $n
+} -cleanup { file attributes [file join $fs tmp] -permissions 0755; clearconf; mock::fs::destroy $fs } -result {501 1}
+
+cleanupTests

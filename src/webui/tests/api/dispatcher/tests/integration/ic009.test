@@ -1,0 +1,51 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC009 dispatcher -> rega-model: GET /api/v2/model (v2/router.tcl). Request shape: query sections,
+# limit (1..500, default 100), offset. Response {<section>:{total,offset,limit,items}}. Errors: 401
+# no valid sid (no ReGa script executed); 422 limit 0 or above 500.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+set SESS {{AbCdEf1234 1 1000 Guest}}
+proc model {query args} {
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/model} -query $query \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::SESS {*}$args]]]
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test ic009-1 {the router maps GET /api/v2/model to the rega-model route: {<section>:{total,offset,limit,items}}} -body {
+  set r [model "sections=rooms&limit=1&offset=1" -rega [list [list {*ID_ROOMS*EnumUsedIDs()*} [list {ID 1 NAME a DESCRIPTION d CHANNELS {}} {ID 2 NAME b DESCRIPTION d CHANNELS {}}]]]]
+  list [status $r] [string trim [dict get $r body]]
+} -result [list 200 {{"rooms":{"total":2,"offset":1,"limit":1,"items":[{"id":"2","name":"b","description":"d","channelIds":[]}]}}}]
+
+test ic009-2 {query defaults: limit 100, offset 0, all sections but datapoints} -body {
+  set r [model "" -rega {}]
+  set j [string trim [dict get $r body]]
+  list [status $r] [regexp -all {"limit":100} $j] [regexp -all {"offset":0} $j] [string match *datapoints* $j]
+} -result {200 6 6 0}
+
+test ic009-3 {error 401: no valid sid - no ReGa script of the model is executed} -body {
+  set r [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/model} -header {X-Requested-With XMLHttpRequest} -sessions $::SESS]]]
+  list [status $r] [llength [lsearch -all -inline -glob [dict get $r rega_calls] *EnumIDs()*]]
+} -result {401 0}
+
+test ic009-4 {error 422: limit 0 or above 500 is error 403 'invalid argument (limit)'; 500 is accepted} -body {
+  set out {}
+  foreach q {limit=0 limit=501 limit=500} { set r [model "sections=rooms&$q" -rega {}]; lappend out [status $r] }
+  set out
+} -result {422 422 200}
+
+cleanupTests

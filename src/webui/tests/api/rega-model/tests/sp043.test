@@ -1,0 +1,112 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP043 - Room and Subsection (function) queries and membership edits: v1 behaviour frozen except
+# the working de-duplication of Room/Subsection.listProgramIds (the undefined '-lrmdups' of v1 is
+# replaced; order of first occurrence). contracts/behavioral-contracts.json#SP043 (the v2 mutation
+# routes /api/v2/rooms and /api/v2/functions are gated by EG-6)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set S {_session_id_ AbCdEf1234}
+set FAMILIES {Room ID_ROOMS room Subsection ID_FUNCTIONS subsection}
+
+test sp043-0 {the staged method scripts of SP043 exist and are complete Tcl} -body {
+  set bad {}
+  foreach d {room subsection} {
+    foreach f {listall getall get addchannel removechannel} {
+      set p [file join $gen rega-model methods $d $f.tcl]
+      if {![file exists $p]} { lappend bad $d/$f; continue }
+      set fd [open $p r]; set c [read $fd]; close $fd
+      if {![info complete $c]} { lappend bad $d/$f }
+    }
+  }
+  set bad
+} -result {}
+
+test sp043-1 {acceptance[0]: listAll returns the ids of the used rooms / functions as a string array} -body {
+  set out {}
+  foreach {ns idobj dir} $::FAMILIES {
+    lappend out [result [call $ns.listAll $::S -sessions $::GUEST -rega [list [list "*$idobj*EnumUsedIDs()*" {{1201} {1202}}]]]]
+  }
+  set out
+} -result {{["1201","1202"]} {["1201","1202"]}}
+
+test sp043-2 {acceptance[1]: getAll returns {id,name,description,channelIds[]}} -body {
+  set l [list [list ID 1201 NAME Kitchen DESCRIPTION {the kitchen} CHANNELS {1301 1302}]]
+  set out {}
+  foreach {ns idobj dir} $::FAMILIES {
+    lappend out [result [call $ns.getAll $::S -sessions $::GUEST -rega [list [list "*$idobj*EnumUsedIDs()*" $l]]]]
+  }
+  set out
+} -result [lrepeat 2 {[{"id":"1201","name":"Kitchen","description":"the kitchen","channelIds":["1301","1302"]}]}]
+
+test sp043-3 {acceptance[2]: get returns one object} -body {
+  set out {}
+  foreach {ns idobj dir} $::FAMILIES {
+    lappend out [result [call $ns.get [list {*}$::S id 1201] -sessions $::GUEST -rega [list [list {*EnumInfo()*} {ID 1201 NAME Kitchen DESCRIPTION x CHANNELS {1301}}]]]]
+  }
+  set out
+} -result [lrepeat 2 {{"id":"1201","name":"Kitchen","description":"x","channelIds":["1301"]}}]
+
+test sp043-4 {acceptance[3]: get for an unknown id is 501 'room not found' / 'function not found'} -body {
+  list [err [call Room.get [list {*}$S id 9] -sessions $GUEST]] [err [call Subsection.get [list {*}$S id 9] -sessions $GUEST]]
+} -result {{501 {room not found}} {501 {function not found}}}
+
+test sp043-5 {acceptance[4],[5]: addChannel / removeChannel answer true (raw); an unknown id is error 500 'homematic script error'} -body {
+  set out {}
+  foreach {ns idobj dir} $::FAMILIES {
+    set p [list {*}$::S id 1201 channelId 1301]
+    lappend out [result [call $ns.addChannel $p -sessions $::ADMIN -rega {{*.Add(channelId)* true}}]] [result [call $ns.removeChannel $p -sessions $::ADMIN -rega {{*.Remove(channelId)* true}}]] \
+      [err [call $ns.addChannel $p -sessions $::ADMIN]] [err [call $ns.removeChannel $p -sessions $::ADMIN]]
+  }
+  set out
+} -result [lrepeat 2 true true {500 {homematic script error}} {500 {homematic script error}}]
+
+test sp043-6 {acceptance[6] [TARGET]: listProgramIds answers the de-duplicated ids in the order of first occurrence (no error 200)} -body {
+  set out {}
+  foreach {ns idobj dir} $::FAMILIES {
+    lappend out [result [call $ns.listProgramIds [list {*}$::S id 1201] -sessions $::GUEST -rega {{*ChnEnumDPUsagePrograms* {{1234} {5678} {1234}}}}]] \
+      [result [call $ns.listProgramIds [list {*}$::S id 1201] -sessions $::GUEST]]
+  }
+  set out
+} -result [lrepeat 2 {["1234","5678"]} {[]}]
+
+test sp043-7 {NFR2 (frozen v1): Room.listAll runs without parameters, Subsection.listAll injects the request parameters as ReGa variables} -body {
+  set a [lindex [dict get [call Room.listAll $::S -sessions $::GUEST] rega_calls] end]
+  set b [lindex [dict get [call Subsection.listAll $::S -sessions $::GUEST] rega_calls] end]
+  list [string match {*var _session_id_*} $a] [string match {*var _session_id_*} $b]
+} -result {0 1}
+
+test sp043-8 {NFR0 (frozen v1): addChannel does not validate the channel id in Tcl - it is forwarded to ReGa as an escaped variable} -body {
+  set r [call Room.addChannel [list {*}$S id 1201 channelId {x"; Write("y")}] -sessions $ADMIN -rega {{*.Add(channelId)* true}}]
+  list [result $r] [string match {*var channelId = "x\\"; Write(\\"y\\")";*} [lindex [dict get $r rega_calls] end]]
+} -result {true 1}
+
+test sp043-9 {privilege: the queries need GUEST, addChannel / removeChannel need ADMIN (USER session -> 400)} -body {
+  set out {}
+  foreach {ns idobj dir} $::FAMILIES {
+    foreach m {addChannel removeChannel} {
+      lappend out [lindex [err [call $ns.$m [list {*}$::S id 1 channelId 2] -sessions {{AbCdEf1234 2 1000 User}}]] 0]
+    }
+  }
+  set out
+} -result {400 400 400 400}
+
+cleanupTests

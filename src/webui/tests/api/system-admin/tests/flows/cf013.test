@@ -1,0 +1,72 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF013 SNMP enable / disable (flow-model.md#cf013): ADMIN call -> libfirewall (logging, load) ->
+# setSNMPUser.sh / unsetSNMPUser.sh as an argument list -> service access full / none -> save +
+# configure only when the helper succeeded -> {"msg": ...}.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,system-admin
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::ADMIN {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set FWLIB {
+  proc lg {s} { set fd [open /tmp/lib.log a]; puts $fd $s; close $fd }
+  proc Firewall_setLoggingEnabled {b} { lg "logging $b" }
+  proc Firewall_loadConfiguration {} { lg load }
+  proc Firewall_set_service_access {s m} { lg "access $s $m" }
+  proc Firewall_saveConfiguration {} { lg save }
+  proc Firewall_configureFirewall {} { lg configure }
+}
+proc liblog {fs} { if {[file exists [file join $fs tmp lib.log]]} { return [split [string trim [mock::fs::read $fs tmp/lib.log]] \n] }; return {} }
+
+test cf013-1 {steps 2-5 enable: logging, load, setSNMPUser.sh <usr> <pass>, access SNMP full, save, configure, {"msg":"noError"}} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSNMPEnabled [concat $S {enabled true usr snmpuser pass {pa ss}}] -fs $fs -files [list lib/libfirewall.tcl $FWLIB]]
+  set out [list [result $r] [lindex [dict get $r exec_calls] 0] [liblog $fs]]
+  mock::fs::destroy $fs
+  set out
+} -result [list {{"msg" : "noError"}} {/bin/setSNMPUser.sh snmpuser {pa ss} >/dev/null} {{logging 1} load {access SNMP full} save configure}]
+
+test cf013-2 {step 3 disable: unsetSNMPUser.sh, access SNMP none} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSNMPEnabled [concat $S {enabled false usr u pass p}] -fs $fs -files [list lib/libfirewall.tcl $FWLIB]]
+  set out [list [lindex [dict get $r exec_calls] 0] [lindex [liblog $fs] 2]]
+  mock::fs::destroy $fs
+  set out
+} -result [list {/bin/unsetSNMPUser.sh >/dev/null} {access SNMP none}]
+
+test cf013-3 {error path: a helper exit status != 0 carries its output in msg and the firewall configuration is not saved} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSNMPEnabled [concat $S {enabled true usr u pass p}] -fs $fs -files [list lib/libfirewall.tcl $FWLIB] -execfail {{*setSNMPUser* helper-failed}}]
+  set log [liblog $fs]
+  mock::fs::destroy $fs
+  list [string match *helper-failed* [dict get $r body]] [expr {"save" in $log}] [expr {"configure" in $log}]
+} -result {1 0 0}
+
+test cf013-4 {error path: a non-ADMIN session is denied (400); nothing is executed} -body {
+  set r [call CCU.setSNMPEnabled [concat $S {enabled true usr u pass p}] -sessions {{AbCdEf1234 2 1 U}}]
+  list [lindex [err $r] 0] [llength [dict get $r exec_calls]]
+} -result {400 0}
+
+test cf013-5 {credentials are never logged to the syslog} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSNMPEnabled [concat $S {enabled true usr snmpuser pass TOPSECRETPW}] -fs $fs -files [list lib/libfirewall.tcl $FWLIB]]
+  mock::fs::destroy $fs
+  string match *TOPSECRETPW* [dict get $r syslog]
+} -result 0
+
+cleanupTests

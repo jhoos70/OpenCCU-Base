@@ -1,0 +1,131 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP035 acceptance[1]-[7] (EG-3 corrected 2026-10-20, BD-16): CCU.createFile (ADMIN) has an exact
+# 4-path allow-list, CCU.existsFile (GUEST) an exact 6-path allow-list plus two anchored patterns
+# for the per-user installation wizard acknowledgement files. Patterns never apply to createFile.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set USER {{AbCdEf1234 2 1000 User}}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set CREATE4 {/etc/config/userAckSecurityHint /etc/config/firewallConfigured /etc/config/fieldTestActive /etc/config/legacyAPIMigrationAccepted}
+set EXISTS6 {/etc/config/userAckSecurityHint /etc/config/firewallConfigured /etc/config/fieldTestActive /etc/config/showDiagramDatapoints /media/sd-mmcblk0/measurement /etc/config/legacyAPIMigrationAccepted}
+set PATOK {/etc/config/userprofiles/userAckInstallWizardId_1001 /etc/config/userprofiles/userAckInstallWizard_admin}
+set PATBAD [list /etc/config/userprofiles/../shadow /etc/config/userprofiles/userAckInstallWizard_a/b \
+  /etc/config/userprofiles/userAckInstallWizardId_12x /etc/config/userprofiles/userAckInstallWizardId_ \
+  /etc/config/userprofiles/userAckInstallWizardId_12345678901 \
+  /etc/config/userprofiles/userAckInstallWizard_[string repeat a 201] \
+  x/etc/config/userprofiles/userAckInstallWizardId_1]
+
+test sp035p-1 {acceptance[1]: createFile (ADMIN) with each of the 4 allow-listed paths is 'touch -- <path>' and true} -body {
+  set out {}
+  foreach p $CREATE4 {
+    set r [call CCU.createFile [list _session_id_ AbCdEf1234 file $p] -sessions $ADMIN]
+    lappend out [result $r] [lindex [dict get $r exec_calls] 0]
+  }
+  set out
+} -result [list true {touch -- /etc/config/userAckSecurityHint} true {touch -- /etc/config/firewallConfigured} \
+  true {touch -- /etc/config/fieldTestActive} true {touch -- /etc/config/legacyAPIMigrationAccepted}]
+
+test sp035p-2 {acceptance[4]: createFile for GUEST and USER is 400 for each of the 4 paths, no exec call} -body {
+  set out {}; set n 0
+  foreach sess [list $GUEST $USER] {
+    foreach p $CREATE4 {
+      set r [call CCU.createFile [list _session_id_ AbCdEf1234 file $p] -sessions $sess]
+      lappend out [lindex [err $r] 0]
+      incr n [llength [dict get $r exec_calls]]
+    }
+  }
+  list [lsort -unique $out] $n
+} -result {400 0}
+
+test sp035p-3 {acceptance[2]: existsFile (GUEST/USER/ADMIN) with each of the 6 exact paths answers true/false} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/legacyAPIMigrationAccepted x
+  mock::fs::write $fs etc/config/fieldTestActive x
+  set out {}
+  foreach sess [list $GUEST $USER $ADMIN] {
+    set row {}
+    foreach p $EXISTS6 { lappend row [result [call CCU.existsFile [list _session_id_ AbCdEf1234 file $p] -sessions $sess -fs $fs]] }
+    lappend out [join $row ,]
+  }
+  mock::fs::destroy $fs
+  lsort -unique $out
+} -result {false,false,true,false,false,true}
+
+test sp035p-4 {acceptance[3]: the two anchored userAckInstallWizard patterns answer true when the file exists, false otherwise} -body {
+  set fs [mock::fs::create]
+  set out {}
+  foreach p $PATOK { lappend out [result [call CCU.existsFile [list _session_id_ AbCdEf1234 file $p] -sessions $GUEST -fs $fs]] }
+  foreach p $PATOK { mock::fs::write $fs [string range $p 1 end] 1 }
+  foreach p $PATOK { lappend out [result [call CCU.existsFile [list _session_id_ AbCdEf1234 file $p] -sessions $GUEST -fs $fs]] }
+  mock::fs::destroy $fs
+  set out
+} -result {false false true true}
+
+test sp035p-5 {acceptance[6]: pattern boundary violations are 500 'path not allowed' even when the file exists (no file-exists oracle), nothing executed} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/userAckInstallWizardId_12x 1
+  mock::fs::write $fs etc/config/userprofiles/userAckInstallWizardId_ 1
+  mock::fs::write $fs etc/shadow 1
+  set out {}; set n 0
+  foreach p $PATBAD {
+    set r [call CCU.existsFile [list _session_id_ AbCdEf1234 file $p] -sessions $GUEST -fs $fs]
+    lappend out [err $r]
+    incr n [llength [dict get $r exec_calls]]
+  }
+  mock::fs::destroy $fs
+  list [lsort -unique $out] [llength $out] $n
+} -result [list [list {500 {path not allowed}}] 7 0]
+
+test sp035p-6 {acceptance[6]: createFile never applies the patterns, the wizard names are 500 for ADMIN, no exec call} -body {
+  set out {}; set n 0
+  foreach p [concat $PATOK $PATBAD] {
+    set r [call CCU.createFile [list _session_id_ AbCdEf1234 file $p] -sessions $ADMIN]
+    lappend out [err $r]
+    incr n [llength [dict get $r exec_calls]]
+  }
+  list [lsort -unique $out] $n
+} -result [list [list {500 {path not allowed}}] 0]
+
+test sp035p-7 {pattern boundaries: 1 and 10 digits and a 200-character name are accepted} -body {
+  set out {}
+  foreach p [list /etc/config/userprofiles/userAckInstallWizardId_1 /etc/config/userprofiles/userAckInstallWizardId_1234567890 \
+      /etc/config/userprofiles/userAckInstallWizard_[string repeat a 200]] {
+    lappend out [result [call CCU.existsFile [list _session_id_ AbCdEf1234 file $p] -sessions $GUEST]]
+  }
+  set out
+} -result {false false false}
+
+test sp035p-8 {an embedded NUL or newline in the name part is rejected by the anchored pattern} -body {
+  set out {}
+  foreach p [list "/etc/config/userprofiles/userAckInstallWizard_a\u0000b" "/etc/config/userprofiles/userAckInstallWizardId_1\n"] {
+    lappend out [lindex [err [call CCU.existsFile [list _session_id_ AbCdEf1234 file $p] -sessions $GUEST]] 0]
+  }
+  set out
+} -result {500 500}
+
+test sp035p-9 {acceptance[7]: the shipped lists are configuration, a path_allow_pattern.CCU.existsFile entry in apiconfig.conf replaces the default patterns} -setup {
+  set f [file join [golden::root only:system-admin] api apiconfig.conf]
+  set fd [open $f w]; puts $fd {array set API_CONFIG {path_allow_pattern.CCU.existsFile {{^/custom/[a-z]{1,5}$}}}}; close $fd
+} -body {
+  list [result [call CCU.existsFile {_session_id_ AbCdEf1234 file /custom/abc} -sessions $GUEST]] \
+       [err [call CCU.existsFile {_session_id_ AbCdEf1234 file /etc/config/userprofiles/userAckInstallWizardId_1} -sessions $GUEST]]
+} -cleanup { file delete -force $f } -result {false {500 {path not allowed}}}
+
+cleanupTests

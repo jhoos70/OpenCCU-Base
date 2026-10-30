@@ -1,0 +1,89 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP007 NFR and integration coverage (spec.json#SP007 non_functional_requirements[0..5]),
+# boundary and error cases, and the consumers of the library: the backup CGIs (IC014) and the
+# PDA caller contract ('true' != 'true' is false => request continues).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source /www/tcl/eq3/rega.tcl
+  source /www/tcl/eq3/session.tcl
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:security-session {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+set SESS {{@AbCdEf1234@ 8 1000 Admin}}
+
+test sp007-nfr0 {NFR0: session_isValid insists on the '@'-wrapped 12 character id while the JSON API passes the unwrapped id to GetSessionVarStr (both key forms exist in the mock session table)} -body {
+  set r [drv {
+    puts [session_isValid @AbCdEf1234@]
+    puts [session_isValid AbCdEf1234]
+  } -sessions [list {@AbCdEf1234@ 8 1000 A} {AbCdEf1234 8 1000 A}]]
+  lines $r
+} -result {true false}
+
+test sp007-nfr1 {NFR1: session_renew does not validate the result of the page hit} -body {
+  set r [drv { puts [catch {session_renew AbCdEf1234} m]:$m } -http {{{HTTP/1.1 500 Error} {}}}]
+  lines $r
+} -result {0:}
+
+test sp007-nfr2 {NFR2: a connection error of ::http::geturl is propagated by session_login; login.cgi maps any other message to LOGIN_ERROR} -body {
+  set r [drv { puts [catch {session_login a b} m]:[expr {$m ne "create" && $m ne "credentials"}] }]
+  lines $r
+} -result {1:1}
+
+test sp007-nfr3 {NFR3: session_getUserId does not validate the sid shape (a short known id still resolves)} -body {
+  set r [drv { puts [session_getUserId short] } -sessions {{short 1 4711 U}}]
+  lines $r
+} -result 4711
+
+test sp007-nfr4 {NFR4: rega_escape is defined but session.tcl does not use it} -body {
+  set fd [open [file join $gen security-session eq3 session.tcl] r]; set c [read $fd]; close $fd
+  list [regexp {rega_escape} $c] [regexp {proc rega_escape} [read [set f [open [file join $gen security-session eq3 rega.tcl] r]]]]
+} -result {0 1}
+
+test sp007-nfr5 {NFR5 [TARGET]: ReGa failing during session_isValid is 'false' for all callers} -body {
+  set r [drv {
+    puts [session_isValid @AbCdEf1234@]
+    puts <[session_getUserId @AbCdEf1234@]>
+  } -regafail {*system.GetSessionVarStr*}]
+  lines $r
+} -result {false <>}
+
+test sp007-pda {the PDA caller: session_isValid returns 'true' exactly for a live session, so 'if {[session_isValid $sid] != "true"}' continues the request} -body {
+  set r [drv {
+    puts [expr {[session_isValid @AbCdEf1234@] != "true"}]
+    puts [expr {[session_isValid @Bogus000000@] != "true"}]
+  } -sessions $SESS]
+  lines $r
+} -result {0 1}
+
+test sp007-ic014 {IC014: the backup CGIs consume session_isValid through the staged library - a valid ADMIN sid is served, ReGa failing denies (fail-closed)} -body {
+  set root [mock::compose -only {backup-cgis security-session}]
+  set cfg [file join $root api apiconfig.conf]
+  set fd [open $cfg w]; puts $fd {array set API_CONFIG {path_allow_list.backup_files {/etc/config/rfd.conf}}}; close $fd
+  set cenv [mock::cgi_env::build GET -query "sid=%40AbCdEf1234%40&file=%2Fetc%2Fconfig%2Frfd.conf"]
+  mock::reset_all
+  mock::session::add @AbCdEf1234@ 8 1000 Admin
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf RFD
+  set cgi [file join $root api backup textfile.cgi]
+  set ok [mock::run_cgi $cgi $cenv -docroot $root -alias /www/ -fsroot $fs -cwd [file dirname $cgi]]
+  mock::rega_script::fail {*GetSessionVarStr*}
+  set denied [mock::run_cgi $cgi $cenv -docroot $root -alias /www/ -fsroot $fs -cwd [file dirname $cgi]]
+  mock::fs::destroy $fs
+  file delete -force $root
+  mock::reset_all
+  list [dict get $ok stdout] [lindex [split [dict get $denied stdout] \n] end]
+} -result [list "Content-Type: text/plain\n\nRFD" INVALID_SESSION]
+
+test sp007-golden {golden re-run: Session.* methods and the session consumers of the JSON API replay byte-identical through the staged security-session tree} -body {
+  golden::compare_all -candidate only:security-session -only {Session.login Session.logout Session.renew Session.setSessionVar User.getUserName WebUI.getColors}
+} -result {}
+
+cleanupTests

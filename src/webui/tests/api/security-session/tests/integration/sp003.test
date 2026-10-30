@@ -1,0 +1,111 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP003 NFR and integration coverage (spec.json#SP003 non_functional_requirements[0..7]),
+# boundary and error cases. Golden re-run: the privilege matrix of the corrected registry is
+# checked method by method against the numeric rule (the end-to-end golden replay of the whole
+# pipeline belongs to the staged homematic.cgi, SP001).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/hmscript.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/privilege.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher,security-session {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+
+test sp003-nfr0 {NFR0: LEVEL NONE needs neither a lookup nor a _session_id_ argument} -body {
+  set r [drv {
+    array set method {LEVEL NONE}
+    array set args {}
+    checkPrivilegeLevel method args
+    puts ok
+  }]
+  list [lines $r] [llength [dict get $r rega_calls]]
+} -result {ok 0}
+
+test sp003-nfr2 {NFR2: a malformed session string (non-numeric level field) is denied explicitly, not compared as a string} -body {
+  set r [drv {
+    array set method {LEVEL GUEST}
+    array set args {_session_id_ AbCdEf1234}
+    checkPrivilegeLevel method args
+    puts ALLOWED
+  } -rega {{*StrValueByIndex* x9}}]
+  list [string match *ALLOWED* [dict get $r stdout]] [regexp {"code": 400} [dict get $r stdout]]
+} -result {0 1}
+
+test sp003-nfr3 {NFR3: GUEST needs upl >= 1: upl 0 (user level NONE) is rejected, upl 1 passes} -body {
+  set out {}
+  foreach upl {0 1} {
+    set r [drv {
+      array set method {LEVEL GUEST}
+      array set args {_session_id_ AbCdEf1234}
+      checkPrivilegeLevel method args
+      puts ALLOWED
+    } -sessions [list [list AbCdEf1234 $upl 1000 U]]]
+    lappend out [string match *ALLOWED* [dict get $r stdout]]
+  }
+  set out
+} -result {0 1}
+
+test sp003-nfr5 {NFR5: the sid is embedded after escaping (backslash and quote doubled/escaped)} -body {
+  set r [drv {
+    array set method {LEVEL GUEST}
+    array set args [list _session_id_ "a\\b\"c"]
+    checkPrivilegeLevel method args
+  }]
+  string first {var _session_id_ = "a\\b\"c";} [lindex [dict get $r rega_calls] 0]
+} -result 0
+
+test sp003-matrix {the privilege matrix of the corrected registry: every method is allowed for exactly the sessions with upl >= its numeric level, for upl 0, 1, 2 and 8} -body {
+  set reg [golden::registry 1]
+  set bad {}
+  set num {NONE 0 GUEST 1 USER 2 ADMIN 8}
+  # one driver run per upl keeps the test fast: the driver walks the whole registry
+  foreach upl {0 1 2 8} {
+    set levels {}
+    dict for {name e} $reg { dict set levels $name [dict get $e LEVEL] }
+    set r [drv "
+      set levels [list $levels]
+      dict for {name level} \$levels {
+        array unset method; array set method \[list LEVEL \$level\]
+        array unset args; array set args {_session_id_ AbCdEf1234}
+        set denied \[catch {
+          set ::JSONRPC(ID_USED) 0
+          rename ::jsonrpc_error ::jsonrpc_error_real
+          proc ::jsonrpc_error {c m} { error \"DENIED \$c\" }
+          checkPrivilegeLevel method args
+        } msg\]
+        catch { rename ::jsonrpc_error {} }
+        rename ::jsonrpc_error_real ::jsonrpc_error
+        puts \"\$name \[expr {\$denied ? {denied} : {allowed}}\]\"
+      }
+    " -sessions [list [list AbCdEf1234 $upl 1000 U]]]
+    foreach line [lines $r] {
+      lassign $line name verdict
+      set need [dict get $num [dict get $reg $name LEVEL]]
+      set want [expr {$need <= $upl ? "allowed" : "denied"}]
+      if {$verdict ne $want} { lappend bad "$name@$upl:$verdict" }
+    }
+  }
+  set bad
+} -result {}
+
+test sp003-err1 {a registry LEVEL outside NONE/GUEST/USER/ADMIN is a Tcl error ('can't read USER_LEVEL(<x>)') that the dispatcher reports as internal error 200} -body {
+  set r [drv {
+    array set method {LEVEL TYPO}
+    array set args {_session_id_ AbCdEf1234}
+    puts [catch {checkPrivilegeLevel method args} m]:$m
+  }]
+  lines $r
+} -result {{1:can't read "USER_LEVEL(TYPO)": no such element in array}}
+
+cleanupTests

@@ -1,0 +1,176 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP002 - the methods.conf registry (eq3/registry.tcl and the corrected methods.conf):
+# contracts/behavioral-contracts.json#SP002
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/syslog.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/registry.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc readconf {path} {
+  set fd [open $path r]; fconfigure $fd -translation binary -encoding utf-8
+  set c [read $fd]; close $fd
+  return $c
+}
+set CONF [file join $gen dispatcher methods.conf]
+
+test sp002-0 {the staged registry library and the corrected methods.conf exist} -body {
+  list [file exists [file join $gen dispatcher eq3 registry.tcl]] [file exists $CONF]
+} -result {1 1}
+
+test sp002-1 {[TARGET] the corrected registry has exactly 179 unique entries, every one with LEVEL, SCRIPT_FILE, INFO and ARGUMENTS (49 with METHOD_FILE interface/dispatch.tcl)} -body {
+  set reg [dict create]
+  set dups 0
+  foreach {n b} [readconf $CONF] {
+    if {[dict exists $reg $n]} { incr dups }
+    dict set reg $n $b
+  }
+  set missing 0; set mf 0
+  dict for {n b} $reg {
+    foreach k {LEVEL SCRIPT_FILE INFO ARGUMENTS} { if {![dict exists $b $k]} { incr missing } }
+    if {[dict exists $b METHOD_FILE]} { incr mf }
+  }
+  list [dict size $reg] $dups $missing $mf
+} -result {179 0 0 49}
+
+test sp002-2 {[TARGET] level distribution after the deliberate changes: NONE 8, GUEST 48, USER 30, ADMIN 93} -body {
+  set c [dict create NONE 0 GUEST 0 USER 0 ADMIN 0]
+  foreach {n b} [readconf $CONF] { dict incr c [dict get $b LEVEL] }
+  list [dict get $c NONE] [dict get $c GUEST] [dict get $c USER] [dict get $c ADMIN]
+} -result {8 48 30 93}
+
+test sp002-3 {[TARGET] deliberate changes: CCU.createFile ADMIN, Session.logout GUEST, CCU.existsFile stays GUEST} -body {
+  array set creg [readconf $CONF]
+  array set e1 $creg(CCU.createFile); array set e2 $creg(Session.logout); array set e3 $creg(CCU.existsFile)
+  list $e1(LEVEL) $e2(LEVEL) $e3(LEVEL)
+} -result {ADMIN GUEST GUEST}
+
+test sp002-4 {[TARGET] corrected ARGUMENTS: _session_id_ in ReGa.getAllDatapoints and Session.setSessionVar, setTeam declares 'interface', Channel.setName/setMode declare name/mode} -body {
+  array set creg [readconf $CONF]
+  set out {}
+  foreach m {ReGa.getAllDatapoints Session.setSessionVar Interface.setTeam Channel.setName Channel.setMode} {
+    array unset e; array set e $creg($m)
+    lappend out $e(ARGUMENTS)
+  }
+  set out
+} -result {_session_id_ {_session_id_ var val} {_session_id_ interface channelAddress teamAddress} {_session_id_ id name} {_session_id_ id mode}}
+
+test sp002-5 {the unauthenticated surface in the registry is exactly the 8-method allow-list (CI check of the allow-list library)} -body {
+  string trim [exec tclsh8.6 << "
+    source [file join $gen security-session eq3 allowlist.tcl]
+    set reg {}
+    foreach {n b} \[read \[set fd \[open $CONF r\]\]\] { dict set reg \$n \$b }
+    puts \[allowlist::registry_violations \$reg\]
+  "]
+} -result {}
+
+test sp002-6 {registry_load fills METHOD_LIST from methods.conf (name -> LEVEL/SCRIPT_FILE/... list), 179 entries, and writes the cache} -body {
+  set fs [mock::fs::create]
+  set r [drv {
+    puts [registry_load methods.conf]
+    puts [array size METHOD_LIST]
+    array set m $METHOD_LIST(system.methodHelp)
+    puts [list $m(LEVEL) $m(SCRIPT_FILE) $m(ARGUMENTS)]
+  } -fs $fs]
+  set cache [file exists [file join $fs var tmp api_registry.cache]]
+  mock::fs::destroy $fs
+  list [lines $r] $cache
+} -result [list [list 179 179 "NONE system/methodhelp.tcl name"] 1]
+
+test sp002-7 {[TARGET] an unchanged methods.conf is parsed 0 times after the first request: the second load is served from the cache} -constraints unixNotRoot -body {
+  set fs [mock::fs::create]
+  set r [drv {
+    puts [registry_load methods.conf]
+    file attributes methods.conf -permissions 0000
+    array unset METHOD_LIST
+    puts [registry_load methods.conf]
+    puts [array size METHOD_LIST]
+    file attributes methods.conf -permissions 0644
+  } -fs $fs]
+  mock::fs::destroy $fs
+  lines $r
+} -result {179 179 179}
+
+test sp002-8 {[TARGET] the cache is rebuilt when methods.conf has a newer mtime} -body {
+  set fs [mock::fs::create]
+  set r [drv {
+    registry_load methods.conf
+    # a changed registry (one more entry) with a newer mtime
+    set fd [open methods.conf a]; puts $fd "Extra.method \{ LEVEL ADMIN SCRIPT_FILE x.tcl INFO \{i\} ARGUMENTS \{\} \}"; close $fd
+    file mtime methods.conf [expr {[clock seconds] + 100}]
+    array unset METHOD_LIST
+    puts [registry_load methods.conf]
+  } -fs $fs]
+  mock::fs::destroy $fs
+  lines $r
+} -result 180
+
+test sp002-9 {NFR3 [TARGET]: a missing methods.conf gives an empty registry (every call 401 as in v1)} -body {
+  set fs [mock::fs::create]
+  set r [drv {
+    puts [registry_load nosuchfile.conf]
+    puts [array size METHOD_LIST]
+  } -fs $fs]
+  mock::fs::destroy $fs
+  lines $r
+} -result {0 0}
+
+test sp002-10 {NFR3 [TARGET]: a malformed methods.conf raises (the dispatcher answers 200 with a correlation id) and the parse error is logged to the syslog with the correlation id} -body {
+  set fs [mock::fs::create]
+  set bad "x \{ LEVEL ADMIN"
+  mock::fs::write $fs bad.conf $bad
+  set r [drv {
+    puts [catch {registry_load /bad.conf} m]
+    puts [string match *cid* $m]
+  } -fs $fs]
+  set n 0
+  foreach s [dict get $r syslog] { if {[regexp {cid=[0-9a-f]{16} method=registry } $s]} { incr n } }
+  mock::fs::destroy $fs
+  list [lines $r] $n
+} -result [list {1 0} 1]
+
+test sp002-11 {NFR1: TAB indented keys parse like any other (as in the v1 entries of the User.* methods)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tab.conf "User.getUserName \{\n\tLEVEL USER\n\tSCRIPT_FILE user/getusername.tcl\n\tINFO \{x\}\n\tARGUMENTS \{_session_id_ userID\}\n\}\n"
+  set r [drv {
+    registry_load /tab.conf
+    array set m $METHOD_LIST(User.getUserName)
+    puts [list $m(LEVEL) $m(SCRIPT_FILE)]
+  } -fs $fs]
+  mock::fs::destroy $fs
+  lines $r
+} -result {{USER user/getusername.tcl}}
+
+test sp002-12 {the registry loader reads the v1 ISO-8859-1 methods.conf as well as the UTF-8 staged one: non-ASCII INFO texts give the same characters} -body {
+  set fs [mock::fs::create]
+  set legacy [file join $::mock::legacy_api methods.conf]
+  set fd [open $legacy r]; fconfigure $fd -translation binary; set bytes [read $fd]; close $fd
+  mock::fs::write $fs legacy.conf $bytes
+  set r [drv {
+    registry_load /legacy.conf
+    array set m $METHOD_LIST(system.listMethods)
+    puts [string length $m(INFO)]
+    puts [string first [format %c 252] $m(INFO)]
+  } -fs $fs]
+  set r2 [drv {
+    registry_load methods.conf
+    array set m $METHOD_LIST(system.listMethods)
+    puts [string length $m(INFO)]
+    puts [string first [format %c 252] $m(INFO)]
+  } -fs $fs]
+  mock::fs::destroy $fs
+  list [lines $r] [lines $r2]
+} -result [list {43 27} {43 27}]
+
+cleanupTests

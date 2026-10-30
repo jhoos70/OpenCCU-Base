@@ -1,0 +1,17 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# Harness reuse smoke test (user-profile): the shared mock bridges load read-only from the
+# schema-harness sibling and one xmlrpc round trip works.
+set here [file dirname [file normalize [info script]]]
+source [file normalize [file join $here .. .. schema-harness tests helpers mocks.tcl]]
+
+test harness-smoke-1 {mock xmlrpc round trip through the shared schema-harness mocks} -setup {
+  mock::xmlrpc::reset
+  mock::xmlrpc::install
+  mock::xmlrpc::expect getParamset {LEVEL 0.5}
+} -body {
+  list [xmlrpc http://127.0.0.1:2001 getParamset {string NEQ0123456:1} {string VALUES}] [llength [mock::xmlrpc::calls]]
+} -result {{LEVEL 0.5} 1}
+
+cleanupTests

@@ -1,0 +1,149 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP014 NFR and integration coverage (spec.json#SP014 non_functional_requirements[0..10]),
+# boundary and error cases and the golden fixture re-run (the classic libraries live outside the
+# JSON API tree: the API fixtures must stay byte-identical with them staged).
+# NFR8 (symlinks created by src/webui/CMakeLists.txt) is a build property, not testable here.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  file copy -force ../tcl/extern/cgi.tcl ../tcl/cgi.tcl
+  cd ../tcl/eq3_old
+  proc rega_script {script} { return [list sd $::ISE_SD linkmode false] }
+  set ISE_SD ""
+}
+proc drv {script args} {
+  return [golden::tcl "$::PRE\n$script" -candidate only:security-session \
+    -setenv {QUERY_STRING {} HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi} {*}$args]
+}
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc flat {r} { return [join [lines $r] " "] }
+set Q {HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi}
+
+test sp014-nfr0 {NFR0: 'sid' mode when sid is a URL parameter, otherwise file-session mode 'icsessionid'} -body {
+  set a [drv {source session.tcl; puts $sidname} -setenv [list QUERY_STRING sid=@AbCdEf1234@ {*}$Q]]
+  set b [drv {source session.tcl; puts $sidname} -setenv [list QUERY_STRING icsessionid=@AbCdEf1234@ {*}$Q]]
+  set c [drv {source session.tcl; puts $sidname} -setenv [list QUERY_STRING a=sid=b {*}$Q]]
+  list [lines $a] [lines $b] [lines $c]
+} -result {sid icsessionid sid}
+
+test sp014-nfr1 {NFR1: the alphabet has 62 symbols and the id length is the requested one (also for other lengths)} -body {
+  flat [drv {
+    source session.tcl
+    puts [string length [session_generatesid 1]]
+    puts [string length [session_generatesid 10]]
+    puts [string length [session_generatesid 40]]
+  }]
+} -result {3 12 42}
+
+test sp014-nfr2 {NFR2: sid uniqueness - ten generated sessions all carry different ids} -body {
+  lines [drv {
+    source session.tcl
+    for {set i 0} {$i < 10} {incr i} { lappend s [session_generatesession 1] }
+    puts [llength [lsort -unique $s]]
+  }]
+} -result 10
+
+test sp014-nfr3 {NFR3: passwords are stored in clear text in USERS.dat by write_users} -body {
+  set r [drv {
+    source session.tcl
+    user_adduser bob s3cret 2
+    write_users
+    set fd [open /etc/config/USERS.dat r]; puts [read $fd]; close $fd
+  }]
+  lines $r
+} -result {{UID;Name;Password;UPL;EQ3} {1;bob;s3cret;2;1} <.}
+
+test sp014-nfr4 {NFR4: read_users_ise sends a fixed placeholder 'blabla' instead of the password} -body {
+  set r [drv {
+    source session.tcl
+    proc rega_script {s} { puts $s; return [list STDOUT ""] }
+    read_users_ise
+  }]
+  string match {*blabla*} [dict get $r stdout]
+} -result 1
+
+test sp014-nfr6 {NFR6: the ISE session string keeps only the last digit of the upl group (frozen)} -body {
+  set r [drv {
+    source session.tcl
+    set ISE_SD "17;18;user;First;Last;"
+    session_getsessiondata_ise
+    puts $REGA_SESSION(UPL)
+  } -setenv [list QUERY_STRING sid=@AbCdEf1234@ {*}$Q]]
+  lines $r
+} -result 8
+
+test sp014-nfr7 {NFR7: every ISE failure renders the same reloadPage anchor} -body {
+  set out {}
+  foreach sd {"" "garbage"} {
+    set r [drv "
+      source session.tcl
+      set ISE_SD {$sd}
+      puts \"RC=\[session_requestisvalid 0\]\"
+    " -setenv [list QUERY_STRING sid=@AbCdEf1234@ {*}$Q]]
+    regexp {RC=(-?\d+)} [dict get $r stdout] -> rc
+    lappend out $rc [expr {[string first {onclick="javascript:reloadPage();"} [dict get $r stdout]] >= 0}]
+  }
+  set out
+} -result {-2 1 -2 1}
+
+test sp014-nfr9 {NFR9: sourceOnce loads a file only once (also through the second include of the same file)} -body {
+  lines [drv {
+    source session.tcl
+    set n [llength [info commands user_verify]]
+    sourceOnce user.tcl
+    sourceOnce common.tcl
+    puts "$n [array size sources]"
+  }]
+} -result {{1 3}}
+
+test sp014-nfr10 {NFR10: unchanged v1 behaviour of the file-session path - a timed-out session gets -1 after 901 s, a session at exactly 900 s is still valid} -body {
+  set now [clock seconds]
+  set files [list var/SESSIONS.dat "SID;UID;LastActivity;RedirectURL\n@Edge000001@;4;[expr {$now - 900}];\n@Late000002@;4;[expr {$now - 901}];\n<.\n"]
+  set out {}
+  foreach sid {@Edge000001@ @Late000002@} {
+    set r [drv "
+      source session.tcl
+      puts \[session_isvalid\]
+    " -files $files -now $now -setenv [list QUERY_STRING icsessionid=$sid {*}$Q]]
+    lappend out [lindex [lines $r] end]
+  }
+  set out
+} -result {4 -1}
+
+test sp014-err1 {a SESSIONS.dat that cannot be read is replaced by an empty session file (no error)} -body {
+  set r [drv {
+    source session.tcl
+    set fd [open /var/SESSIONS.dat r]; puts [read $fd]; close $fd
+  }]
+  lines $r
+} -result {{SID;UID;LastActivity;RedirectURL} <.}
+
+test sp014-err2 {the id source is not touched for a session that is supplied by the ISE (session_generatesession with an explicit sid)} -body {
+  flat [drv {
+    source session.tcl
+    rename ::open ::__t_open
+    proc ::open {path args} {
+      if {$path eq "/dev/urandom"} { puts "URANDOM-USED" }
+      return [uplevel 1 [list ::__t_open $path {*}$args]]
+    }
+    puts [session_generatesession 3 "" @Given00001@]
+  }]
+} -result {@Given00001@}
+
+test sp014-golden {golden re-run: all 180 registry fixtures replay byte-identical with the staged classic libraries composed into the tree} -body {
+  set names {}
+  foreach fx [golden::fixtures] {
+    set m [dict get $fx method]
+    if {[string match Session.* $m]} { lappend names $m }
+  }
+  golden::compare_all -candidate only:security-session -only $names
+} -result {}
+
+cleanupTests

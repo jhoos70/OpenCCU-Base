@@ -1,0 +1,63 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP024 NFR and integration coverage (spec.json#SP024 non_functional_requirements[0..5]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234}
+
+test sp024-nfr0 {NFR0: setMetadata keeps the v1 side effect - the ReGa script creates an OT_OBJECT for an unknown objectId} -body {
+  set r [call Interface.setMetadata [concat $S {objectId NEWOBJ dataId k value v}] -rega {{*CreateObject* {k: v}}}]
+  set script [lindex [dict get $r rega_calls] end]
+  list [result $r] [string match *dom.CreateObject(OT_OBJECT)* $script] [string match {*var objectId = "NEWOBJ";*} $script]
+} -result {{"k: v"} 1 1}
+
+test sp024-nfr1 {NFR1: removeMetadata on a missing object - a failing ReGa script yields the empty string ("")} -body {
+  result [call Interface.removeMetadata [concat $S {objectId NOPE dataId k}] -regafail {*RemoveMetaData*}]
+} -result {""}
+
+test sp024-nfr2 {NFR2: the three ReGa based methods are registered with a direct SCRIPT_FILE (no interface argument)} -body {
+  set out {}
+  foreach m {Interface.getMetadata Interface.setMetadata Interface.removeMetadata} {
+    set e [dict get [golden::registry] $m]
+    lappend out [dict get $e SCRIPT_FILE] [expr {"interface" in [dict get $e ARGUMENTS]}]
+  }
+  set out
+} -result {interface/getmetadata.tcl 0 interface/setmetadata.tcl 0 interface/removemetadata.tcl 0}
+
+test sp024-nfr3 {NFR3: crRFD set passes the value raw (not [list string ...]) and returns the unquoted raw result} -body {
+  set r [call Interface.setMetadata_crRFD [list _session_id_ AbCdEf1234 interface BidCos-RF objectId O dataId d value 42] -xmlrpc {{setMetadata 7}}]
+  list [result $r] [lindex [lindex [dict get $r xmlrpc_calls] 0] 4]
+} -result {7 42}
+
+test sp024-nfr4 {NFR4: dataId and objectId with quotes are escaped once before injection (dataId is rejected by the validator, objectId is escaped)} -body {
+  set r [call Interface.getMetadata [list _session_id_ AbCdEf1234 objectId "x\";Write(1);\"" dataId d] -sessions $GUEST -rega {{*GetObject* ok}}]
+  set expect {var objectId = "x\";Write(1);\"";}
+  expr {[string first $expect [lindex [dict get $r rega_calls] end]] >= 0}
+} -result 1
+
+test sp024-nfr5 {NFR5: getMetadata is GUEST level: any object's metadata is readable} -body {
+  result [call Interface.getMetadata [concat $S {objectId ANYOBJ dataId d}] -sessions $GUEST -rega {{*MetaData* secret}}]
+} -result {"secret"}
+
+test sp024-golden {golden re-run: the five metadata methods replay byte-identical (setMetadata with a valid key)} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.getMetadata Interface.setMetadata Interface.removeMetadata Interface.getMetadata_crRFD Interface.setMetadata_crRFD}
+} -result {}
+
+cleanupTests

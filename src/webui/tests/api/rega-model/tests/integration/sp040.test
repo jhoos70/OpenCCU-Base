@@ -1,0 +1,67 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP040 NFR and integration coverage (spec.json#SP040 non_functional_requirements[0..4]), boundary
+# and error cases and the golden re-run of the SysVar read fixtures through the staged scripts.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234}
+proc svlist {id type args} {
+  set d [dict create ID $id NAME var$id TYPE $type UNIT {} VALUE 1 LOGGED true VISIBLE true INTERNAL false CHANNEL_ID 65535 VALUE_MIN 0 VALUE_MAX 100 VALUE_LIST {} VALUE_NAME_0 {} VALUE_NAME_1 {}]
+  foreach {k v} $args { dict set d $k $v }
+  set l {}
+  dict for {k v} $d { lappend l $k $v }
+  return $l
+}
+
+test sp040-nfr0 {NFR0: the booleans are spliced into the JSON unquoted straight from the ReGa tokens, the values stay JSON strings} -body {
+  set j [result [call SysVar.getAll $S -sessions $USER -rega [list [list {*svList.EnumIDs()*} [list [svlist 1 NUMBER LOGGED false VISIBLE false INTERNAL true VALUE 3.5]]]]]]
+  list [regexp {"value":"3.5"} $j] [regexp {"isLogged":false,"isVisible":false,"isInternal":true\}\]$} $j]
+} -result {1 1}
+
+test sp040-nfr3 {NFR3: the reused array does not leak keys between variables - a NUMBER variable after a LIST variable has no valueList} -body {
+  set l [list [svlist 1 LIST VALUE_LIST {a;b}] [svlist 2 NUMBER]]
+  set j [result [call SysVar.getAll $S -sessions $USER -rega [list [list {*svList.EnumIDs()*} $l]]]]
+  set second [lindex [split $j \{] end]
+  list [regexp {valueList} $second] [regexp {minValue} $second]
+} -result {0 1}
+
+test sp040-nfr4 {NFR4: the v1 list is the unpaginated full list (250 variables are all returned)} -body {
+  set l {}
+  for {set i 1} {$i <= 250} {incr i} { lappend l [svlist $i STRING] }
+  set j [result [call SysVar.getAll $S -sessions $USER -rega [list [list {*svList.EnumIDs()*} $l]]]]
+  llength [regexp -all -inline {"id":"} $j]
+} -result 250
+
+test sp040-err1 {error case: a quote or backslash in the id is escaped before it reaches the ReGa script} -body {
+  set r [call SysVar.getValue [list _session_id_ AbCdEf1234 id "1\" ; Write(\"x\") ; \""] -sessions $USER]
+  set script [lindex [dict get $r rega_calls] end]
+  list [string match {*var id = "1\\" ; Write(\\"x\\") ; \\"";*} $script] [string match {*var id = "1" ;*} $script]
+} -result {1 0}
+
+test sp040-err2 {error case: a control character in the name is error 403 before the ReGa script runs} -body {
+  set body "\{\"method\":\"SysVar.getValueByName\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"name\":\"a\\u0003\"\},\"id\":1\}"
+  set r [golden::call_raw $body [golden::prepare [list -candidate only:dispatcher,security-session,rega-model -sessions $::USER]]]
+  err $r
+} -result {403 {invalid argument (name)}}
+
+test sp040-golden {golden re-run: the SysVar read fixtures replay byte-identical through the staged scripts} -body {
+  golden::compare_all -candidate only:rega-model -only {SysVar.getAll SysVar.get SysVar.getValue SysVar.getValueByName}
+} -result {}
+
+cleanupTests

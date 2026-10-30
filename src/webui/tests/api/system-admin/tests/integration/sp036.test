@@ -1,0 +1,61 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP036 NFR and integration coverage (spec.json#SP036 non_functional_requirements[0]),
+# boundary and error cases, golden re-run (CCU.setSSHPassword is a documented deliberate change
+# and excluded: stdin instead of 'echo | mkpasswd', shadow rewrite instead of sed -i).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:system-admin {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set FWOK "set fd \[open /tmp/firewall.reloaded w\]; puts \$fd done; close \$fd"
+set HASH {$6$saltsalt$abcdefghijklmnopqrstuvwxyz0123456789}
+
+test sp036-nfr0 {NFR0: the JSON boolean true arrives as the string 'true' (enable); 'TRUE', 1 and false disable} -body {
+  set out {}
+  foreach v {true false 1 \"TRUE\"} {
+    set j "\{\"method\":\"CCU.setSSH\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"mode\":$v\},\"id\":1\}"
+    set r [callraw $j -files [list bin/setfirewall.tcl $FWOK]]
+    lappend out [lindex [lindex [dict get $r exec_calls] 0] 0]
+  }
+  set out
+} -result {touch rm rm rm}
+
+test sp036-err1 {a password that looks like an option or a shell fragment is only ever stdin data} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/shadow "root:\$6\$o\$h:1:::::\n"
+  set r [call CCU.setSSHPassword {_session_id_ AbCdEf1234 passwd {-s; rm -rf / $(id)}} -fs $fs -exec [list [list {mkpasswd*} $HASH]]]
+  mock::fs::destroy $fs
+  set cmd [lindex [dict get $r exec_calls] 0]
+  list [result $r] [lrange $cmd 0 4] [lindex $cmd 5]
+} -result [list {{"msg":"noError"}} {mkpasswd -m sha512 -s <<} {-s; rm -rf / $(id)}]
+
+test sp036-err2 {the shadow file keeps its other lines, its final newline and its permissions} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/shadow "a:1:\nroot:\$6\$o\$h:1:2:3\nb:2:\n"
+  file attributes [file join $fs etc config shadow] -permissions 0600
+  call CCU.setSSHPassword {_session_id_ AbCdEf1234 passwd pw} -fs $fs -exec [list [list {mkpasswd*} $HASH]]
+  set c [mock::fs::read $fs etc/config/shadow]
+  set perm [file attributes [file join $fs etc config shadow] -permissions]
+  mock::fs::destroy $fs
+  list $c $perm
+} -result [list "a:1:\nroot:${HASH}:1:2:3\nb:2:\n" 00600]
+
+test sp036-golden {golden re-run: CCU.setSSH and CCU.getSSHState replay byte-identical} -body {
+  golden::compare_all -candidate only:system-admin -only {CCU.setSSH CCU.getSSHState}
+} -result {}
+
+cleanupTests

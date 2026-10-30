@@ -1,0 +1,90 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP022 - firmware, service messages, log level: contracts/behavioral-contracts.json#SP022
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF}
+set URL xmlrpc_bin://127.0.0.1:2001
+
+test sp022-0 {the staged method scripts of SP022 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {updatefirmware getloglevel getservicemessagecount getsuppressedservicemessages refreshDeployedDeviceFirmwareList setloglevel suppressservicemessages} {
+    set p [file join $gen interface-gateway methods interface $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp022-1 {updateFirmware (ADMIN): updateFirmware(string device), result 1 -> true, anything else -> false} -body {
+  set a [call Interface.updateFirmware [concat $S {device NEQ0123456}] -xmlrpc {{updateFirmware 1}}]
+  set b [call Interface.updateFirmware [concat $S {device NEQ0123456}] -xmlrpc {{updateFirmware 0}}]
+  list [result $a] [result $b] [lrange [lindex [dict get $a xmlrpc_calls] 0] 1 end]
+} -result {true false {updateFirmware {string NEQ0123456}}}
+
+test sp022-2 {refreshDeployedDeviceFirmwareList (ADMIN): the XML-RPC result is executed as a command, response is true exactly when catch reports an error (v1 quirk)} -body {
+  set a [call Interface.refreshDeployedDeviceFirmwareList $S -xmlrpc {{refreshDeployedDeviceFirmwareList nosuchcommand}}]
+  set b [call Interface.refreshDeployedDeviceFirmwareList $S -xmlrpc {{refreshDeployedDeviceFirmwareList pwd}}]
+  list [result $a] [result $b]
+} -result {true false}
+
+test sp022-3 {getServiceMessageCount (GUEST): number of getServiceMessages elements} -body {
+  set r [call Interface.getServiceMessageCount $S -sessions $GUEST -xmlrpc {{getServiceMessages {{a} {b} {c}}}}]
+  result $r
+} -result 3
+
+test sp022-4 {suppressServiceMessages (ADMIN): channel, parameter, boolean token; empty parameterId means all} -body {
+  set r [call Interface.suppressServiceMessages [concat $S {channelAddress NEQ0123456:0 parameterId {} suppress true}] -xmlrpc {{suppressServiceMessages 1}}]
+  list [result $r] [lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end]
+} -result {true {suppressServiceMessages {string NEQ0123456:0} {string {}} {boolean true}}}
+
+test sp022-5 {getSuppressedServiceMessages (USER) v1: the serialised array is passed through json_toString again (double encoded)} -body {
+  result [call Interface.getSuppressedServiceMessages [concat $S {channelAddress NEQ0123456:0}] -sessions $USER -xmlrpc {{getSuppressedServiceMessages {UNREACH LOWBAT}}}]
+} -result {"[\"UNREACH\",\"LOWBAT\"]"}
+
+test sp022-6 {[V2] on the v2 route (API_V2) getSuppressedServiceMessages returns a real JSON array of strings} -body {
+  set r [golden::tcl {
+    foreach f {common json jsonrpc} { source [file join $env(DOCUMENT_ROOT) api/eq3/$f.tcl] }
+    set src [file_load [file join $env(DOCUMENT_ROOT) api/methods/interface/dispatch.tcl]]
+    set i [string first "# ENTRY POINT" $src]
+    if {$i < 0} { set i [string first "# Einsprunktpunkt" $src] }
+    eval [string range $src 0 [expr {$i - 1}]]
+    set API_V2 1
+    array set interface {URL xmlrpc_bin://127.0.0.1:2001}
+    array set args {channelAddress NEQ0123456:0}
+    source methods/interface/getsuppressedservicemessages.tcl
+  } -candidate only:interface-gateway -xmlrpc {{getSuppressedServiceMessages {UNREACH LOWBAT}}}]
+  result $r
+} -result {["UNREACH","LOWBAT"]}
+
+test sp022-7 {getLogLevel (GUEST) returns the raw level, setLogLevel (ADMIN) passes int level and returns the reported level} -body {
+  set a [call Interface.getLogLevel $S -sessions $GUEST -xmlrpc {{logLevel 3}}]
+  set b [call Interface.setLogLevel [concat $S {level 5}] -xmlrpc {{logLevel 5}}]
+  list [result $a] [result $b] [lrange [lindex [dict get $a xmlrpc_calls] 0] 1 end] [lrange [lindex [dict get $b xmlrpc_calls] 0] 1 end]
+} -result {3 5 logLevel {logLevel {int 5}}}
+
+test sp022-8 {a failing call is mapped (601 without a result) and the privilege levels hold (setLogLevel ADMIN)} -body {
+  set a [call Interface.getServiceMessageCount $S -sessions $GUEST]
+  set b [call Interface.setLogLevel [concat $S {level 5}] -sessions $USER -xmlrpc {{logLevel 5}}]
+  list [err $a] [lindex [err $b] 0] [llength [dict get $b xmlrpc_calls]]
+} -result {{601 {TCL error}} 400 0}
+
+cleanupTests

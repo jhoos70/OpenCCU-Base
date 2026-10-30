@@ -1,0 +1,57 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC016 dispatcher -> security-session: the executor sources methods/session/{login,logout,renew,
+# setSessionVar}.tcl. Request: login {username,password}; the others {_session_id_}. Response:
+# login the inner sid string, the others a boolean. Errors: 501 invalid credentials or too many
+# sessions; 503 service not available; 400 logout without a valid session.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set SESS {{AbCdEf1234 1 1000 Guest}}
+set OK302 {{{HTTP/1.1 302 Found} {Location http://127.0.0.1/index.htm?sid=@AbCdEf1234@}}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+
+test ic016-1 {Session.login needs no session; {username,password} go to the login page, the inner sid string is the result} -body {
+  set r [call Session.login {username Admin password secret} -sessions {} -http $OK302]
+  list [result $r] [llength [dict get $r http_calls]]
+} -result [list {"AbCdEf1234"} 1]
+
+test ic016-2 {login errors: 501 invalid credentials / too many sessions, 503 service not available} -body {
+  list [err [call Session.login {username a password b} -sessions {} -http {{{HTTP/1.1 200 OK} {}}}]] \
+    [err [call Session.login {username a password b} -sessions {} -http {{{HTTP/1.1 503 Service Unavailable} {}}}]]
+} -result {{501 {invalid credentials or too many sessions}} {503 {service not available}}}
+
+test ic016-3 {logout, renew and setSessionVar take {_session_id_} (GUEST) and answer a boolean} -body {
+  set out {}
+  lappend out [result [call Session.logout {_session_id_ AbCdEf1234} -rega {{*ClearSessionID* true}} -http $OK302]]
+  lappend out [result [call Session.renew {_session_id_ AbCdEf1234} -http {{{HTTP/1.1 200 OK} {}}}]]
+  lappend out [lindex [err [call Session.setSessionVar {_session_id_ AbCdEf1234 var a val b}]] 0]
+  set out
+} -result {true true none}
+
+test ic016-4 {error 400: logout without a valid session is denied by the privilege check and nothing is cleared} -body {
+  set r [call Session.logout {_session_id_ Unknown0001}]
+  set cleared 0
+  foreach c [dict get $r rega_calls] { if {[string match *ClearSessionID* $c]} { incr cleared } }
+  list [lindex [err $r] 0] $cleared
+} -result {400 0}
+
+test ic016-5 {Session.logout is GUEST (not NONE): without _session_id_ it is 402} -body {
+  err [call Session.logout {}]
+} -result {402 {missing argument (_session_id_)}}
+
+cleanupTests

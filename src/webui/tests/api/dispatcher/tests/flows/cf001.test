@@ -1,0 +1,105 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF001 POST JSON-RPC lifecycle (lighttpd CGI -> homematic.cgi). Steps and error paths:
+# flow-model.md#cf001. The order of the observable calls is checked with the mock ReGa call log:
+# strict check -> parse -> limiter -> lookup -> privilege lookup (getupl) -> argument check ->
+# method script.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+set SESS {{AbCdEf1234 1 1000 Guest}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc post {json args} {
+  return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::SESS {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc kinds {r} {
+  set out {}
+  foreach c [dict get $r rega_calls] {
+    if {[string match *StrValueByIndex* $c]} { lappend out privilege } elseif {[string match *EnumIDs()* $c]} { lappend out script } else { lappend out other }
+  }
+  return $out
+}
+set OK {{"method":"Device.listAll","params":{"_session_id_":"AbCdEf1234"},"id":1}}
+
+test cf001-1 {steps 6-13: the privilege lookup runs once and BEFORE the method script; the answer is one JSON-RPC document} -body {
+  set r [post $::OK]
+  list [kinds $r] [regexp -all {"version": "1.1"} [dict get $r body]] [lindex [err $r] 0]
+} -result {{privilege script} 1 none}
+
+test cf001-2 {step 1: a verb other than POST/GET gives an empty body without headers} -body {
+  string length [dict get [post {} -method PUT] stdout]
+} -result 0
+
+test cf001-3 {step 2: central is true by default whatever DOCUMENT_ROOT is; config_tool_mode true skips the privilege lookup (one syslog line)} -body {
+  setconf {array set API_CONFIG {config_tool_mode true}}
+  set r [post $::OK]
+  clearconf
+  list [kinds $r] [llength [dict get $r syslog]]
+} -result {script 1}
+
+test cf001-4 {step 5: strict_mode rejects the transport before the body is parsed (405, no ReGa call)} -body {
+  setconf {array set API_CONFIG {strict_mode true}}
+  set r [post $::OK -contenttype text/plain]
+  clearconf
+  list [lindex [err $r] 0] [llength [dict get $r rega_calls]]
+} -result {405 0}
+
+test cf001-5 {step 6 errors: invalid JSON 100, missing method 102, missing params 103 - no ReGa call} -body {
+  set out {}
+  foreach b {{not json} {{"params":{},"id":1}} {{"method":"x","id":1}}} {
+    set r [post $b]
+    lappend out [lindex [err $r] 0] [llength [dict get $r rega_calls]]
+  }
+  set out
+} -result {100 0 102 0 103 0}
+
+test cf001-6 {step 7: unknown method 401 before any privilege lookup} -body {
+  set r [post {{"method":"Nope.x","params":{},"id":1}}]
+  list [err $r] [llength [dict get $r rega_calls]]
+} -result {{401 {method not found (Nope.x)}} 0}
+
+test cf001-7 {step 9: a level that is too low is 400 and the method script never runs} -body {
+  set r [post {{"method":"SysVar.getAll","params":{"_session_id_":"AbCdEf1234"},"id":1}}]
+  list [lindex [err $r] 0] [kinds $r]
+} -result {400 privilege}
+
+test cf001-8 {step 10: the opt-in limiter (rate_limit) runs before the privilege lookup: the 61st request is 429 without any ReGa call} -body {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  file mkdir [file join $fs tmp webui-ratelimit]
+  set fd [open [file join $fs tmp webui-ratelimit sid-AbCdEf1234] w]; puts $fd [join [lrepeat 60 1700000000] \n]; close $fd
+  set r [post $::OK -fs $fs]
+  mock::fs::destroy $fs
+  clearconf
+  list [err $r] [llength [dict get $r rega_calls]]
+} -result {{429 {rate limit exceeded}} 0}
+
+test cf001-9 {step 11: the first missing argument is 402 (after the privilege check)} -body {
+  set r [post {{"method":"Device.getReGaIDByAddress","params":{"_session_id_":"AbCdEf1234"},"id":1}} -sessions {{AbCdEf1234 8 1 A}}]
+  list [err $r] [kinds $r]
+} -result {{402 {missing argument (address)}} privilege}
+
+test cf001-10 {step 12 failure: any Tcl error of a method script is error 200 'internal error (ref: <cid>)', the details are only in the syslog} -body {
+  set r [post {{"method":"Program.get","params":{"_session_id_":"AbCdEf1234","id":"9"},"id":1}} -sessions {{AbCdEf1234 2 1 U}}]
+  lassign [err $r] code msg
+  regexp {\(ref: ([0-9a-f]{16})\)} $msg -> cid
+  set n 0
+  foreach s [dict get $r syslog] { if {[string match "*cid=$cid *errorInfo=*" $s]} { incr n } }
+  list $code [string match *errorInfo* [dict get $r body]] $n
+} -result {200 0 1}
+
+cleanupTests

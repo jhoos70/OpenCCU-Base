@@ -1,0 +1,124 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP021 - device inclusion and lifecycle: contracts/behavioral-contracts.json#SP021
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234 interface HmIP-RF}
+set XMLIF "<interfaces>\n<ipc><name>HmIP-RF</name><url>http://127.0.0.1:2010</url><info>HmIP-RF</info></ipc>\n</interfaces>"
+set IF [list -interfaces 0 -files [list etc/config/InterfacesList.xml $XMLIF]]
+set URL http://127.0.0.1:2010
+set INST {installMode ALL on true time 60 address {} key {} keymode {}}
+
+test sp021-0 {the staged method scripts of SP021 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {setinstallmodehmip changedevice clearconfigcache deletedevice getinstallmode getkeymissmatchdevice restoreconfigtodevice searchdevices setinstallmode} {
+    set p [file join $gen interface-gateway methods interface $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp021-1 {setInstallModeHMIP LOCAL: setInstallModeWithWhitelist(bool, int, array of struct ADDRESS/KEY/KEY_MODE)} -body {
+  set r [call Interface.setInstallModeHMIP [concat $S {installMode LOCAL on true time 90 address 3014F711A000 key 00112233445566778899AABBCCDDEEFF keymode LOCAL}] {*}$IF -xmlrpc {{setInstallModeWithWhitelist 1}}]
+  set c [lindex [dict get $r xmlrpc_calls] 0]
+  list [result $r] [lindex $c 1] [lindex $c 2] [lindex $c 3] [llength [lindex $c 4]] [lindex [lindex $c 4] 0]
+} -result {true setInstallModeWithWhitelist {bool 1} {int 90} 2 array}
+
+test sp021-2 {setInstallModeHMIP ALL: setInstallMode(bool on, int time) - the interface fetches the key itself} -body {
+  set r [call Interface.setInstallModeHMIP [concat $S $INST] {*}$IF -xmlrpc {{setInstallMode 1}}]
+  list [result $r] [lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end]
+} -result {true {setInstallMode {bool 1} {int 60}}}
+
+test sp021-3 {time '' defaults to 30 seconds} -body {
+  set r [call Interface.setInstallModeHMIP [dict replace [concat $S $INST] time {}] {*}$IF -xmlrpc {{setInstallMode 1}}]
+  lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end
+} -result {setInstallMode {bool 1} {int 30}}
+
+test sp021-4 {on is 1 for 'true', 1, '1' and 0 for everything else} -body {
+  set out {}
+  foreach v {true 1 false 0 yes {} 2} {
+    set r [call Interface.setInstallModeHMIP [dict replace [concat $S $INST] on $v] {*}$IF -xmlrpc {{setInstallMode 1}}]
+    lappend out [lindex [lindex [dict get $r xmlrpc_calls] 0] 2]
+  }
+  set out
+} -result {{bool 1} {bool 1} {bool 0} {bool 0} {bool 0} {bool 0} {bool 0}}
+
+test sp021-5 {v1 quirk kept (EG-15): installMode STOP with on=true calls setInstallMode(bool 1) - it switches the mode ON} -body {
+  set r [call Interface.setInstallModeHMIP [dict replace [concat $S $INST] installMode STOP] {*}$IF -xmlrpc {{setInstallMode 1}}]
+  list [result $r] [lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end]
+} -result {true {setInstallMode {bool 1}}}
+
+test sp021-6 {[V2] on the v2 route (API_V2) STOP forces on to 0: install mode is switched OFF} -body {
+  set r [golden::tcl {
+    foreach f {common json jsonrpc} { source [file join $env(DOCUMENT_ROOT) api/eq3/$f.tcl] }
+    set src [file_load [file join $env(DOCUMENT_ROOT) api/methods/interface/dispatch.tcl]]
+    set i [string first "# ENTRY POINT" $src]
+    if {$i < 0} { set i [string first "# Einsprunktpunkt" $src] }
+    eval [string range $src 0 [expr {$i - 1}]]
+    set API_V2 1
+    array set interface {URL http://127.0.0.1:2010}
+    array set args {on true address {} key {} keymode {} installMode STOP time 30}
+    source methods/interface/setinstallmodehmip.tcl
+  } -candidate only:interface-gateway -xmlrpc {{setInstallMode 1}}]
+  lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end
+} -result {setInstallMode {bool 0}}
+
+test sp021-7 {getInstallMode and searchDevices return the raw number; an empty value is null} -body {
+  set a [call Interface.getInstallMode $S {*}$IF -xmlrpc {{getInstallMode 25}}]
+  set b [call Interface.searchDevices $S {*}$IF -xmlrpc {{searchDevices 3}}]
+  set c [call Interface.getInstallMode $S {*}$IF -xmlrpc {{getInstallMode {}}}]
+  list [result $a] [result $b] [result $c]
+} -result {25 3 null}
+
+test sp021-8 {deleteDevice(address, int flags) true; fault -> 601 without the fault text} -body {
+  set a [call Interface.deleteDevice [concat $S {address NEQ1 flags 3}] {*}$IF -xmlrpc {{deleteDevice 1}}]
+  set b [call Interface.deleteDevice [concat $S {address NEQ1 flags 3}] {*}$IF -fault {{deleteDevice 1 SECRETFAULT}}]
+  list [result $a] [lrange [lindex [dict get $a xmlrpc_calls] 0] 1 end] [err $b] [string match *SECRETFAULT* [dict get $b stdout]]
+} -result {true {deleteDevice {string NEQ1} {int 3}} {601 {TCL error}} 0}
+
+test sp021-9 {changeDevice invokes replaceDevice(old, new); clearConfigCache and restoreConfigToDevice call the like-named xmlrpc} -body {
+  set a [call Interface.changeDevice [concat $S {addressNewDevice NEW addressOldDevice OLD}] {*}$IF -xmlrpc {{replaceDevice 1}}]
+  set b [call Interface.clearConfigCache [concat $S {address A}] {*}$IF -xmlrpc {{clearConfigCache 1}}]
+  set c [call Interface.restoreConfigToDevice [concat $S {address A}] {*}$IF -xmlrpc {{restoreConfigToDevice 1}}]
+  list [result $a] [result $b] [result $c] [lrange [lindex [dict get $a xmlrpc_calls] 0] 1 end] [lrange [lindex [dict get $b xmlrpc_calls] 0] 1 end] [lrange [lindex [dict get $c xmlrpc_calls] 0] 1 end]
+} -result {true true true {replaceDevice {string OLD} {string NEW}} {clearConfigCache {string A}} {restoreConfigToDevice {string A}}}
+
+test sp021-10 {getKeyMissmatchDevice: reset true/1 -> bool 1, otherwise bool 0; the serial is returned raw} -body {
+  set out {}
+  foreach v {true 1 false 0} {
+    set r [call Interface.getKeyMissmatchDevice [concat $S [list reset $v]] {*}$IF -xmlrpc {{getKeyMissmatchDevice 12345}}]
+    lappend out [lindex [lindex [dict get $r xmlrpc_calls] 0] 2]
+  }
+  list $out [result $r]
+} -result {{{bool 1} {bool 1} {bool 0} {bool 0}} 12345}
+
+test sp021-11 {a session below ADMIN is denied (400) for the install and lifecycle methods, no XML-RPC call} -body {
+  set codes {}; set n 0
+  foreach {m extra} {Interface.setInstallModeHMIP {installMode ALL on true time 30 address {} key {} keymode {}}
+                     Interface.deleteDevice {address A flags 0} Interface.changeDevice {addressNewDevice N addressOldDevice O}} {
+    set r [call $m [concat $S $extra] {*}$IF -sessions $USER -xmlrpc {{setInstallMode 1} {deleteDevice 1} {replaceDevice 1}}]
+    lappend codes [lindex [err $r] 0]
+    incr n [llength [dict get $r xmlrpc_calls]]
+  }
+  list $codes $n
+} -result {{400 400 400} 0}
+
+cleanupTests

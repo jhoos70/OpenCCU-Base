@@ -1,0 +1,108 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP024 - metadata on ReGa objects and interface-stored objects: contracts/behavioral-contracts.json#SP024
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234}
+set RS {_session_id_ AbCdEf1234 interface BidCos-RF}
+set URL xmlrpc_bin://127.0.0.1:2001
+proc regacalls {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *MetaData* $c]} { incr n } }
+  return $n
+}
+
+test sp024-0 {the staged method scripts of SP024 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {setmetadata getmetadata getmetadata_crRFD removemetadata setmetadata_crRFD} {
+    set p [file join $gen interface-gateway methods interface $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp024-1 {getMetadata (GUEST): the ReGa script result is returned as a JSON string} -body {
+  result [call Interface.getMetadata [concat $S {objectId NEQ0123456 dataId color}] -sessions $GUEST -rega {{*o.MetaData(dataId)* blue}}]
+} -result {"blue"}
+
+test sp024-2 {getMetadata for an unknown object returns what the script writes ('No metadata available' branch)} -body {
+  result [call Interface.getMetadata [concat $S {objectId NOPE dataId color}] -sessions $GUEST -rega {{*No?metadata?available* {No metadata available}}}]
+} -result {"No metadata available"}
+
+test sp024-3 {setMetadata (ADMIN): the script gets objectId, dataId and value as escaped var declarations; the answer is '<dataId>: <value>'} -body {
+  set r [call Interface.setMetadata [concat $S {objectId NEQ0123456 dataId color value red}] -rega {{*AddMetaData(dataId,?value)* {color: red}}}]
+  set script [lindex [dict get $r rega_calls] end]
+  list [result $r] [string match {*var objectId = "NEQ0123456";*} $script] [string match {*var dataId = "color";*} $script] [string match {*var value = "red";*} $script]
+} -result {{"color: red"} 1 1 1}
+
+test sp024-4 {values with quotes, backslashes and newlines are escaped exactly once} -body {
+  set r [call Interface.setMetadata [list _session_id_ AbCdEf1234 objectId O dataId d value "a\"b\\c\nd"] -rega {{*AddMetaData* ok}}]
+  set script [lindex [dict get $r rega_calls] end]
+  set expect {var value = "a\"b\\c\nd";}
+  expr {[string first $expect $script] >= 0}
+} -result 1
+
+test sp024-5 {removeMetadata (ADMIN) returns the status message of the script} -body {
+  result [call Interface.removeMetadata [concat $S {objectId O dataId d}] -rega {{*RemoveMetaData* {O - matadata d successfully deleted!}}}]
+} -result {"O - matadata d successfully deleted!"}
+
+test sp024-6 {setMetadata_crRFD (ADMIN): xmlrpc setMetadata(string, string, <raw value>), raw unquoted result} -body {
+  set r [call Interface.setMetadata_crRFD [concat $RS {objectId O dataId d value V}] -xmlrpc {{setMetadata 1}}]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list 1 [list $URL setMetadata {string O} {string d} V]]
+
+test sp024-7 {getMetadata_crRFD (GUEST): xmlrpc getMetadata, result as a JSON string} -body {
+  set r [call Interface.getMetadata_crRFD [concat $RS {objectId O dataId d}] -sessions $GUEST -xmlrpc {{getMetadata hello}}]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list {"hello"} [list $URL getMetadata {string O} {string d}]]
+
+test sp024-8 {the crRFD variants are not wrapped in checkXmlRpcStatus: a fault is the v1 internal error 200} -body {
+  set a [call Interface.setMetadata_crRFD [concat $RS {objectId O dataId d value V}] -fault {{setMetadata 1 boom}}]
+  set b [call Interface.getMetadata_crRFD [concat $RS {objectId O dataId d}] -sessions $GUEST]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {200 200}
+
+test sp024-9 {privilege levels: set/remove/*_crRFD set need ADMIN, getMetadata is GUEST} -body {
+  set codes {}
+  foreach {m extra} [list Interface.setMetadata {objectId O dataId d value v} Interface.removeMetadata {objectId O dataId d}] {
+    lappend codes [lindex [err [call $m [concat $S $extra] -sessions $USER]] 0]
+  }
+  lappend codes [lindex [err [call Interface.setMetadata_crRFD [concat $RS {objectId O dataId d value V}] -sessions $USER]] 0]
+  set codes
+} -result {400 400 400}
+
+test sp024-10 {[TARGET] setMetadata validates dataId against ^[A-Za-z0-9_.-]{1,64}$ (403 'invalid argument (dataId)') before any ReGa script runs} -body {
+  set out {}
+  set n 0
+  foreach bad {{a b} {x"y} {} ../x AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA} {
+    set r [call Interface.setMetadata [list _session_id_ AbCdEf1234 objectId O dataId $bad value v] -rega {{*AddMetaData* ok}}]
+    lappend out [err $r]
+    incr n [regacalls $r]
+  }
+  list [lsort -unique $out] $n
+} -result {{{403 {invalid argument (dataId)}}} 0}
+
+test sp024-11 {[TARGET] setMetadata accepts the locked key alphabet (letters, digits, _ . -)} -body {
+  result [call Interface.setMetadata [list _session_id_ AbCdEf1234 objectId O dataId Key_1.2-x value v] -rega {{*AddMetaData* {Key_1.2-x: v}}}]
+} -result {"Key_1.2-x: v"}
+
+cleanupTests

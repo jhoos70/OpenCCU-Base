@@ -1,0 +1,63 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP042 NFR and integration coverage (spec.json#SP042 non_functional_requirements[0..5]), boundary
+# and error cases and the golden re-run of the Program.* fixtures through the staged scripts.
+# The v2 mutation route /api/v2/programs (acceptance[7], [8]) is gated by EG-6 (T166/T167).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+proc prog {id} {
+  return [list ID $id NAME P$id TIME "2026-10-12 21:00:00" ACTIVE true INTERNAL false]
+}
+
+test sp042-nfr0 {NFR0: the v1 object of Program.get has the trailing comma (not strict JSON) - the classic client eval()s it} -body {
+  set j [result [call Program.get {_session_id_ AbCdEf1234 id 7} -sessions $USER -rega [list [list {*ProgramLastExecuteTime()*} [prog 7]]]]]
+  list [string match {*"2026-10-12 21:00:00",\}} $j] [regexp {,\}$} $j]
+} -result {1 1}
+
+test sp042-nfr4 {NFR4: no pagination on v1 - 300 programs are all returned} -body {
+  set l {}
+  for {set i 1} {$i <= 300} {incr i} { lappend l [prog $i] }
+  llength [regexp -all -inline {"id":"} [result [call Program.getAll {_session_id_ AbCdEf1234} -sessions $USER -rega [list [list {*ID_PROGRAMS*EnumIDs()*} $l]]]]]
+} -result 300
+
+test sp042-nfr5 {NFR5: USER level is kept for execute and deleteProgramByName (v1 frozen): a USER session passes, GUEST does not} -body {
+  set a [call Program.execute {_session_id_ AbCdEf1234 id 1} -sessions $USER -rega {{*ProgramExecute()* true}}]
+  set b [call Program.execute {_session_id_ AbCdEf1234 id 1} -sessions {{AbCdEf1234 1 1000 Guest}} -rega {{*ProgramExecute()* true}}]
+  list [result $a] [lindex [err $b] 0]
+} -result {true 400}
+
+test sp042-nfr2 {NFR2 (frozen v1): Program.execute has no ownership/visibility check beyond the privilege level - the fixed script runs for any id} -body {
+  set s [lindex [dict get [call Program.execute {_session_id_ AbCdEf1234 id 4711} -sessions $USER] rega_calls] end]
+  list [string match {*var id = "4711";*} $s] [string match {*ProgramExecute()*} $s]
+} -result {1 1}
+
+test sp042-err1 {error case: an id with quotes is escaped before it reaches the ReGa script; a control character is error 403 centrally} -body {
+  set r [call Program.execute [list _session_id_ AbCdEf1234 id "1\"; Write(\"x\");"] -sessions $USER]
+  set s [lindex [dict get $r rega_calls] end]
+  set body "\{\"method\":\"Program.get\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"id\":\"1\\u0007\"\},\"id\":1\}"
+  set c [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::USER]]]
+  list [string match {*var id = "1\\"; Write(\\"x\\");";*} $s] [err $c]
+} -result [list 1 {403 {invalid argument (id)}}]
+
+test sp042-golden {golden re-run: the Program.* fixtures replay byte-identical through the staged scripts (v1 path)} -body {
+  golden::compare_all -candidate only:rega-model -only {Program.getAll Program.get Program.execute Program.deleteProgramByName}
+} -result {}
+
+cleanupTests

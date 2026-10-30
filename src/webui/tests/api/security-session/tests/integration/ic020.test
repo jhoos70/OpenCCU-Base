@@ -1,0 +1,60 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC020 security-session -> dispatcher: jsonrpc_error code message. Request: integer code, string
+# message. Effect: exactly one JSON-RPC document, then the script ends. Error 200 is the generic
+# 'internal error (ref: <cid>)' (the full text goes to the syslog with the same id).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions {{AbCdEf1234 1 1000 Guest}} {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test ic020-1 {the session methods end with exactly one JSON-RPC error document: 501 and 503 of Session.login} -body {
+  set a [call Session.login {username a password b} -sessions {} -http {{{HTTP/1.1 200 OK} {}}}]
+  set b [call Session.login {username a password b} -sessions {} -http {{{HTTP/1.1 503 Service Unavailable} {}}}]
+  list [err $a] [err $b] [regexp -all {"version": "1.1"} [dict get $a body]] [regexp -all {"version": "1.1"} [dict get $b body]]
+} -result {{501 {invalid credentials or too many sessions}} {503 {service not available}} 1 1}
+
+test ic020-2 {error 200 is generic: 'internal error (ref: <cid>)'; the text and the credentials are not in the answer, the cid is in the syslog} -body {
+  # no HTTP answer scripted: the loopback request raises inside Session.login
+  set r [call Session.login {username Admin password TOPSECRET} -sessions {}]
+  lassign [err $r] code msg
+  regexp {\(ref: ([0-9a-f]{16})\)} $msg -> cid
+  set logged 0
+  foreach s [dict get $r syslog] { if {[string match "*cid=$cid *code=200*" $s]} { incr logged } }
+  list $code [string match *TOPSECRET* [dict get $r body]] [string match *TOPSECRET* [dict get $r syslog]] $logged
+} -result {200 0 0 1}
+
+test ic020-3 {the code is coerced to an integer: a non-integer code is the generic internal error, never a raw token in the document} -body {
+  set r [golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_error {5;drop} boom
+  } -candidate $::CAND]
+  list [regexp {"code": 200,} [dict get $r stdout]] [string match *drop* [dict get $r stdout]]
+} -result {1 0}
+
+test ic020-4 {jsonrpc_error ends the script: nothing is written after the document} -body {
+  set r [golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_error 501 first
+    puts AFTER
+  } -candidate $::CAND]
+  string match *AFTER* [dict get $r stdout]
+} -result 0
+
+cleanupTests

@@ -1,0 +1,161 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP029 - per-session event queue: Event.subscribe / poll / unsubscribe and the v2 long-poll route
+# GET /api/v2/events. contracts/behavioral-contracts.json#SP029 (the datapoint.changed producer,
+# acceptance[8], is gated by EG-2)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,event-push
+set SESS {{AAA111 1 1000 A} {BBB222 1 1001 B} {CCC333 1 1002 C}}
+proc call {method sid args} { return [golden::call $method [list _session_id_ $sid] -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc rd {fs rel} { if {[file exists [file join $fs {*}[split $rel /]]]} { return [mock::fs::read $fs $rel] }; return MISSING }
+proc lst {fs} { array set l [rd $fs tmp/event/subscriber.list]; return [lsort [array names l]] }
+proc events {sid query args} {
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/events} -query $query \
+    -header {X-Requested-With XMLHttpRequest} -header [list X-Session-Id $sid] -sessions $::SESS {*}$args]]]
+}
+
+test sp029-0 {the staged method scripts of SP029 and the v2 events route exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {methods/event/subscribe methods/event/poll methods/event/unsubscribe v2/events} {
+    set p [file join $gen event-push {*}[split $f /]].tcl
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp029-1 {acceptance[0],[6]: Event.subscribe truncates the queue, registers the session with EVENT_COUNT, queues 'init' and answers exactly true} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/AAA111 "{TYPE old DATA null}\n"
+  set r [call Event.subscribe AAA111 -fs $fs]
+  set out [list [result $r] [rd $fs tmp/event/AAA111] [lst $fs]]
+  array set l [rd $fs tmp/event/subscriber.list]
+  lappend out [lindex $l(AAA111) 1]
+  mock::fs::destroy $fs
+  set out
+} -result [list true "{TYPE init DATA null}\n" AAA111 1]
+
+test sp029-2 {acceptance[5] [TARGET]: with A and B subscribed and valid, C subscribing keeps both subscriptions and their queue files (checksid.hms regression)} -body {
+  set fs [mock::fs::create]
+  call Event.subscribe AAA111 -fs $fs
+  call Event.subscribe BBB222 -fs $fs
+  call Event.subscribe CCC333 -fs $fs
+  set out [list [lst $fs] [file exists [file join $fs tmp event AAA111]] [file exists [file join $fs tmp event BBB222]]]
+  mock::fs::destroy $fs
+  set out
+} -result {{AAA111 BBB222 CCC333} 1 1}
+
+test sp029-3 {acceptance[5]: a subscriber whose session is no longer valid is removed together with its queue file} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list DEAD99 {EVENT_COUNT 2}]
+  mock::fs::write $fs tmp/event/DEAD99 "{TYPE x DATA null}\n"
+  call Event.subscribe AAA111 -fs $fs
+  set out [list [lst $fs] [file exists [file join $fs tmp event DEAD99]]]
+  mock::fs::destroy $fs
+  set out
+} -result {AAA111 0}
+
+test sp029-4 {acceptance[4],[6]: Event.subscribe answers false when the lock cannot be obtained; Event.poll answers [] and Event.unsubscribe false} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/lock 4711
+  set a [call Event.subscribe AAA111 -fs $fs -now 1700000000]
+  set b [call Event.poll AAA111 -fs $fs -now 1700000000]
+  set c [call Event.unsubscribe AAA111 -fs $fs -now 1700000000]
+  mock::fs::destroy $fs
+  list [result $a] [result $b] [result $c]
+} -result {false {[]} false}
+
+test sp029-5 {acceptance[1]: Event.poll returns the queued events as [{type,data}] and clears the queue} -body {
+  set fs [mock::fs::create]
+  call Event.subscribe AAA111 -fs $fs
+  mock::fs::write $fs tmp/event/AAA111 "{TYPE init DATA null}\n{TYPE delete DATA {\"dev1\"}}\n"
+  set r [call Event.poll AAA111 -fs $fs]
+  set out [list [result $r] [string length [rd $fs tmp/event/AAA111]]]
+  mock::fs::destroy $fs
+  set out
+} -result [list {[{"type":"init" ,"data":null},{"type":"delete" ,"data":"dev1"}]} 0]
+
+test sp029-6 {acceptance[7] [TARGET]: at 64 queued events the poll resets EVENT_COUNT to 0 - the 65th event fired afterwards is delivered by the next poll} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA111 {EVENT_COUNT 64}]
+  mock::fs::write $fs tmp/event/AAA111 "{TYPE x DATA null}\n"
+  call Event.poll AAA111 -fs $fs
+  array set l [rd $fs tmp/event/subscriber.list]
+  set count [lindex $l(AAA111) 1]
+  golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/event.tcl]
+    event_fire delete {"d65"}
+  } -candidate $::CAND -fs $fs
+  set r [call Event.poll AAA111 -fs $fs]
+  mock::fs::destroy $fs
+  list $count [result $r]
+} -result [list 0 {[{"type":"delete" ,"data":"d65"}]}]
+
+test sp029-7 {acceptance[2],NFR0,NFR4: Event.unsubscribe deletes the queue and the list entry and answers true; an unknown session answers false and does not rewrite the list} -body {
+  set fs [mock::fs::create]
+  call Event.subscribe AAA111 -fs $fs
+  set a [call Event.unsubscribe AAA111 -fs $fs]
+  set listAfter [rd $fs tmp/event/subscriber.list]
+  set b [call Event.unsubscribe BBB222 -fs $fs]
+  set out [list [result $a] [file exists [file join $fs tmp event AAA111]] [lst $fs] [result $b] [expr {[rd $fs tmp/event/subscriber.list] eq $listAfter}]]
+  mock::fs::destroy $fs
+  set out
+} -result {true 0 {} false 1}
+
+test sp029-8 {acceptance[9] [V2]: GET /api/v2/events answers HTTP 200 with the queued events at once; the session is registered implicitly} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA111 {EVENT_COUNT 1}]
+  mock::fs::write $fs tmp/event/AAA111 "{TYPE delete DATA {\"d1\"}}\n"
+  set r [events AAA111 timeout=5 -fs $fs]
+  mock::fs::destroy $fs
+  list [status $r] [string trim [dict get $r body]]
+} -result [list 200 {[{"type":"delete","data":"d1"}]}]
+
+test sp029-9 {acceptance[9] [V2]: an empty queue ends after the timeout with an empty array; the sid of a new client is registered as subscriber} -body {
+  set fs [mock::fs::create]
+  set r [events AAA111 timeout=1 -fs $fs]
+  set out [list [status $r] [string trim [dict get $r body]] [lst $fs]]
+  mock::fs::destroy $fs
+  set out
+} -result [list 200 {[]} AAA111]
+
+test sp029-10 {acceptance[9] [V2]: an invalid sid is HTTP 401; timeout 0, above 55 or malformed is HTTP 422 with error 403 'invalid argument (timeout)'; a POST is 405} -body {
+  set a [events Unknown0001 timeout=1]
+  set out [list [status $a]]
+  foreach q {timeout=0 timeout=56 timeout=abc timeout=} {
+    set r [events AAA111 $q]
+    lappend out "[status $r] [lindex [err $r] 1]"
+  }
+  set b [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method POST -contenttype application/json -setenv {REQUEST_URI /api/v2/events} -header {X-Requested-With XMLHttpRequest} -sessions $::SESS]]]
+  lappend out [status $b]
+  set out
+} -result {401 {422 invalid argument (timeout)} {422 invalid argument (timeout)} {422 invalid argument (timeout)} {422 invalid argument (timeout)} 405}
+
+test sp029-11 {privilege: Event.* need GUEST - an unknown session is denied (400)} -body {
+  set out {}
+  foreach m {Event.subscribe Event.poll Event.unsubscribe} { lappend out [lindex [err [call $m Nobody999]] 0] }
+  set out
+} -result {400 400 400}
+
+cleanupTests

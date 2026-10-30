@@ -1,0 +1,60 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP035 non_functional_requirements[0..2] (EG-3 corrected, BD-16): the pattern boundary,
+# the extended lists as configuration only, and the golden fixture re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+
+test sp035p-nfr0 {NFR0: a missing target directory (touch prints an error) makes createFile false and logs to the syslog, also for the extended paths} -body {
+  set out {}
+  foreach p {/etc/config/fieldTestActive /etc/config/legacyAPIMigrationAccepted} {
+    set r [call CCU.createFile [list _session_id_ AbCdEf1234 file $p] -sessions $ADMIN -execfail {{{touch*} {No such file or directory}}}]
+    lappend out [result $r] [expr {[llength [dict get $r syslog]] >= 1}]
+  }
+  set out
+} -result {false 1 false 1}
+
+test sp035p-nfr1 {NFR1: createFile outside its 4-path list is 500 (also for the existsFile-only paths and the wizard patterns), no exec call} -body {
+  set out {}; set n 0
+  foreach p {/etc/config/showDiagramDatapoints /media/sd-mmcblk0/measurement /etc/config/userprofiles/userAckInstallWizardId_1} {
+    set r [call CCU.createFile [list _session_id_ AbCdEf1234 file $p] -sessions $ADMIN]
+    lappend out [err $r]
+    incr n [llength [dict get $r exec_calls]]
+  }
+  list [lsort -unique $out] $n
+} -result [list [list {500 {path not allowed}}] 0]
+
+test sp035p-nfr2 {NFR2: name parts that are empty, contain a slash, exceed 200 characters or are not 1 to 10 digits are 500 without any exec call} -body {
+  set out {}; set n 0
+  foreach p [list /etc/config/userprofiles/userAckInstallWizard_ /etc/config/userprofiles/userAckInstallWizard_a/b \
+      /etc/config/userprofiles/userAckInstallWizard_[string repeat z 201] /etc/config/userprofiles/userAckInstallWizardId_ \
+      /etc/config/userprofiles/userAckInstallWizardId_00000000001 /etc/config/userprofiles/userAckInstallWizardId_-1] {
+    set r [call CCU.existsFile [list _session_id_ AbCdEf1234 file $p] -sessions $GUEST]
+    lappend out [err $r]
+    incr n [llength [dict get $r exec_calls]]
+  }
+  list [lsort -unique $out] $n
+} -result [list [list {500 {path not allowed}}] 0]
+
+test sp035p-golden {golden re-run: createFile/existsFile replay byte-identical to the frozen answers} -body {
+  golden::compare_all -candidate only:system-admin -only {CCU.createFile CCU.existsFile}
+} -result {}
+
+cleanupTests

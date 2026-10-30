@@ -1,0 +1,52 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC003 dispatcher -> security-session: hmscript_whitelist declared_arguments args_array.
+# Request shape: declared_arguments = the ARGUMENTS list of the corrected registry, args = the
+# parameters of the request. Returns an array that contains only declared names; a control
+# character in a declared value is error 403 'invalid argument (<name>)'.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc lastscript {r} { return [lindex [dict get $r rega_calls] end] }
+
+test ic003-1 {only the declared names are injected into the ReGa script: an undeclared parameter never becomes a ReGa variable} -body {
+  set s [lastscript [call Device.getReGaIDByAddress {_session_id_ AbCdEf1234 address NEQ1 evil {x"; Write("y");} other 1}]]
+  list [string match {*var address = "NEQ1";*} $s] [string match *evil* $s] [string match {*var other*} $s]
+} -result {1 0 0}
+
+test ic003-2 {the declared list comes from the corrected registry: _session_id_ is declared and injected, a name that is not declared for the method is not (SysVar.getValueByName declares name, not id)} -body {
+  set s [lastscript [call SysVar.getValueByName {_session_id_ AbCdEf1234 name T id 4711}]]
+  list [string match {*var name = "T";*} $s] [string match {*var id = *} $s]
+} -result {1 0}
+
+test ic003-3 {error 403: a control character in a declared value is 'invalid argument (<name>)' and no ReGa script of the method runs} -body {
+  set body "\{\"method\":\"Device.getReGaIDByAddress\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"address\":\"a\\u0001\"\},\"id\":1\}"
+  set r [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::SESS]]]
+  set scripts 0
+  foreach c [dict get $r rega_calls] { if {[string match *noDeviceFound* $c]} { incr scripts } }
+  list [err $r] $scripts
+} -result {{403 {invalid argument (address)}} 0}
+
+test ic003-4 {TAB, LF and CR are allowed in declared values and escaped for the ReGa string} -body {
+  set s [lastscript [call Device.getReGaIDByAddress [list _session_id_ AbCdEf1234 address "a\tb\nc\rd"]]]
+  string match {*var address = "a\\tb\\nc\\rd";*} $s
+} -result 1
+
+test ic003-5 {backslashes and quotes are escaped (the value cannot leave the string literal)} -body {
+  set s [lastscript [call Device.getReGaIDByAddress [list _session_id_ AbCdEf1234 address "a\\\"b"]]]
+  string match {*var address = "a\\\\\\"b";*} $s
+} -result 1
+
+cleanupTests

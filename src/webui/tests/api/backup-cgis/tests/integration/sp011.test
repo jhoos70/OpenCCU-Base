@@ -1,0 +1,86 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP011 NFR and integration coverage (spec.json#SP011 non_functional_requirements[0..5]),
+# boundary and error cases; the golden re-run compares version.cgi (unchanged v1 endpoint).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc cgi {rel args} { return [golden::cgi $rel -candidate only:backup-cgis {*}$args] }
+proc lines {s} { return [split $s \n] }
+set ADMIN {{@AbCdEf1234@ 8 1000 Admin}}
+set Q "sid=%40AbCdEf1234%40"
+proc setconf {entries} {
+  set f [file join [golden::root only:backup-cgis] api apiconfig.conf]
+  set fd [open $f w]
+  puts $fd "array set API_CONFIG \{path_allow_list.backup_files [list $entries]\}"
+  close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root only:backup-cgis] api apiconfig.conf] }
+
+test sp011-nfr0 {NFR0: a directory in tarfile.cgi is archived recursively by tar (the directory itself is the argument)} -setup {
+  setconf {/etc/config}
+} -body {
+  set r [cgi backup/tarfile.cgi -query "$Q&file=%2Fetc%2Fconfig" -sessions $ADMIN -exec {{{tar c -- /etc/config} DIRTAR}}]
+  list [lindex [lines [dict get $r stdout]] end] [dict get $r exec_calls]
+} -cleanup { clearconf } -result [list DIRTAR [list {tar c -- /etc/config}]]
+
+test sp011-nfr1 {NFR1 [TARGET]: a tar that cannot be started or fails is a clean 400 INTERNAL_ERROR - no error text appended after a body} -setup {
+  setconf {/etc/config}
+} -body {
+  set r [cgi backup/tarfile.cgi -query "$Q&file=%2Fetc%2Fconfig" -sessions $ADMIN -execfail {{{tar*} {tar: /etc/config: Cannot stat}}}]
+  list [lines [dict get $r stdout]] [string match *Cannot* [dict get $r stdout]]
+} -cleanup { clearconf } -result [list {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} INTERNAL_ERROR} 0]
+
+test sp011-nfr2 {NFR2: version.cgi needs no session and reads /VERSION} -body {
+  dict get [cgi backup/version.cgi -sessions {} -files [list VERSION 1.2.3]] stdout
+} -result "Content-Type: text/plain\n\n1.2.3"
+
+test sp011-nfr3 {NFR3: the staged CGIs use LF line endings (the v1 files are CR-only)} -body {
+  set bad {}
+  foreach f {binfile.cgi textfile.cgi tarfile.cgi version.cgi} {
+    set fd [open [file join $gen backup-cgis backup $f] r]; fconfigure $fd -translation binary; set c [read $fd]; close $fd
+    if {[string first "\r" $c] >= 0 || [string first "\n" $c] < 0} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp011-nfr4 {NFR4 [TARGET]: session_isValid returning '' (ReGa failure) is INVALID_SESSION for all three file CGIs} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set out {}
+  foreach f {binfile.cgi textfile.cgi tarfile.cgi} {
+    set r [cgi backup/$f -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -regafail {*GetSessionVarStr*}]
+    lappend out [lindex [lines [dict get $r stdout]] end]
+  }
+  set out
+} -cleanup { clearconf } -result {INVALID_SESSION INVALID_SESSION INVALID_SESSION}
+
+test sp011-nfr5 {NFR5 [TARGET]: absent or empty file parameter is PATH_NOT_ALLOWED for all three file CGIs} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set out {}
+  foreach f {binfile.cgi textfile.cgi tarfile.cgi} {
+    lappend out [lindex [lines [dict get [cgi backup/$f -query "$Q&file=" -sessions $ADMIN] stdout]] end]
+  }
+  set out
+} -cleanup { clearconf } -result {PATH_NOT_ALLOWED PATH_NOT_ALLOWED PATH_NOT_ALLOWED}
+
+test sp011-err1 {a sid with quote characters never reaches a ReGa script (fail closed)} -body {
+  set r [cgi backup/binfile.cgi -query "sid=%40%22%3BWrite(1)%3B%40&file=%2Fetc%2Fpasswd" -sessions $ADMIN]
+  set injected 0
+  foreach c [dict get $r rega_calls] { if {[string match {*Write(1)*} $c]} { incr injected } }
+  list [lindex [lines [dict get $r stdout]] end] $injected
+} -result {INVALID_SESSION 0}
+
+test sp011-golden {golden re-run: version.cgi replays byte-identical to the v1 file} -body {
+  set a [golden::cgi backup/version.cgi -candidate legacy -files [list VERSION 9.9.9]]
+  set b [cgi backup/version.cgi -files [list VERSION 9.9.9]]
+  golden::diff [dict get $a stdout] [dict get $b stdout]
+} -result {}
+
+cleanupTests

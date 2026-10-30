@@ -1,0 +1,65 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP020 NFR and integration coverage (spec.json#SP020 non_functional_requirements[0..6]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF}
+
+test sp020-nfr0 {NFR0: a non-numeric flags value is forwarded as an int token (tclrpc rejects it with 601, not the script)} -body {
+  set r [call Interface.getLinks [concat $S {address A flags abc}] -sessions $GUEST -xmlrpc {{getLinks {}}}]
+  list [result $r] [lindex [lindex [dict get $r xmlrpc_calls] 0] 3]
+} -result {{[]} {int abc}}
+
+test sp020-nfr1 {NFR1: a link struct lacking any of NAME/DESCRIPTION/FLAGS/SENDER/RECEIVER is the v1 internal error 200} -body {
+  set codes {}
+  foreach drop {NAME DESCRIPTION FLAGS SENDER RECEIVER} {
+    set link {NAME L DESCRIPTION d FLAGS 1 SENDER s RECEIVER r}
+    dict unset link $drop
+    lappend codes [lindex [err [call Interface.getLinks [concat $S {address A flags 0}] -sessions $GUEST -xmlrpc [list [list getLinks [list $link]]]]] 0]
+  }
+  set codes
+} -result {200 200 200 200 200}
+
+test sp020-nfr3 {NFR3: an empty address requests the links of the whole interface} -body {
+  set r [call Interface.getLinks [concat $S {address {} flags 0}] -sessions $GUEST -xmlrpc {{getLinks {}}}]
+  list [result $r] [lindex [lindex [dict get $r xmlrpc_calls] 0] 2]
+} -result {{[]} {string {}}}
+
+test sp020-nfr4 {NFR4: getLinkInfo without NAME or DESCRIPTION is 200} -body {
+  set a [call Interface.getLinkInfo [concat $S {senderAddress a receiverAddress b}] -sessions $GUEST -xmlrpc {{getLinkInfo {NAME N}}}]
+  set b [call Interface.getLinkInfo [concat $S {senderAddress a receiverAddress b}] -sessions $GUEST -xmlrpc {{getLinkInfo {}}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {200 200}
+
+test sp020-nfr5 {NFR5: longPress arrives as the string 'true' and is passed as bool without normalisation} -body {
+  set r [call Interface.activateLinkParamset [concat $S {address a peerAddress b longPress yes}] -xmlrpc {{activateLinkParamset 1}}]
+  lindex [lindex [dict get $r xmlrpc_calls] 0] 4
+} -result {bool yes}
+
+test sp020-nfr6 {NFR6 [TARGET]: setTeam accepts the legacy misspelled 'inteface' next to 'interface' and ignores it} -body {
+  set a [call Interface.setTeam [concat $S {inteface Wrong channelAddress C:1 teamAddress *T}] -xmlrpc {{setTeam 1}}]
+  list [result $a] [lindex [lindex [dict get $a xmlrpc_calls] 0] 0]
+} -result {true xmlrpc_bin://127.0.0.1:2001}
+
+test sp020-golden {golden re-run: the eight link methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.getLinks Interface.addLink Interface.removeLink Interface.getLinkInfo Interface.setLinkInfo Interface.getLinkPeers Interface.activateLinkParamset Interface.setTeam}
+} -result {}
+
+cleanupTests

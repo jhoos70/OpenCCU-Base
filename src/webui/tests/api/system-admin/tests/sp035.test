@@ -1,0 +1,123 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP035 - CCU.createFile (ADMIN, 2-path exact allow-list) and CCU.existsFile (GUEST, 5-path
+# exact allow-list), EG-3: contracts/behavioral-contracts.json#SP035
+# The allow-lists are configuration only (api/apiconfig.conf keys path_allow_list.CCU.createFile
+# and path_allow_list.CCU.existsFile), never request values.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc setconf {key entries} {
+  set f [file join [golden::root only:system-admin] api apiconfig.conf]
+  set fd [open $f w]
+  puts $fd "array set API_CONFIG \{$key [list $entries]\}"
+  close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root only:system-admin] api apiconfig.conf] }
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set USER {{AbCdEf1234 2 1000 User}}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+# EG-3 corrected 2026-10-20 (BD-16): the larger lists are covered by sp035-patterns.test; the
+# fixtures here keep the original members, which stay members of the extended lists
+set CREATE_LIST {/etc/config/userAckSecurityHint /etc/config/firewallConfigured}
+set EXISTS_LIST {/etc/config/userAckSecurityHint /etc/config/firewallConfigured /etc/config/fieldTestActive /etc/config/showDiagramDatapoints /media/sd-mmcblk0/measurement}
+
+test sp035-0 {the staged method scripts of SP035 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {createfile existsfile} {
+    set p [file join $gen system-admin methods ccu $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp035-1 {[TARGET] CCU.createFile (ADMIN) with a member of the 2-path allow-list: 'touch -- <path>' as an argument list, answer true} -body {
+  set out {}
+  foreach p $CREATE_LIST {
+    set r [call CCU.createFile [list _session_id_ AbCdEf1234 file $p] -sessions $ADMIN]
+    lappend out [result $r] [lindex [dict get $r exec_calls] 0]
+  }
+  set out
+} -result [list true {touch -- /etc/config/userAckSecurityHint} true {touch -- /etc/config/firewallConfigured}]
+
+test sp035-2 {[TARGET] CCU.createFile below ADMIN (GUEST 1, USER 2) is 400 access denied, no filesystem call} -body {
+  set out {}; set n 0
+  foreach sess [list $GUEST $USER] {
+    set r [call CCU.createFile {_session_id_ AbCdEf1234 file /etc/config/firewallConfigured} -sessions $sess]
+    lappend out [lindex [err $r] 0]
+    incr n [llength [dict get $r exec_calls]]
+  }
+  list $out $n
+} -result {{400 400} 0}
+
+test sp035-3 {[TARGET] a path that is not an exact member of the allow-list is 500 'path not allowed' for createFile and existsFile, nothing is executed (no existence oracle)} -body {
+  set out {}; set n 0
+  foreach bad {/etc/passwd /etc/config/../shadow -rf {} {/etc/config/firewallConfigured } /etc/config/firewallconfigured /etc/config/userAckSecurityHint/} {
+    set a [call CCU.createFile [list _session_id_ AbCdEf1234 file $bad] -sessions $ADMIN -files [list etc/passwd x]]
+    set b [call CCU.existsFile [list _session_id_ AbCdEf1234 file $bad] -sessions $GUEST -files [list etc/passwd x]]
+    lappend out [err $a] [err $b]
+    incr n [llength [dict get $a exec_calls]]
+  }
+  list [lsort -unique $out] $n
+} -result [list [list {500 {path not allowed}}] 0]
+
+test sp035-4 {[TARGET] CCU.existsFile stays GUEST: every level gets true/false for the five allow-listed paths} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/fieldTestActive x
+  file mkdir [file join $fs media sd-mmcblk0 measurement]
+  set out {}
+  foreach sess [list $GUEST $USER $ADMIN] {
+    foreach p $EXISTS_LIST {
+      lappend out [result [call CCU.existsFile [list _session_id_ AbCdEf1234 file $p] -sessions $sess -fs $fs]]
+    }
+  }
+  mock::fs::destroy $fs
+  lsort -unique [list [join [lrange $out 0 4] ,] [join [lrange $out 5 9] ,] [join [lrange $out 10 14] ,]]
+} -result {false,false,true,false,true}
+
+test sp035-5 {[TARGET] the classic UI callers (flag paths) get the v1 answer: true once the flag file exists} -body {
+  set fs [mock::fs::create]
+  set a [result [call CCU.existsFile {_session_id_ AbCdEf1234 file /etc/config/userAckSecurityHint} -sessions $GUEST -fs $fs]]
+  mock::fs::write $fs etc/config/userAckSecurityHint 1
+  set b [result [call CCU.existsFile {_session_id_ AbCdEf1234 file /etc/config/userAckSecurityHint} -sessions $GUEST -fs $fs]]
+  mock::fs::destroy $fs
+  list $a $b
+} -result {false true}
+
+test sp035-6 {createFile answers false when touch fails and logs the failure to the syslog} -body {
+  set r [call CCU.createFile {_session_id_ AbCdEf1234 file /etc/config/firewallConfigured} -sessions $ADMIN -execfail {{{touch*} {touch: cannot touch: No such file or directory}}}]
+  set logged 0
+  foreach s [dict get $r syslog] { if {[string match *firewallConfigured* $s]} { incr logged } }
+  list [result $r] $logged
+} -result {false 1}
+
+test sp035-7 {[TARGET] the allow-lists are configuration only: apiconfig.conf entries replace the defaults, request values never extend them} -setup {
+  setconf path_allow_list.CCU.existsFile {/custom/flag}
+} -body {
+  set a [result [call CCU.existsFile {_session_id_ AbCdEf1234 file /custom/flag} -sessions $GUEST]]
+  set b [err [call CCU.existsFile {_session_id_ AbCdEf1234 file /etc/config/userAckSecurityHint} -sessions $GUEST]]
+  list $a $b
+} -cleanup { clearconf } -result {false {500 {path not allowed}}}
+
+test sp035-8 {a missing 'file' argument is 402 (registry ARGUMENTS), nothing runs} -body {
+  set r [call CCU.existsFile {_session_id_ AbCdEf1234} -sessions $GUEST]
+  list [err $r] [llength [dict get $r exec_calls]]
+} -result {{402 {missing argument (file)}} 0}
+
+cleanupTests

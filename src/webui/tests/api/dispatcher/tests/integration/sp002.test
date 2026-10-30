@@ -1,0 +1,100 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP002 NFR and integration coverage (spec.json#SP002 non_functional_requirements[0..3]),
+# boundary and error cases and the golden re-run of the registry fixtures.
+# Documented deliberate changes (excluded from the golden re-run): Channel.setName,
+# Channel.setMode and Interface.setTeam answer 402 for a request built from the v1 ARGUMENTS
+# (corrected registry). The system.* introspection methods read the UTF-8 staged methods.conf
+# and therefore need the staged loader (registry.tcl in homematic.cgi, SP001): their golden
+# comparison is active once dispatcher/homematic.cgi is staged.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint dispatcherStaged [file exists [file join $gen dispatcher homematic.cgi]]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/syslog.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/registry.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+
+test sp002-nfr0 {NFR0: two entries with the same name - the later one wins (Tcl array semantics)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs dup.conf "a \{ LEVEL ADMIN SCRIPT_FILE one.tcl INFO \{x\} ARGUMENTS \{\} \}\na \{ LEVEL GUEST SCRIPT_FILE two.tcl INFO \{y\} ARGUMENTS \{\} \}\n"
+  set r [drv {
+    puts [registry_load /dup.conf]
+    array set m $METHOD_LIST(a)
+    puts $m(SCRIPT_FILE)
+  } -fs $fs]
+  mock::fs::destroy $fs
+  lines $r
+} -result {1 two.tcl}
+
+test sp002-nfr2 {NFR2: the registry carries non-ASCII INFO text (ISO-8859-1 in v1): the characters survive the loader unchanged} -body {
+  set fs [mock::fs::create]
+  set r [drv {
+    registry_load methods.conf
+    set n 0
+    foreach name [array names METHOD_LIST] {
+      array set m $METHOD_LIST($name)
+      if {[regexp {[^\x00-\x7f]} $m(INFO)]} { incr n }
+      array unset m
+    }
+    puts [expr {$n > 50}]
+  } -fs $fs]
+  mock::fs::destroy $fs
+  lines $r
+} -result 1
+
+test sp002-err1 {an empty cache file or a cache of another methods.conf is ignored and rebuilt} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs var/tmp/api_registry.cache ""
+  set a [drv { puts [registry_load methods.conf] } -fs $fs]
+  mock::fs::write $fs var/tmp/api_registry.cache "# registry-cache other.conf 1 1\nx \{LEVEL NONE\}"
+  set b [drv { puts [registry_load methods.conf] } -fs $fs]
+  mock::fs::destroy $fs
+  list [lines $a] [lines $b]
+} -result {179 179}
+
+test sp002-err2 {a cache entry that is not a valid Tcl list is ignored and the registry is rebuilt from methods.conf} -body {
+  set fs [mock::fs::create]
+  set first [drv { puts [registry_load methods.conf] } -fs $fs]
+  set cachefile [file join $fs var tmp api_registry.cache]
+  set fd [open $cachefile r]; set head [gets $fd]; close $fd
+  set fd [open $cachefile w]; puts $fd $head; puts -nonewline $fd "[format %c 123]broken"; close $fd
+  set r [drv { puts [registry_load methods.conf] } -fs $fs]
+  mock::fs::destroy $fs
+  lines $r
+} -result 179
+
+test sp002-golden {golden re-run: the registry fixtures replay through the staged dispatcher libraries and the corrected methods.conf (documented changes excluded)} -body {
+  set names {}
+  foreach fx [golden::fixtures] {
+    set m [dict get $fx method]
+    if {$m in {Channel.setName Channel.setMode Interface.setTeam system.describe system.listMethods system.methodHelp ReGa.getAllDatapoints Session.setSessionVar}} continue
+    lappend names $m
+  }
+  golden::compare_all -candidate only:dispatcher -only $names
+} -result {}
+
+test sp002-golden-intro {golden re-run of the introspection methods through the staged loader: byte-identical to v1 except the two documented level changes (CCU.createFile GUEST->ADMIN, Session.logout NONE->GUEST)} -constraints dispatcherStaged -body {
+  set out {}
+  foreach m {system.describe system.listMethods system.methodHelp} {
+    foreach fx [golden::fixtures] { if {[dict get $fx method] eq $m} break }
+    set legacy [golden::capture $fx -candidate legacy]
+    set staged [golden::capture $fx -candidate only:dispatcher]
+    set legacy [string map [list \
+      {"name": "CCU.createFile","level": "GUEST"} {"name": "CCU.createFile","level": "ADMIN"} \
+      {"name": "Session.logout","level": "NONE"} {"name": "Session.logout","level": "GUEST"}] $legacy]
+    lappend out [expr {[encoding convertto utf-8 $legacy] eq [encoding convertto utf-8 $staged] || $legacy eq $staged}]
+  }
+  set out
+} -result {1 1 1}
+
+cleanupTests

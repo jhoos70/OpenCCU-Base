@@ -1,0 +1,66 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# Contract: www/api drift check (T015/T016). The stale root www/api copy must be
+# byte-equal to src/webui/www/api or removed (28 files differ today, reported by the
+# repo check, never fatal for the unit tests below).
+set here [file dirname [file normalize [info script]]]
+source [file join $here helpers mocks.tcl]
+source [file join $here helpers drift.tcl]
+
+proc mktree {files} {
+  set root [mock::tmpdir]
+  dict for {rel c} $files { mock::fs::write $root $rel $c }
+  return $root
+}
+
+test drift-1 {identical trees have no differences} -setup {
+  set a [mktree {api/a.tcl x api/sub/b.tcl y}]
+  set b [mktree {api/a.tcl x api/sub/b.tcl y}]
+} -body {
+  drift::compare [file join $a api] [file join $b api]
+} -cleanup { file delete -force $a $b } -result {}
+
+test drift-2 {a differing file, a file only in the stale copy and a file only in the source are reported with the relative path} -setup {
+  set a [mktree {api/a.tcl x api/only_stale.tcl y api/same.tcl z}]
+  set b [mktree {api/a.tcl X api/only_src.tcl y api/same.tcl z}]
+} -body {
+  lsort [drift::compare [file join $a api] [file join $b api]]
+} -cleanup { file delete -force $a $b } -result {{differs a.tcl} {only-in-source only_src.tcl} {only-in-stale only_stale.tcl}}
+
+test drift-3 {the comparison is byte exact (CRLF versus LF differs)} -setup {
+  set a [mktree [list api/a.tcl "x\r\ny"]]
+  set b [mktree [list api/a.tcl "x\ny"]]
+} -body {
+  drift::compare [file join $a api] [file join $b api]
+} -cleanup { file delete -force $a $b } -result {{differs a.tcl}}
+
+test drift-4 {a removed stale copy is a pass} -setup {
+  set b [mktree {api/a.tcl x}]
+  set a [mock::tmpdir]
+} -body {
+  drift::verdict [file join $a nothere api] [file join $b api]
+} -cleanup { file delete -force $a $b } -result {pass removed}
+
+test drift-5 {a byte-equal stale copy is a pass, a differing one fails with the count} -setup {
+  set a [mktree {api/a.tcl x}]
+  set b [mktree {api/a.tcl x}]
+  set c [mktree {api/a.tcl y api/b.tcl y}]
+} -body {
+  list [drift::verdict [file join $a api] [file join $b api]] [drift::verdict [file join $c api] [file join $b api]]
+} -cleanup { file delete -force $a $b $c } -result {{pass equal} {fail 2}}
+
+test drift-6 {the CLI form returns exit status 1 on drift and prints one line per difference} -setup {
+  set a [mktree {api/a.tcl x}]
+  set b [mktree {api/a.tcl y}]
+} -body {
+  set rc [catch {exec tclsh8.6 [file join $here helpers drift.tcl] [file join $a api] [file join $b api]} out opts]
+  list $rc [lindex [dict get $opts -errorcode] 0] [regexp {differs a.tcl} $out]
+} -cleanup { file delete -force $a $b } -result {1 CHILDSTATUS 1}
+
+test drift-7 {the repo check resolves www/api and src/webui/www/api relative to the repo root} -body {
+  set r [drift::repo_paths]
+  list [file tail [file dirname [lindex $r 0]]] [file tail [lindex $r 0]] [file isdirectory [lindex $r 1]]
+} -result {www api 1}
+
+cleanupTests

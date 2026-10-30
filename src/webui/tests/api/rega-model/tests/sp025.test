@@ -1,0 +1,131 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP025 - the ReGa device model reads (Device.listAll, listAllDetail, get, getNewDeviceCount,
+# getReGaIDByAddress, getRFAddressByAddress, getRFAddressOfAllDevices): v1 behaviour frozen.
+# contracts/behavioral-contracts.json#SP025 (the v2 model route is SP044/T176)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234}
+# the ReGa answer of the per-device script
+proc chn {id args} {
+  set d [dict create ID $id NAME ch$id ADDRESS NEQ1:$id DEVICE 1234 INDEX $id GROUP_PARTNER_ID 65535 READY_CONFIG true MODE MODE_DEFAULT \
+    CATEGORY CATEGORY_NONE USABLE true LOGGED false VISIBLE true LOGABLE true READABLE true WRITABLE false EVENTABLE true AES_AVAILABLE false \
+    VIRTUAL false CHANNEL_TYPE KEY CHANNEL_NAME HM-X]
+  foreach {k v} $args { dict set d $k $v }
+  set s ""
+  dict for {k v} $d { append s [list $k $v] " " }
+  return [string trimright $s]
+}
+proc dev {id channels} {
+  return [list ID $id NAME "Dev $id" ADDRESS NEQ$id INTERFACE BidCos-RF DEVICE_TYPE HM-X READY_CONFIG true GROUP_ONLY false CHANNELS $channels]
+}
+
+test sp025-0 {the staged method scripts of SP025 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {listall listalldetail get getnewdevicecount getregaidbyaddress getrfaddressbyaddress getrfaddressofalldevices} {
+    set p [file join $gen rega-model methods device $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp025-1 {acceptance[0]: Device.listAll returns the ready device ids as a string array; an empty ReGa answer gives []} -body {
+  list [result [call Device.listAll $S -sessions $GUEST -rega {{*root.Devices().EnumIDs()* {{1234} {5678}}}}]] [result [call Device.listAll $S -sessions $GUEST]]
+} -result {{["1234","5678"]} {[]}}
+
+test sp025-2 {acceptance[3]: Device.getNewDeviceCount answers the count as a JSON string} -body {
+  list [result [call Device.getNewDeviceCount $S -sessions $GUEST -rega {{*iNewCount* 3}}]] [result [call Device.getNewDeviceCount $S -sessions $GUEST]]
+} -result {{"3"} {""}}
+
+test sp025-3 {acceptance[4], NFR5: Device.getReGaIDByAddress (ADMIN) answers the id, 'noDeviceFound' is a normal result} -body {
+  list [result [call Device.getReGaIDByAddress [list {*}$S address NEQ1] -rega {{*noDeviceFound* 4711}}]] \
+    [result [call Device.getReGaIDByAddress [list {*}$S address NEQ1] -rega {{*noDeviceFound* noDeviceFound}}]]
+} -result {{"4711"} {"noDeviceFound"}}
+
+test sp025-4 {acceptance[5], NFR5: Device.getRFAddressByAddress answers the RF_ADDRESS token, 'unknown' otherwise} -body {
+  list [result [call Device.getRFAddressByAddress [list {*}$S address NEQ1] -rega {{*MetaData("DEVDESC")* RF_ADDRESS=1A2B3C}}]] \
+    [result [call Device.getRFAddressByAddress [list {*}$S address NEQ1] -rega {{*MetaData("DEVDESC")* unknown}}]]
+} -result {{"RF_ADDRESS=1A2B3C"} {"unknown"}}
+
+test sp025-5 {acceptance[5], NFR6: Device.getRFAddressOfAllDevices answers a tab/newline table (script without arguments)} -body {
+  set r [call Device.getRFAddressOfAllDevices $S -rega [list [list {*EnumUsedIDs()*} "RF_ADDRESS=1\tNEQ1\tDev\n"]]]
+  list [result $r] [string match {*var _session_id_*} [lindex [dict get $r rega_calls] end]]
+} -result [list "\"RF_ADDRESS=1\\tNEQ1\\tDev\\n\"" 0]
+
+test sp025-6 {acceptance[2]: Device.get answers the device with its channels; partner id 65535 becomes ''} -body {
+  set d [dev 1234 [list [chn 1 GROUP_PARTNER_ID 65535] [chn 2 GROUP_PARTNER_ID 77]]]
+  set r [call Device.get [list {*}$S id 1234] -sessions $GUEST -rega [list [list {*Write("ID *} $d]]]
+  set j [result $r]
+  list [regexp {^\{"id":"1234","name":"Dev 1234","address":"NEQ1234","interface":"BidCos-RF","type":"HM-X","operateGroupOnly":"false","channels":\[} $j] \
+    [regexp {"index":1,"partnerId":"","mode":"MODE_DEFAULT"} $j] [regexp {"index":2,"partnerId":"77"} $j] [regexp {"isReady":true,"isUsable":true,"isVisible":true,"isLogged":false} $j]
+} -result {1 1 1 1}
+
+test sp025-7 {acceptance[6]: Device.get for an unknown id is error 501 'device not found'} -body {
+  err [call Device.get [list {*}$S id 99] -sessions $GUEST]
+} -result {501 {device not found}}
+
+test sp025-8 {acceptance[1]: Device.listAllDetail builds one object per ready device with its channels (isReady of the device is a string, of the channel raw)} -body {
+  set d [dev 1234 [list [chn 1]]]
+  set r [call Device.listAllDetail $S -sessions $GUEST -rega [list [list {*Write("ID *} $d] [list {*EnumIDs()*} {{1234}}]]]
+  set j [result $r]
+  list [regexp {^\[\{"id":"1234","name":"Dev 1234","address":"NEQ1234","interface":"BidCos-RF","type":"HM-X","operateGroupOnly":"false","isReady":"true","channels":\[\{"id":"1"} $j] \
+    [regexp {"isReady":true,"isUsable"} $j] [regexp {"channelType":"KEY"\}\]\}\]$} $j]
+} -result {1 1 1}
+
+test sp025-9 {NFR0: Device.listAllDetail makes one script round-trip per device and silently skips a device whose answer cannot be parsed} -body {
+  set d [dev 1 [list [chn 1]]]
+  set rules [list [list {*Write("ID *} "not a list \{"] [list {*EnumIDs()*} {{1} {2}}]]
+  set r [call Device.listAllDetail $S -sessions $GUEST -rega $rules]
+  set per 0
+  foreach c [dict get $r rega_calls] { if {[string match {*Write("ID *} $c]} { incr per } }
+  list [result $r] $per
+} -result {{[]} 2}
+
+test sp025-10 {NFR1,NFR3 (frozen v1): the listAllDetail script writes operateGroupOnly=false and flags HmIP-RCV-50 as virtual; Device.get does not} -body {
+  set d [dev 1234 [list [chn 1]]]
+  set rules [list [list {*Write("ID *} $d] [list {*EnumIDs()*} {{1234}}]]
+  set a [call Device.listAllDetail $S -sessions $GUEST -rega $rules]
+  set b [call Device.get [list {*}$S id 1234] -sessions $GUEST -rega $rules]
+  set sa [join [dict get $a rega_calls] \n]
+  set sb [join [dict get $b rega_calls] \n]
+  list [string match {*AddMetaData("operateGroupOnly", false)*} $sa] [string match {*HmIP-RCV-50*} $sa] [string match {*HmIP-RCV-50*} $sb] [string match {*AddMetaData*} $sb]
+} -result {1 1 0 0}
+
+test sp025-11 {NFR2 (frozen v1): a HmIP-FALMOT channel without FALMOT_CHN_ACTIVE fails the whole list as internal error 200} -body {
+  set d [dev 1234 [list [chn 1 CHANNEL_NAME HmIP-FALMOT-X CHANNEL_TYPE CLIMATECONTROL_FLOOR_TRANSCEIVER]]]
+  set r [call Device.listAllDetail $S -sessions $GUEST -rega [list [list {*Write("ID *} $d] [list {*EnumIDs()*} {{1234}}]]]
+  lindex [err $r] 0
+} -result 200
+
+test sp025-12 {optional channel members: mode_multi_mode and daliMaxCapabilities are emitted when the ReGa side wrote them} -body {
+  set d [dev 1234 [list [chn 1 CHANNEL_TYPE BLIND_TRANSMITTER MODE_MULTI_MODE_CHANNEL BLIND] [chn 2 CHANNEL_NAME HmIP-DRG-DALI CHANNEL_TYPE UNIVERSAL_LIGHT_RECEIVER DALI_MAX_CAPABILITIES 8]]]
+  set r [call Device.listAllDetail $S -sessions $GUEST -rega [list [list {*Write("ID *} $d] [list {*EnumIDs()*} {{1234}}]]]
+  set j [result $r]
+  list [regexp {"mode_multi_mode":"BLIND"} $j] [regexp {"daliMaxCapabilities":"8"} $j]
+} -result {1 1}
+
+test sp025-13 {privilege levels: Device.listAll needs GUEST (no session -> 400), getReGaIDByAddress needs ADMIN (GUEST -> 400); the script is not run} -body {
+  set a [golden::call Device.listAll {_session_id_ Nope000001} -candidate only:dispatcher,security-session,rega-model -sessions {}]
+  set b [golden::call Device.getReGaIDByAddress {_session_id_ AbCdEf1234 address X} -candidate only:dispatcher,security-session,rega-model -sessions $::GUEST]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {400 400}
+
+cleanupTests

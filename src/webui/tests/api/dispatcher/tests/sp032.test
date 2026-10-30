@@ -1,0 +1,127 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP032 - registry introspection (system.describe / listMethods / methodHelp), the privilege matrix
+# of methods.conf, GET /api/v2/schema and the central validation: contracts/behavioral-contracts.json#SP032
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,schema-harness
+set SESS {{AbCdEf1234 8 1000 Admin} {GuestSid001 1 1001 Guest}}
+proc post {json args} {
+  return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::SESS {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc names {body} { return [regexp -all -inline {\{"name": "([^"]+)","level"} $body] }
+
+test sp032-0 {the staged introspection scripts and the schema route exist} -body {
+  set out {}
+  foreach f {methods/system/describe.tcl methods/system/listmethods.tcl methods/system/methodhelp.tcl v2/schema.tcl eq3/validate.tcl} {
+    lappend out [file exists [file join $gen dispatcher {*}[split $f /]]]
+  }
+  set out
+} -result {1 1 1 1 1}
+
+test sp032-1 {acceptance[0]: system.describe returns the API header and procs sorted by name from the registry} -body {
+  set r [post {{"method":"system.describe","params":{},"id":1}}]
+  set b [dict get $r body]
+  set n [regexp -all -inline {"name": "([A-Za-z_.]+)","level"} $b]
+  set procs {}
+  foreach {all nm} $n { lappend procs $nm }
+  list [regexp {"id": "urn:www-homematic-com:homematic-jsonrpc-api","summary": "Zugriff auf HomeMatic Zentrale","help": "/api/homematic.cgi"} $b] \
+    [llength $procs] [expr {$procs eq [lsort $procs]}]
+} -result {1 179 1}
+
+test sp032-2 {acceptance[1],[5]: system.listMethods lists all 179 entries sorted by name with name/level/info} -body {
+  set r [post {{"method":"system.listMethods","params":{},"id":1}}]
+  set procs {}
+  foreach {all nm} [regexp -all -inline {"name": "([A-Za-z_.]+)","level": "[A-Z]+","info": } [dict get $r body]] { lappend procs $nm }
+  list [llength $procs] [expr {$procs eq [lsort $procs]}]
+} -result {179 1}
+
+test sp032-3 {acceptance[2]: system.methodHelp returns the INFO text; non-ASCII characters stay intact (NFR0)} -body {
+  set r [post {{"method":"system.methodHelp","params":{"name":"CCU.getSerial"},"id":1}}]
+  set s [post {{"method":"system.methodHelp","params":{"name":"CCU.getHttpsRedirectEnabled"},"id":1}}]
+  list [string trim [dict get $r body]] [string match "*Prüft*" [encoding convertfrom utf-8 [encoding convertto iso8859-1 [dict get $s body]]]]
+} -result [list {{"id": 1,"version": "1.1","result": "Liefert die Seriennummer der HomeMatic Zentrale","error": null}} 1]
+
+test sp032-4 {acceptance[3], NFR1: an unknown name is error 500 "unknown method (<name>)"} -body {
+  err [post {{"method":"system.methodHelp","params":{"name":"No.such"},"id":1}}]
+} -result {500 {unknown method (No.such)}}
+
+test sp032-5 {acceptance[4] [TARGET]: upl 1 calling a USER method is error 400 naming required and caller level; the script is not sourced} -body {
+  set r [post {{"method":"SysVar.getAll","params":{"_session_id_":"GuestSid001"},"id":1}}]
+  set calls 0
+  foreach c [dict get $r rega_calls] { if {![string match *StrValueByIndex* $c]} { incr calls } }
+  list [err $r] $calls
+} -result [list {400 {access denied (\"USER\" needed, session level 1)}} 0]
+
+test sp032-6 {acceptance[6] [TARGET]: the privilege matrix of methods.conf} -body {
+  set fd [open [file join $gen dispatcher methods.conf] r]; fconfigure $fd -encoding utf-8
+  array set reg [read $fd]; close $fd
+  set c [dict create NONE 0 GUEST 0 USER 0 ADMIN 0]
+  set none {}
+  foreach n [lsort [array names reg]] {
+    array unset e; array set e $reg($n)
+    dict incr c $e(LEVEL)
+    if {$e(LEVEL) eq "NONE"} { lappend none $n }
+  }
+  array set ra $reg(CCU.createFile); array set rb $reg(Session.logout); array set rd $reg(CCU.existsFile); array set rf $reg(RecoveryMode.enter)
+  list $none [dict get $c NONE] [dict get $c GUEST] [dict get $c USER] [dict get $c ADMIN] $ra(LEVEL) $rb(LEVEL) $rd(LEVEL) $rf(LEVEL)
+} -result [list {Interface.isPresent ReGa.isPresent Session.login WebUI.getColors system.describe system.getEnergyPrice system.listMethods system.methodHelp} 8 48 30 93 ADMIN GUEST GUEST ADMIN]
+
+test sp032-7 {acceptance[7] [V2]: GET /api/v2/schema with a GUEST session is HTTP 200 with exactly 179 methods, each with name/level/info/params/result} -body {
+  set r [post {} -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/schema} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id GuestSid001}]
+  set b [dict get $r body]
+  set n 0
+  foreach {all nm} [regexp -all -inline {\{"name":"([A-Za-z_.]+)","level":"[A-Z]+","info":"} $b] { incr n }
+  list [status $r] $n [regexp {"version":"[^"]+"} $b] [regexp -all {"params":\{} $b] [regexp -all {"result":} $b]
+} -result {200 179 1 179 179}
+
+test sp032-8 {acceptance[7] [V2]: without a valid sid HTTP 401, with an unknown session HTTP 401} -body {
+  set a [post {} -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/schema} -header {X-Requested-With XMLHttpRequest}]
+  set b [post {} -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/schema} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id Unknown0001}]
+  list [status $a] [status $b]
+} -result {401 401}
+
+test sp032-9 {acceptance[8] [TARGET]: central validation - a control character in a string parameter is error 403 "invalid argument (<name>)" before the method script runs (v1)} -body {
+  set body "\{\"method\":\"Device.get\",\"params\":\{\"_session_id_\":\"GuestSid001\",\"id\":\"1\\u0001x\"\},\"id\":1\}"
+  set r [post $body]
+  set calls 0
+  foreach c [dict get $r rega_calls] { if {![string match *StrValueByIndex* $c]} { incr calls } }
+  list [err $r] $calls [status $r]
+} -result [list {403 {invalid argument (id)}} 0 200]
+
+test sp032-10 {acceptance[8] [V2]: the same violation is HTTP 422 on /api/v2/rpc} -body {
+  set body "\{\"method\":\"Device.get\",\"params\":\{\"id\":\"1\\u0001x\"\},\"id\":1\}"
+  set r [post $body -setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id GuestSid001}]
+  list [err $r] [status $r]
+} -result [list {403 {invalid argument (id)}} 422]
+
+test sp032-11 {acceptance[8]: tab, LF and CR are allowed in string parameters; the locked patterns are enforced centrally (dataId, testId, serial, lgwserial)} -body {
+  set out {}
+  foreach {m p} {
+    Interface.getMetadata {"objectId":"1","dataId":"a b"}
+    Device.pollComTest {"id":"1","testId":"yesterday"}
+    Interface.getMetadata {"objectId":"1","dataId":"ok.id-1"}
+  } {
+    set r [post "\{\"method\":\"$m\",\"params\":\{\"_session_id_\":\"GuestSid001\",$p\},\"id\":1\}"]
+    lappend out [lindex [err $r] 0]
+  }
+  set r [post "\{\"method\":\"Device.get\",\"params\":\{\"_session_id_\":\"GuestSid001\",\"id\":\"1\\t\\n\\r\"\},\"id\":1\}"]
+  lappend out [lindex [err $r] 0]
+  set out
+} -result {403 403 none 501}
+
+cleanupTests

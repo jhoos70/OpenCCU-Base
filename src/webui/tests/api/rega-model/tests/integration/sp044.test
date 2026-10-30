@@ -1,0 +1,81 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP044 NFR and integration coverage (spec.json#SP044 non_functional_requirements[0..5]), boundary
+# and error cases of the model route and the golden re-run of ReGa.runScript / ReGa.isPresent. The
+# line set of ReGa.getAllDatapoints is a documented deliberate change (EG-7: enumeration instead
+# of the 65,535 id probes) and is therefore not part of the byte comparison.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+proc model {query args} {
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/model} -query $query \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions {{AbCdEf1234 1 1000 Guest}} {*}$args]]]
+}
+
+test sp044-nfr0 {NFR0 (changed by SP005 [TARGET]): control characters other than \b \f \n \r \t, which json_toString of v1 left raw, are escaped as \u00XX by the staged jsonrpc_response so the document stays valid JSON} -body {
+  result [call ReGa.runScript {_session_id_ AbCdEf1234 script x} -sessions $ADMIN -rega [list [list x "a[format %c 1]b"]]]
+} -result {"a\u0001b"}
+
+test sp044-nfr2 {NFR2: the result of ReGa.getAllDatapoints ends with an empty string element, also for an empty object model} -body {
+  list [result [call ReGa.getAllDatapoints {_session_id_ AbCdEf1234} -sessions $ADMIN -rega [list [list {*EnumIDs()*} "1--DEVICE--D--A\n"]]]] [result [call ReGa.getAllDatapoints {_session_id_ AbCdEf1234} -sessions $ADMIN]]
+} -result {{["1--DEVICE--D--A",""]} {[""]}}
+
+test sp044-nfr4 {NFR4: ReGa.isPresent and runScript without ReGa (script failure) answer false / the empty string} -body {
+  list [result [call ReGa.isPresent {} -sessions {} -regafail {*}]] [result [call ReGa.runScript {_session_id_ AbCdEf1234 script x} -sessions $ADMIN -regafail {x}]]
+} -result {false {""}}
+
+test sp044-err1 {error case: a script with quotes and backslashes reaches the ReGa interpreter unchanged (runScript passes the text as the script, not as a variable)} -body {
+  set s "Write(\"a\\\\b\");"
+  set r [call ReGa.runScript [list _session_id_ AbCdEf1234 script $s] -sessions $ADMIN]
+  expr {[lindex [dict get $r rega_calls] end] eq $s}
+} -result 1
+
+test sp044-model1 {the model route with pagination beyond the end gives empty items but the right total} -body {
+  set recs {}
+  for {set i 1} {$i <= 3} {incr i} { lappend recs [list ID $i NAME r$i DESCRIPTION d CHANNELS {}] }
+  set r [model "sections=rooms&offset=5&limit=2" -rega [list [list {*ID_ROOMS*EnumUsedIDs()*} $recs]]]
+  string trim [dict get $r body]
+} -result {{"rooms":{"total":3,"offset":5,"limit":2,"items":[]}}}
+
+test sp044-model2 {the model route emits real JSON booleans and strict JSON (no trailing comma, no JavaScript expression)} -body {
+  set r [model "sections=programs" -rega [list [list {*ID_PROGRAMS*EnumIDs()*} [list [list ID 9 NAME P TIME t ACTIVE junk INTERNAL true]]]]]
+  set j [string trim [dict get $r body]]
+  list [regexp {"isActive":false,"isInternal":true} $j] [regexp {,\}} $j] [regexp {,\]} $j]
+} -result {1 0 0}
+
+test sp044-model3 {the model scripts are read only: no AddMetaData, no Add, no Remove, no CreateObject} -body {
+  set r [model "sections=devices,channels,rooms,functions,sysvars,programs,datapoints"]
+  set all [join [dict get $r rega_calls] \n]
+  list [regexp {AddMetaData|\.Add\(|\.Remove\(|CreateObject|MetaData\([^)]*,} $all]
+} -result 0
+
+test sp044-model4 {a malformed device record is skipped, the others are returned} -body {
+  set r [model "sections=devices" -rega [list [list {*Devices().EnumIDs()*Channels()*} [list "ID \{broken" [list ID 5 NAME ok ADDRESS A INTERFACE I DEVICE_TYPE T READY_CONFIG true GROUP_ONLY {} CHANNELS {}]]]]]
+  string trim [dict get $r body]
+} -result {{"devices":{"total":1,"offset":0,"limit":100,"items":[{"id":"5","name":"ok","address":"A","interface":"I","type":"T","operateGroupOnly":"false","isReady":true,"channels":[]}]}}}
+
+test sp044-golden {golden re-run: ReGa.runScript and ReGa.isPresent replay byte-identical through the staged scripts} -body {
+  golden::compare_all -candidate only:rega-model -only {ReGa.runScript ReGa.isPresent}
+} -result {}
+
+cleanupTests

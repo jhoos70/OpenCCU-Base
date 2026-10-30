@@ -1,0 +1,63 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC019 dispatcher -> security-session: unauthenticated_allow_list_check method_name. Request:
+# method = the name of the called method. Response: allowed for the 8 allow-listed LEVEL NONE
+# methods. A LEVEL NONE entry outside the list is refused (fail closed, error 400) before its
+# script runs - the registry CI check (allowlist::registry_violations) finds the entry as well.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions {{AbCdEf1234 8 1000 Admin}} {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+# an extra registry entry with LEVEL NONE that is not on the allow-list
+proc addEntry {} {
+  set f [file join [golden::root $::CAND] api methods.conf]
+  set fd [open $f a]; fconfigure $fd -encoding utf-8
+  puts $fd "Evil.open \{\n  LEVEL NONE\n  SCRIPT_FILE system/methodhelp.tcl\n  INFO \{x\}\n  ARGUMENTS \{name\}\n\}"
+  close $fd
+}
+proc dropEntry {} {
+  set root [golden::root $::CAND]
+  file copy -force [file join $::gen dispatcher methods.conf] [file join $root api methods.conf]
+}
+
+test ic019-1 {the 8 allow-listed LEVEL NONE methods are called without a session} -body {
+  set out {}
+  foreach {m p} {system.listMethods {} system.describe {} system.methodHelp {name Device.get} system.getEnergyPrice {} ReGa.isPresent {} Interface.isPresent {interface BidCos-RF} WebUI.getColors {}} {
+    set r [call $m $p -sessions {}]
+    lappend out [expr {[lindex [err $r] 0] ne "400"}]
+  }
+  set out
+} -result {1 1 1 1 1 1 1}
+
+test ic019-2 {a LEVEL NONE entry outside the allow-list is refused with 400 before its script runs} -setup { addEntry } -body {
+  set r [call Evil.open {name x} -sessions {}]
+  list [lindex [err $r] 0] [string match {*"result": null*} [dict get $r body]]
+} -cleanup { dropEntry } -result {400 1}
+
+test ic019-3 {the registry CI check names the same entry} -setup { addEntry } -body {
+  set r [golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/syslog.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/registry.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/allowlist.tcl]
+    registry_load methods.conf
+    puts [allowlist::registry_violations [array get METHOD_LIST]]
+  } -candidate $::CAND]
+  string trim [dict get $r stdout]
+} -cleanup { dropEntry } -result Evil.open
+
+test ic019-4 {methods above LEVEL NONE are not subject to the check} -body {
+  lindex [err [call Device.listAll {_session_id_ AbCdEf1234}]] 0
+} -result none
+
+cleanupTests

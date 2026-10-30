@@ -1,0 +1,70 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF012 SSH enable / disable (flow-model.md#cf012): ADMIN call through the dispatcher -> touch / rm
+# of /etc/config/sshEnabled as argument lists (no shell) -> source /bin/setfirewall.tcl -> answer;
+# CCU.setSSHPassword hashes via mkpasswd reading the password from stdin and rewrites the shadow
+# file write-then-rename.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,system-admin
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::ADMIN {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set FWOK "set fd \[open /tmp/firewall.reloaded w\]; puts \$fd done; close \$fd"
+
+test cf012-1 {steps 2-4: mode 'true' touches the flag as an argument list, loads the firewall configuration, answers null} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSSH [concat $S {mode true}] -fs $fs -files [list bin/setfirewall.tcl $FWOK]]
+  set fw [file exists [file join $fs tmp firewall.reloaded]]
+  mock::fs::destroy $fs
+  list [result $r] [dict get $r exec_calls] $fw
+} -result [list null [list {touch -- /etc/config/sshEnabled}] 1]
+
+test cf012-2 {step 2: every other mode removes the flag (rm -- as an argument list)} -body {
+  set r [call CCU.setSSH [concat $S {mode false}] -files [list bin/setfirewall.tcl $FWOK]]
+  dict get $r exec_calls
+} -result [list {rm -- /etc/config/sshEnabled}]
+
+test cf012-3 {step 2: a mode with shell metacharacters never reaches a shell - the command line is fixed} -body {
+  set r [call CCU.setSSH [list _session_id_ AbCdEf1234 mode {true; reboot}] -files [list bin/setfirewall.tcl $FWOK]]
+  set all [join [dict get $r exec_calls] \n]
+  list [string match *reboot* $all] [lindex [dict get $r exec_calls] 0]
+} -result [list 0 {rm -- /etc/config/sshEnabled}]
+
+test cf012-4 {step 5: setSSHPassword hashes through mkpasswd with the password on stdin (never in argv) and rewrites the shadow file} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/shadow "root:\$6\$old\$oldhash:19000:0:99999:7:::\n"
+  set hash {$6$saltsalt$abcdefghijklmnopqrstuvwxyzABCDEF0123456789./abcdefghijklmnopqrstuvwxyzABCDEF0123456789./abcdefghijklmnopqrs}
+  set r [call CCU.setSSHPassword [concat $S {passwd s3cret-pw}] -fs $fs -exec [list [list {mkpasswd*} $hash]]]
+  # (the mock logs the stdin text after '<<'; only the part before it is the command line)
+  set argv [lindex [split [join [dict get $r exec_calls] \n] <] 0]
+  set shadow [mock::fs::read $fs etc/config/shadow]
+  mock::fs::destroy $fs
+  list [string match *s3cret-pw* $argv] [string match *$hash* $shadow]
+} -result {0 1}
+
+test cf012-5 {error path: a non-ADMIN session is denied (400) and nothing is executed} -body {
+  set r [call CCU.setSSH [concat $S {mode true}] -sessions {{AbCdEf1234 2 1 U}} -files [list bin/setfirewall.tcl $FWOK]]
+  list [lindex [err $r] 0] [llength [dict get $r exec_calls]]
+} -result {400 0}
+
+test cf012-6 {error path: a failing /bin/setfirewall.tcl is the generic error 200 (reference, no errorInfo)} -body {
+  set r [call CCU.setSSH [concat $S {mode true}] -files [list bin/setfirewall.tcl "error firewall-broken"]]
+  list [lindex [err $r] 0] [string match *firewall-broken* [dict get $r body]]
+} -result {200 0}
+
+cleanupTests

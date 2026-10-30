@@ -1,0 +1,72 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP046 NFR and integration coverage (spec.json#SP046 non_functional_requirements[0..5]), boundary
+# and error cases and the golden re-run of the WebUI.* fixtures through the staged scripts.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,user-profile
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc sysmap {text} {
+  set d [file join [golden::root $::CAND] webui]
+  file mkdir $d
+  set fd [open [file join $d color.map] w]; puts -nonewline $fd $text; close $fd
+}
+set USER {{AbCdEf1234 2 1000 User}}
+
+test sp046-nfr1 {NFR1: cpFile is required by ARGUMENTS but never used - a missing cpFile is 402, any value works} -body {
+  sysmap "a x\n"
+  set fs [mock::fs::create]
+  set a [call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key a color #1} -sessions $USER -fs $fs]
+  set b [call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key a color #2 cpFile whatever} -sessions $USER -fs $fs]
+  set content [mock::fs::read $fs etc/config/color.map]
+  mock::fs::destroy $fs
+  list [err $a] [result $b] $content
+} -result [list {402 {missing argument (cpFile)}} true "a  #2\n"]
+
+test sp046-nfr4 {NFR4: JSON-special characters in a colour id or value are escaped by getColors} -body {
+  sysmap "a b\n"
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/color.map [list x "va\\lue"]
+  set r [call WebUI.getColors {} -sessions {} -fs $fs]
+  mock::fs::destroy $fs
+  regexp {"x":"va\\\\lue"} [result $r]
+} -result 1
+
+test sp046-err1 {error case: a key or color with a newline cannot add lines - the value is written on the replaced line (documented: the newline stays part of the value, as in v1 echo)} -body {
+  sysmap "a x\nb y\n"
+  set fs [mock::fs::create]
+  call WebUI.setWebUIColors [list _session_id_ AbCdEf1234 key a color "#1\nc z" cpFile 0] -sessions $USER -fs $fs
+  set lines [split [mock::fs::read $fs etc/config/color.map] \n]
+  mock::fs::destroy $fs
+  set lines
+} -result [list "a  #1" "c z" "b y" ""]
+
+test sp046-err2 {error case: a control character in the color is error 403 centrally before the file is touched} -body {
+  sysmap "a x\n"
+  set fs [mock::fs::create]
+  set body "\{\"method\":\"WebUI.setWebUIColors\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"key\":\"a\",\"color\":\"#1\\u0001\",\"cpFile\":\"0\"\},\"id\":1\}"
+  set r [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::USER -fs $fs]]]
+  set exists [file exists [file join $fs etc config color.map]]
+  mock::fs::destroy $fs
+  list [err $r] $exists
+} -result [list {403 {invalid argument (color)}} 0]
+
+test sp046-golden {golden re-run: the WebUI.* fixtures replay byte-identical through the staged scripts (v1 path)} -body {
+  golden::compare_all -candidate only:user-profile -only {WebUI.getColors WebUI.setWebUIColors}
+} -result {}
+
+cleanupTests

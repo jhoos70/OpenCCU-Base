@@ -1,0 +1,65 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC012 dispatcher -> user-profile: GET|PUT /api/v2/profile (v2/router.tcl). Request shape: GET
+# query userId (ADMIN for other users), PUT {language ^[a-z]{2}$}. Response: {userId,userName,
+# firstName,hasPassword,isNoExpert,language}. Errors: 401 invalid sid; 403 other user's profile
+# without ADMIN; 422 invalid language.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,user-profile
+set USER {{AbCdEf1234 2 1234 Admin}}
+set PROFILE {{*UserFirstName()* {NAME {Admin} FIRST {Max} PWD {true} NOEXPERT {false}}}}
+proc req {method body args} {
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -method $method -contenttype [expr {$method eq "PUT" ? "application/json" : ""}] \
+    -setenv {REQUEST_URI /api/v2/profile} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::USER -rega $::PROFILE {*}$args]]]
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test ic012-1 {GET maps to the user-profile route and answers the locked attribute set} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/Max.lang "de"
+  set r [req GET {} -fs $fs]
+  mock::fs::destroy $fs
+  string trim [dict get $r body]
+} -result {{"userId":"1234","userName":"Admin","firstName":"Max","hasPassword":true,"isNoExpert":false,"language":"de"}}
+
+test ic012-2 {PUT {language} writes the language and answers it} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/Max.lang "de"
+  set r [req PUT {{"language":"en"}} -fs $fs]
+  set c [mock::fs::read $fs etc/config/userprofiles/Max.lang]
+  mock::fs::destroy $fs
+  list [status $r] [string trim [dict get $r body]] $c
+} -result [list 200 {{"language":"en"}} en]
+
+test ic012-3 {error 401: no or unknown sid} -body {
+  set a [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/profile} -header {X-Requested-With XMLHttpRequest} -sessions $::USER]]]
+  set b [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/profile} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id Unknown0001} -sessions $::USER]]]
+  list [status $a] [status $b]
+} -result {401 401}
+
+test ic012-4 {error 403: another user's profile without ADMIN, for GET and PUT} -body {
+  set a [req GET {} -query userId=999]
+  set b [req PUT {{"language":"en"}} -query userId=999]
+  list [status $a] [status $b]
+} -result {403 403}
+
+test ic012-5 {error 422: a language that is not ^[a-z]{2}$} -body {
+  set r [req PUT {{"language":"EN"}}]
+  list [status $r] [err $r]
+} -result {422 {403 {invalid argument (language)}}}
+
+cleanupTests

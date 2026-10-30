@@ -1,0 +1,76 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF007 Interface.* passthrough (dispatch.tcl -> rfd / hs485d / HmIPServer; flow-model.md#cf007):
+# CF001 steps -> registry (SCRIPT_FILE interface/dispatch.tcl, METHOD_FILE interface/<name>.tcl) ->
+# args(interface) resolved in INTERFACE_LIST (read from InterfacesList.xml, cached) -> XML-RPC call
+# on the interface URL -> checkXmlRpcStatus mapping -> result document; errors are mapped, the
+# fault text is only logged.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,interface-gateway
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set XMLIF "<interfaces>\n<ipc><name>HmIP-RF</name><url>http://127.0.0.1:2010</url><info>HmIP-RF</info></ipc>\n<ipc><name>BidCos-RF</name><url>xmlrpc_bin://127.0.0.1:2001</url><info>BidCos-RF</info></ipc>\n</interfaces>"
+set IF [list -interfaces 0 -files [list etc/config/InterfacesList.xml $XMLIF]]
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::GUEST {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set GD {_session_id_ AbCdEf1234 interface HmIP-RF address NEQ0123456}
+set DEVICE {TYPE HmIP-X ADDRESS NEQ0123456 PARAMSETS {MASTER VALUES} VERSION 3 FLAGS 1 CHILDREN {NEQ0123456:1} FIRMWARE 1.0 AVAILABLE_FIRMWARE 1.0 UPDATABLE 0 FIRMWARE_UPDATE_STATE UP_TO_DATE}
+
+test cf007-1 {steps 1-4: registry entry -> interface resolved in the list from InterfacesList.xml -> XML-RPC call on the URL of that interface} -body {
+  set r [call Interface.getDeviceDescription $GD {*}$IF -xmlrpc [list [list getDeviceDescription $DEVICE]]]
+  set c [lindex [dict get $r xmlrpc_calls] 0]
+  list [lindex $c 0] [lindex $c 1] [lindex [dict get $r xmlrpc_calls] 0 2] [file exists [file join /tmp nonexistent]]
+} -result {http://127.0.0.1:2010 getDeviceDescription {string NEQ0123456} 0}
+
+test cf007-2 {step 2: an unknown interface name is error 500 'unknown interface (<name>)', no XML-RPC call} -body {
+  set r [call Interface.getDeviceDescription [dict replace $GD interface Nope] {*}$IF]
+  list [err $r] [llength [dict get $r xmlrpc_calls]]
+} -result {{500 {unknown interface (Nope)}} 0}
+
+test cf007-3 {step 3: the interface list is cached in /var/tmp/api_ipc.cache and rebuilt when InterfacesList.xml is newer} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/InterfacesList.xml $XMLIF
+  call Interface.getDeviceDescription $GD -fs $fs -interfaces 0 -xmlrpc [list [list getDeviceDescription $DEVICE]]
+  set first [file exists [file join $fs var tmp api_ipc.cache]]
+  mock::fs::write $fs etc/config/InterfacesList.xml [string map {2010 2011} $XMLIF]
+  file mtime [file join $fs etc config InterfacesList.xml] [expr {[clock seconds] + 100}]
+  set r [call Interface.getDeviceDescription $GD -fs $fs -interfaces 0 -xmlrpc [list [list getDeviceDescription $DEVICE]]]
+  mock::fs::destroy $fs
+  list $first [lindex [lindex [dict get $r xmlrpc_calls] 0] 0]
+} -result {1 http://127.0.0.1:2011}
+
+test cf007-4 {step 5: status mapping 1..4 -> 601..604, -1..-6 -> 501..506, -10 -> 507, other -> 599; the fault text is never returned} -body {
+  set out {}
+  foreach f {-1 -6 -10 -99} {
+    set r [call Interface.getDeviceDescription $GD {*}$IF -fault [list [list getDeviceDescription $f secret-fault]]]
+    lappend out [lindex [err $r] 0] [string match *secret-fault* [dict get $r body]]
+  }
+  set out
+} -result {501 0 506 0 507 0 599 0}
+
+test cf007-5 {error path: a connection failure (Tcl error in the XML-RPC call) is mapped (601-604) or the generic error 200; never errorInfo} -body {
+  set r [call Interface.getDeviceDescription $GD {*}$IF]
+  list [expr {[lindex [err $r] 0] in {200 601 602 603 604}}] [string match *errorInfo* [dict get $r body]]
+} -result {1 0}
+
+test cf007-6 {step 7: a v2 batch fans out several Interface.* reads, each element isolated} -body {
+  set body "\[\{\"id\":1,\"method\":\"Interface.getDeviceDescription\",\"params\":{\"interface\":\"HmIP-RF\",\"address\":\"NEQ0123456\"}\},\{\"id\":2,\"method\":\"Interface.getDeviceDescription\",\"params\":{\"interface\":\"Nope\",\"address\":\"X\"}\}\]"
+  set r [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::GUEST {*}$IF -xmlrpc [list [list getDeviceDescription $DEVICE]] \
+    -setenv {REQUEST_URI /api/v2/batch} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}]]]
+  list [status $r] [regexp -all {"version": ?"1.1"} [dict get $r body]] [regexp {unknown interface \(Nope\)} [dict get $r body]]
+} -result {200 2 1}
+
+cleanupTests

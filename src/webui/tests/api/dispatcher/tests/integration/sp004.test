@@ -1,0 +1,86 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP004 NFR and integration coverage (spec.json#SP004 non_functional_requirements[0..9]),
+# boundary and error cases, golden re-run of all 180 registry fixtures through the staged
+# dispatcher libraries. NFR9 (typed v2 validation) belongs to the schema layer.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc raw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:dispatcher -sessions {} {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test sp004-nfr2 {NFR2: nested objects and arrays both become untyped Tcl lists} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{"o":{"a":1,"b":"two"},"l":[1,"x",[2]]},"id":1}}
+    puts $JSONRPC(PARAMS)
+  }]
+  lines $r
+} -result {{o {a 1 b two} l {1 x 2}}}
+
+test sp004-nfr3 {NFR3: on the default v1 path text after the closing brace is ignored} -body {
+  set r [raw {{"method":"system.listMethods","params":{},"id":1} garbage}]
+  list [string match {*"error": null*} [dict get $r body]]
+} -result 1
+
+test sp004-nfr4 {NFR4: \uXXXX escapes are decoded to characters (the hardening of the non-hex case is tested with the serializer/parser in sp005.test)} -body {
+  set a [drv {
+    jsonrpc_parse {{"method":"x","params":{"s":"äA"},"id":1}}
+    puts [string length [lindex $JSONRPC(PARAMS) 1]]
+  }]
+  lines $a
+} -result 2
+
+test sp004-nfr5 {NFR5: an object key without ':' gets the value '' (v1 lenience kept)} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{"a"},"id":1}}
+    puts [llength $JSONRPC(PARAMS)]:<[lindex $JSONRPC(PARAMS) 1]>
+  }]
+  lines $r
+} -result {2:<>}
+
+test sp004-nfr8 {NFR8: the documented codes 101 and 201-203 are never raised by the parser} -body {
+  set out {}
+  foreach body [list "not json" {{"method":"x"}} {{"params":{}}} {{"method":"x","params":{}}x}] {
+    lappend out [lindex [err [raw $body]] 0]
+  }
+  set out
+} -result {100 103 102 401}
+
+test sp004-err1 {the response of a failed parse never contains errorInfo or paths} -body {
+  set r [raw {{"method":}}]
+  list [string match *while?executing* [dict get $r body]] [string match */tmp/* [dict get $r body]] [lindex [err $r] 0]
+} -result {0 0 100}
+
+test sp004-err2 {a duplicate id member: the last one wins (array set semantics) in the echo} -body {
+  set r [raw {{"method":"system.listMethods","params":{},"id":1,"id":"two"}}]
+  regexp {"id": ([^,]*),} [dict get $r body] -> id
+  set id
+} -result {"two"}
+
+test sp004-golden {golden re-run: all 180 registry fixtures replay byte-identical through the staged dispatcher libraries (jsonrpc.tcl, common.tcl)} -body {
+  # documented deliberate changes of the corrected registry (see integration/sp002.test) are excluded
+  set names {}
+  foreach fx [golden::fixtures] {
+    set m [dict get $fx method]
+    if {$m in {Channel.setName Channel.setMode Interface.setTeam system.describe system.listMethods system.methodHelp ReGa.getAllDatapoints Session.setSessionVar}} continue
+    lappend names $m
+  }
+  golden::compare_all -candidate only:dispatcher -only $names
+} -result {}
+
+cleanupTests

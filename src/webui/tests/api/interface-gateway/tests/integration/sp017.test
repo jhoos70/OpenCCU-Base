@@ -1,0 +1,70 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP017 NFR and integration coverage (spec.json#SP017 non_functional_requirements[0..8]),
+# boundary and error cases, golden re-run of the four methods.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GD {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ0123456}
+set BASE {TYPE HmIP-X ADDRESS NEQ0123456 PARAMSETS {MASTER} VERSION 3 FLAGS 1 CHILDREN {NEQ0123456:0}}
+
+test sp017-nfr0 {NFR0/8: teamChannels stays omitted when only the correctly spelled TEAM_CHANNELS key is present} -body {
+  set ch {TYPE T ADDRESS A:1 PARAMSETS {} VERSION 1 FLAGS 0 PARENT A PARENT_TYPE X INDEX 1 AES_ACTIVE 0 LINK_SOURCE_ROLES {} LINK_TARGET_ROLES {} DIRECTION 0 TEAM_CHANNELS {A:1 B:1}}
+  string match *teamChannels* [result [call Interface.getDeviceDescription $GD -xmlrpc [list [list getDeviceDescription $ch]]]]
+} -result 0
+
+test sp017-nfr1 {NFR1: every missing required key yields the v1 internal error 200} -body {
+  set codes {}
+  foreach k {TYPE ADDRESS PARAMSETS VERSION FLAGS} {
+    set d $BASE
+    dict unset d $k
+    lappend codes [lindex [err [call Interface.getDeviceDescription $GD -xmlrpc [list [list getDeviceDescription $d]]]] 0]
+  }
+  set codes
+} -result {200 200 200 200 200}
+
+test sp017-nfr2 {NFR2: only the integer 1 maps to true (AES_ACTIVE 'true' and ROAMING 'true' are false)} -body {
+  set ch {TYPE T ADDRESS A:1 PARAMSETS {} VERSION 1 FLAGS 0 PARENT A PARENT_TYPE X INDEX 1 AES_ACTIVE true LINK_SOURCE_ROLES {} LINK_TARGET_ROLES {} DIRECTION 0 ROAMING true}
+  set j [result [call Interface.getDeviceDescription $GD -xmlrpc [list [list getDeviceDescription $ch]]]]
+  list [regexp {"aesActive":false} $j] [regexp {"roaming": false} $j]
+} -result {1 1}
+
+test sp017-nfr3 {NFR3: version/flags/index/direction are raw tokens (a non-numeric value yields invalid JSON, v1 frozen)} -body {
+  set d [dict replace $BASE VERSION abc]
+  regexp {"version":abc,} [result [call Interface.getDeviceDescription $GD -xmlrpc [list [list getDeviceDescription $d]]]]
+} -result 1
+
+test sp017-nfr4 {NFR4: UPDATABLE is emitted as a quoted string} -body {
+  set d [concat $BASE {UPDATABLE true}]
+  regexp {"updatable":"true"} [result [call Interface.getDeviceDescription $GD -xmlrpc [list [list getDeviceDescription $d]]]]
+} -result 1
+
+test sp017-nfr6 {NFR6: empty list -> []} -body {
+  result [call Interface.listTeams {_session_id_ AbCdEf1234 interface BidCos-RF} -xmlrpc {{listTeams {}}}]
+} -result {[]}
+
+test sp017-nfr7 {NFR7: addDevice without a device has no local handling, the interface fault code is mapped (-1 -> 501, -2 -> 502)} -body {
+  set a [call Interface.addDevice {_session_id_ AbCdEf1234 interface BidCos-RF serialNumber X} -fault {{addDevice -1 none}}]
+  set b [call Interface.addDevice {_session_id_ AbCdEf1234 interface BidCos-RF serialNumber X} -fault {{addDevice -2 none}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {501 502}
+
+test sp017-golden {golden re-run: the four methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.getDeviceDescription Interface.addDevice Interface.listDevices Interface.listTeams}
+} -result {}
+
+cleanupTests

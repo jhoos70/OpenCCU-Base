@@ -1,0 +1,150 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP006 - injecting client parameters into HomeMatic Script (eq3/hmscript.tcl):
+# contracts/behavioral-contracts.json#SP006, integration-contracts.json IC003/IC017
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/hmscript.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:security-session {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r stdout] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test sp006-0 {the staged hmscript library exists and is complete Tcl} -body {
+  set p [file join $gen security-session eq3 hmscript.tcl]
+  if {![file exists $p]} { return missing }
+  set fd [open $p r]; set c [read $fd]; close $fd
+  info complete $c
+} -result 1
+
+test sp006-1 {escapeString maps backslash, single quote, double quote, newline, CR and TAB} -body {
+  set r [drv {
+    puts [hmscript_escapeString "a\\b'c\"d\ne\rf\tg"]
+  }]
+  lines $r
+} -result [list {a\\b\'c\"d\ne\rf\tg}]
+
+test sp006-2 {sanitizeIdentifier removes characters outside [A-Za-z0-9_], prefixes '_' for a bad first character, truncates to 64} -body {
+  set r [drv {
+    puts [hmscript_sanitizeIdentifier "a-b c"]
+    puts [hmscript_sanitizeIdentifier "1abc"]
+    puts [hmscript_sanitizeIdentifier "-x"]
+    puts [string length [hmscript_sanitizeIdentifier [string repeat a 100]]]
+    puts [hmscript_sanitizeIdentifier ""]
+  }]
+  lines $r
+} -result {abc _1abc x 64 _}
+
+test sp006-3 {assertFloat/Integer/Boolean raise 'Value <v> is not a valid ...'} -body {
+  set r [drv {
+    puts [catch {hmscript_assertFloat abc} m1]:$m1
+    puts [catch {hmscript_assertInteger 1.5} m2]:$m2
+    puts [catch {hmscript_assertBoolean maybe} m3]:$m3
+    puts [catch {hmscript_assertFloat 1.5} m4]:$m4
+    puts [catch {hmscript_assertInteger 7} m5]:$m5
+    puts [catch {hmscript_assertBoolean true} m6]:$m6
+  }]
+  lines $r
+} -result [list "1:Value 'abc' is not a valid float" "1:Value '1.5' is not a valid integer" "1:Value 'maybe' is not a valid boolean" "0:" "0:" "0:"]
+
+test sp006-4 {hmscript prepends 'var <name> = "<escaped>";' lines and runs the script, the STDOUT is returned} -body {
+  set r [drv {
+    array set args {}
+    set args(id) {12"34}
+    puts [hmscript {Write("x");} args]
+  } -rega {{*Write* RESULT}}]
+  set script [lindex [dict get $r rega_calls] end]
+  list [lines $r] [expr {[string first {var id = "12\"34";} $script] == 0 && [string first {Write("x");} $script] > 0}]
+} -result {RESULT 1}
+
+test sp006-5 {[TARGET] hmscript and hmscript_runFromFile delegate to one injection routine: the generated prefix is byte-identical for the same arguments (fuzz)} -body {
+  set r [drv {
+    expr {srand(42)}
+    set chars [list a Z 0 9 _ - " " "\"" "'" "\\" "\n" "\r" "\t" "ä" "@" "\{" "\}" "\$" "\[" "\]"]
+    set body {Write("body");}
+    set fd [open /tmp/body.hms w]; puts -nonewline $fd $body; close $fd
+    for {set i 0} {$i < 200} {incr i} {
+      array unset a
+      set n [expr {int(rand() * 4) + 1}]
+      for {set k 0} {$k < $n} {incr k} {
+        set name ""
+        for {set j 0} {$j < int(rand() * 6) + 1} {incr j} { append name [lindex $chars [expr {int(rand() * [llength $chars])}]] }
+        set val ""
+        for {set j 0} {$j < int(rand() * 12)} {incr j} { append val [lindex $chars [expr {int(rand() * [llength $chars])}]] }
+        set a($name) $val
+      }
+      hmscript $body a
+      hmscript_runFromFile /tmp/body.hms a
+    }
+  }]
+  set calls [dict get $r rega_calls]
+  set diff 0
+  for {set i 0} {$i + 1 < [llength $calls]} {incr i 2} {
+    if {[lindex $calls $i] ne [lindex $calls [expr {$i + 1}]]} { incr diff }
+  }
+  list [expr {[llength $calls] >= 400}] $diff
+} -result {1 0}
+
+test sp006-6 {[TARGET] hmscript_whitelist keeps only the declared names (undeclared extras like 'id' for Session.login or 'result' are dropped)} -body {
+  set r [drv {
+    array set args {username u password p id 1 result evil}
+    set kept [hmscript_whitelist {username password} args]
+    puts [lsort $kept]
+    puts [lsort [array names args]]
+  }]
+  lines $r
+} -result {{password username} {password username}}
+
+test sp006-7 {[TARGET] a declared string value with NUL or another control character other than TAB/LF/CR is rejected with 403 'invalid argument (<name>)'; TAB, LF and CR stay allowed} -body {
+  set out {}
+  foreach {label val} [list nul "a\u0000b" ctl1 "a\u0001b" bell "a\u0007b" esc "a\u001bb" us "a\u001fb"] {
+    set r [drv "array set args {}\nset args(text) \"$val\"\nhmscript_whitelist {text} args\nputs NOTREACHED"]
+    lappend out [err $r]
+  }
+  set ok [drv "array set args {}\nset args(text) \"a\\tb\\nc\\rd\"\nhmscript_whitelist {text} args\nputs OK"]
+  list [lsort -unique $out] [lines $ok]
+} -result [list [list {403 {invalid argument (text)}}] OK]
+
+test sp006-8 {[TARGET] rega_script raising: hmscript_run still returns '' (v1) and the failure is logged to the syslog with the correlation id} -body {
+  set r [drv {
+    array set args {x 1}
+    puts "result=[hmscript {Write(1);} args]"
+  } -regafail {*Write*}]
+  set n 0
+  foreach s [dict get $r syslog] { if {[regexp {cid=[0-9a-f]{16} method=hmscript } $s]} { incr n } }
+  list [lines $r] $n
+} -result [list result= 1]
+
+test sp006-9 {NFR5: 200 undeclared params of 64+ characters never reach the generated script after the whitelist, the request still succeeds} -body {
+  set r [drv {
+    array set args {name kept}
+    for {set i 0} {$i < 200} {incr i} { set args(evil_[string repeat x 70]_$i) [string repeat y 70] }
+    hmscript_whitelist {name} args
+    hmscript {Write(1);} args
+  } -rega {{*Write* 1}}]
+  set s [lindex [dict get $r rega_calls] end]
+  list [string match {var name = "kept";*} $s] [string match *evil* $s] [dict get $r status]
+} -result {1 0 0}
+
+test sp006-10 {NFR2: a relative hmscript_runFromFile name resolves against the working directory (api/); a missing file gives an empty script, no error} -body {
+  set r [drv {
+    array set args {a 1}
+    puts "res=[hmscript_runFromFile eq3/doesnotexist.hms args]"
+  }]
+  list [lines $r] [lindex [dict get $r rega_calls] end]
+} -result [list res= "var a = \"1\";\n"]
+
+cleanupTests

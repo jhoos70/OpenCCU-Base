@@ -1,0 +1,101 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP020 - direct device links and teams: contracts/behavioral-contracts.json#SP020
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint registryFixed [file exists [file join $gen dispatcher methods.conf]]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF}
+set URL xmlrpc_bin://127.0.0.1:2001
+
+test sp020-0 {the staged method scripts of SP020 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {getlinks activatelinkparamset addlink getlinkinfo getlinkpeers removelink setlinkinfo setteam} {
+    set p [file join $gen interface-gateway methods interface $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp020-1 {getLinks (GUEST): xmlrpc getLinks(address, int flags), links serialised with unquoted flags} -body {
+  set link {NAME L1 DESCRIPTION d1 FLAGS 1 SENDER NEQ1:1 RECEIVER NEQ2:1}
+  set r [call Interface.getLinks [concat $S {address NEQ1:1 flags 0}] -sessions $GUEST -xmlrpc [list [list getLinks [list $link]]]]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list {[{"name":"L1","description":"d1","flags": 1,"sender":"NEQ1:1","receiver":"NEQ2:1"}]} [list $URL getLinks {string NEQ1:1} {int 0}]]
+
+test sp020-2 {getLinks with SENDER_PARAMSET/RECEIVER_PARAMSET appends nested objects of stringified values} -body {
+  set link {NAME L1 DESCRIPTION d1 FLAGS 6 SENDER NEQ1:1 RECEIVER NEQ2:1 SENDER_PARAMSET {A 1 B true} RECEIVER_PARAMSET {C 2}}
+  result [call Interface.getLinks [concat $S {address {} flags 6}] -sessions $GUEST -xmlrpc [list [list getLinks [list $link]]]]
+} -result {[{"name":"L1","description":"d1","flags": 6,"sender":"NEQ1:1","receiver":"NEQ2:1","senderParamset":{"A":"1","B":"true"},"receiverParamset":{"C":"2"}}]}
+
+test sp020-3 {addLink (ADMIN): xmlrpc addLink with four strings, true} -body {
+  set r [call Interface.addLink [concat $S {sender NEQ1:1 receiver NEQ2:1 name N description D}] -xmlrpc {{addLink 1}}]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list true [list $URL addLink {string NEQ1:1} {string NEQ2:1} {string N} {string D}]]
+
+test sp020-4 {removeLink (ADMIN) and setLinkInfo (ADMIN) return true; a GUEST session is denied} -body {
+  set a [call Interface.removeLink [concat $S {sender NEQ1:1 receiver NEQ2:1}] -xmlrpc {{removeLink 1}}]
+  set b [call Interface.setLinkInfo [concat $S {sender NEQ1:1 receiver NEQ2:1 name N description D}] -xmlrpc {{setLinkInfo 1}}]
+  set c [call Interface.removeLink [concat $S {sender NEQ1:1 receiver NEQ2:1}] -sessions $GUEST -xmlrpc {{removeLink 1}}]
+  list [result $a] [result $b] [lindex [err $c] 0] [lindex [dict get $b xmlrpc_calls] 0]
+} -result [list true true 400 [list $URL setLinkInfo {string NEQ1:1} {string NEQ2:1} {string N} {string D}]]
+
+test sp020-5 {getLinkInfo (GUEST) returns {name, description}} -body {
+  set r [call Interface.getLinkInfo [concat $S {senderAddress NEQ1:1 receiverAddress NEQ2:1}] -sessions $GUEST -xmlrpc {{getLinkInfo {NAME LN DESCRIPTION LD}}}]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list {{"name":"LN","description":"LD"}} [list $URL getLinkInfo {string NEQ1:1} {string NEQ2:1}]]
+
+test sp020-6 {getLinkPeers (GUEST) returns the peer addresses as a JSON string array} -body {
+  result [call Interface.getLinkPeers [concat $S {address NEQ1:1}] -sessions $GUEST -xmlrpc {{getLinkPeers {NEQ2:1 NEQ3:1}}}]
+} -result {["NEQ2:1","NEQ3:1"]}
+
+test sp020-7 {activateLinkParamset (ADMIN): bool argument passed as sent ('true' string, no normalisation)} -body {
+  set r [call Interface.activateLinkParamset [concat $S {address NEQ1:1 peerAddress NEQ2:1 longPress true}] -xmlrpc {{activateLinkParamset 1}}]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list true [list $URL activateLinkParamset {string NEQ1:1} {string NEQ2:1} {bool true}]]
+
+test sp020-8 {a failing interface call is 601 for getLinks/addLink/removeLink and no fault text leaks} -body {
+  set a [call Interface.getLinks [concat $S {address NEQ1:1 flags 0}] -sessions $GUEST]
+  set b [call Interface.addLink [concat $S {sender a receiver b name n description d}]]
+  set c [call Interface.removeLink [concat $S {sender a receiver b}] -fault {{removeLink 1 SECRETFAULT}}]
+  list [err $a] [lindex [err $b] 0] [err $c] [string match *SECRETFAULT* [dict get $c stdout]]
+} -result {{601 {TCL error}} 601 {601 {TCL error}} 0}
+
+test sp020-9 {link struct lacking SENDER: v1 internal error 200; getLinkInfo without NAME: 200} -body {
+  set a [call Interface.getLinks [concat $S {address NEQ1:1 flags 0}] -sessions $GUEST -xmlrpc {{getLinks {{NAME L DESCRIPTION d FLAGS 1 RECEIVER r}}}}]
+  set b [call Interface.getLinkInfo [concat $S {senderAddress a receiverAddress b}] -sessions $GUEST -xmlrpc {{getLinkInfo {DESCRIPTION LD}}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {200 200}
+
+test sp020-10 {non-numeric link FLAGS are emitted raw (invalid JSON, v1 frozen)} -body {
+  result [call Interface.getLinks [concat $S {address NEQ1:1 flags 0}] -sessions $GUEST -xmlrpc {{getLinks {{NAME L DESCRIPTION d FLAGS xx SENDER s RECEIVER r}}}}]
+} -result {[{"name":"L","description":"d","flags": xx,"sender":"s","receiver":"r"}]}
+
+test sp020-11 {[TARGET] setTeam sends the caller values (not the literal strings channelAddress/teamAddress); legacy 'inteface' argument is ignored} -body {
+  set r [call Interface.setTeam [concat $S {inteface BidCos-RF channelAddress NEQ0123456:1 teamAddress *NEQ0123457}] -xmlrpc {{setTeam 1}}]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list true [list $URL setTeam {string NEQ0123456:1} {string *NEQ0123457}]]
+
+test sp020-12 {[TARGET] setTeam without the misspelled 'inteface' passes the 402 check with the corrected ARGUMENTS} -constraints registryFixed -body {
+  set r [golden::call Interface.setTeam [concat $S {channelAddress NEQ0123456:1 teamAddress *NEQ0123457}] -candidate staged -xmlrpc {{setTeam 1}}]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list true [list $URL setTeam {string NEQ0123456:1} {string *NEQ0123457}]]
+
+cleanupTests

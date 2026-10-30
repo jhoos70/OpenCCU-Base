@@ -1,0 +1,47 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC006 dispatcher -> system-admin: the executor sources methods/<ccu|bidcosrf|bidcoswired|safemode|
+# firewall|...>/<script>.tcl; the arguments are validated centrally (patterns of BD-10) and by the
+# script (allow-lists). Errors: 403 invalid argument (<name>); 500 path not allowed.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,system-admin,schema-harness
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test ic006-1 {a script of the system-admin namespaces is sourced through the executor (CCU.getSerial, SafeMode.enter, Firewall.getConfiguration)} -body {
+  set out {}
+  foreach m {CCU.getSerial SafeMode.enter Firewall.getConfiguration} {
+    lappend out [expr {[lindex [err [call $m {_session_id_ AbCdEf1234}]] 0] ni {401 400 402}}]
+  }
+  set out
+} -result {1 1 1}
+
+test ic006-2 {error 500: a path outside the exact allow-list is 'path not allowed' and nothing is created} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.createFile {_session_id_ AbCdEf1234 file /etc/passwd} -fs $fs]
+  set made [file exists [file join $fs etc passwd]]
+  mock::fs::destroy $fs
+  list [err $r] $made
+} -result {{500 {path not allowed}} 0}
+
+test ic006-3 {error 403: the locked patterns are validated against the schema - a lgwserial with a path component is 'invalid argument (lgwserial)'} -body {
+  err [call BidCoS.changeLanGatewayKey {_session_id_ AbCdEf1234 lgwclass RF lgwserial ../x lgwip 1.2.3.4 newkey a curkey b}]
+} -result {403 {invalid argument (lgwserial)}}
+
+test ic006-4 {error 403: a control character in any argument is refused centrally} -body {
+  set body "\{\"method\":\"CCU.setSSH\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"mode\":\"on\\u0001\"\},\"id\":1\}"
+  err [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::SESS]]]
+} -result {403 {invalid argument (mode)}}
+
+cleanupTests

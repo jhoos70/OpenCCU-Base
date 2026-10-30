@@ -1,0 +1,82 @@
+# WebUI API contract tests (tclsh + mocks, no CCU needed)
+# yamllint disable rule:truthy
+---
+name: WebUI API Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'src/webui/www/api/**'
+      - 'src/webui/www/tcl/**'
+      - 'src/webui/rega/bin/hm_deldev'
+      - 'src/webui/tests/api/**'
+      - '.github/workflows/webui-api-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webui-api-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-test:
+    name: Contract tests (tclsh 8.6 + mocks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the golden and byte-compare tests read the legacy API tree from the revision pinned in
+          # src/webui/tests/api/LEGACY_REV, so the history must be available
+          fetch-depth: 0
+      - name: Install tclsh and patch
+        run: sudo apt-get update && sudo apt-get install -y tcl8.6 patch
+      - name: Syntax check (info complete)
+        run: |
+          set -e
+          find src/webui/www/api src/webui/www/tcl src/webui/tests/api \( -name '*.tcl' -o -name '*.cgi' -o -name '*.test' \) \
+            | while read -r f; do
+                echo "set c [read [open {$f}]]; if {![info complete \$c]} {puts {incomplete: $f}; exit 1}" | tclsh8.6
+              done
+      - name: Run component test suites
+        # without OPENCCU_PATCH_DIR the patch-apply gate is skipped (see the patch-compat job)
+        run: |
+          set -e
+          cd src/webui/tests/api
+          for c in schema-harness dispatcher security-session event-push interface-gateway \
+                   rega-model system-admin backup-cgis user-profile optional-gateway; do
+            echo "::group::$c"
+            (cd "$c" && tclsh8.6 tests/all.tcl)
+            echo "::endgroup::"
+          done
+
+  patch-compat:
+    # The OpenCCU packaging patches stay downstream (OpenCCU/OpenCCU). This job reports whether
+    # they still apply to this tree. It is informational: a change in the other repository must
+    # not block pull requests here.
+    name: OpenCCU rootfs patches still apply (informational)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: OpenCCU/OpenCCU
+          path: openccu
+          fetch-depth: 1
+      - name: Install tclsh and patch
+        run: sudo apt-get update && sudo apt-get install -y tcl8.6 patch
+      - name: Patch-apply gate
+        env:
+          OPENCCU_PATCH_DIR: ${{ github.workspace }}/openccu/buildroot-external/package/openccu-base/rootfs-patches
+        run: |
+          cd src/webui/tests/api/schema-harness
+          tclsh8.6 tests/integration/patch-compat.test

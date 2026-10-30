@@ -1,0 +1,65 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP012 NFR and integration coverage (spec.json#SP012 non_functional_requirements[0..5]),
+# boundary and error cases. The backup CGIs are not part of the JSON-RPC registry; the golden
+# re-run compares the staged links.cgi/paramset.cgi success output with the v1 files (ADMIN
+# session, which the v1 files accepted as well).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc cgi {rel args} { return [golden::cgi $rel -candidate only:backup-cgis {*}$args] }
+proc lines {s} { return [split $s \n] }
+proc last {r} { return [lindex [lines [dict get $r stdout]] end] }
+set ADMIN {{@AbCdEf1234@ 8 1000 Admin}}
+set Q "sid=%40AbCdEf1234%40"
+
+test sp012-nfr0 {NFR0: rega_exec failing or empty - the response body is just a newline} -body {
+  dict get [cgi backup/run-script.cgi -method POST -query $Q -body {Write(1);} -sessions $ADMIN -regafail {*Write(1)*}] stdout
+} -result "Content-Type: text/plain\n\n\n"
+
+test sp012-nfr1 {NFR1 [TARGET]: a link lacking NAME aborts cleanly as a 400 INTERNAL_ERROR - no half written 200 response} -body {
+  set r [cgi backup/links.cgi -query "$Q&interface=BidCos-RF" -sessions $ADMIN -xmlrpc {{getLinks {{{DESCRIPTION D SENDER S RECEIVER R}}}}}]
+  list [lines [dict get $r stdout]] [string match *BEGIN* [dict get $r stdout]]
+} -result [list {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} INTERNAL_ERROR} 0]
+
+test sp012-nfr2 {NFR2 [TARGET]: a parameter without a description aborts cleanly as a 400 INTERNAL_ERROR - no partial lines} -body {
+  set r [cgi backup/paramset.cgi -query "$Q&interface=BidCos-RF&address=A:1&key=MASTER" -sessions $ADMIN \
+    -xmlrpc {{getParamsetDescription {A {TYPE INTEGER}}} {getParamset {A 1 B 2}}}]
+  list [last $r] [string match *A:INTEGER* [dict get $r stdout]]
+} -result {INTERNAL_ERROR 0}
+
+test sp012-nfr3 {NFR3: links.cgi sends fixed arguments, paramset.cgi passes address and key through unvalidated (v1)} -body {
+  set a [cgi backup/links.cgi -query "$Q&interface=BidCos-RF" -sessions $ADMIN -xmlrpc {{getLinks {}}}]
+  set b [cgi backup/paramset.cgi -query "$Q&interface=BidCos-RF&address=ANY%3Aaddr&key=PEER" -sessions $ADMIN -xmlrpc {{getParamsetDescription {}} {getParamset {}}}]
+  list [lrange [lindex [dict get $a xmlrpc_calls] 0] 1 end] [lrange [lindex [dict get $b xmlrpc_calls] 0] 2 end]
+} -result [list {getLinks {string {}} {int 0}} {{string ANY:addr} {string PEER}}]
+
+test sp012-nfr4 {NFR4: the header comments naming 'run-script' in links.cgi and paramset.cgi are plain comments - the behaviour is the one of the file} -body {
+  set a [cgi backup/links.cgi -query "$Q&interface=BidCos-RF" -sessions $ADMIN -xmlrpc {{getLinks {}}}]
+  list [dict get $a stdout] [llength [dict get $a rega_calls]]
+} -match glob -result [list "Content-Type: text/plain\n\n" *]
+
+test sp012-nfr5 {NFR5 [TARGET]: a missing CONTENT_LENGTH executes nothing - 400 MISSING_BODY} -body {
+  set r [cgi backup/run-script.cgi -method GET -query $Q -sessions $ADMIN]
+  set n 0
+  foreach c [dict get $r rega_calls] { if {![string match *GetSessionVarStr* $c]} { incr n } }
+  list [last $r] $n
+} -result {MISSING_BODY 0}
+
+test sp012-golden {golden re-run: links.cgi and paramset.cgi success output equals the v1 files (ADMIN session)} -body {
+  set links {{NAME L DESCRIPTION D SENDER A:1 RECEIVER B:1}}
+  set xl [list [list getLinks $links]]
+  set a [golden::cgi backup/links.cgi -candidate legacy -query "$Q&interface=BidCos-RF" -sessions $ADMIN -xmlrpc $xl]
+  set b [cgi backup/links.cgi -query "$Q&interface=BidCos-RF" -sessions $ADMIN -xmlrpc $xl]
+  set xp {{getParamsetDescription {LEVEL {TYPE FLOAT}}} {getParamset {LEVEL 0.5}}}
+  set c [golden::cgi backup/paramset.cgi -candidate legacy -query "$Q&interface=BidCos-RF&address=A:1&key=MASTER" -sessions $ADMIN -xmlrpc $xp]
+  set d [cgi backup/paramset.cgi -query "$Q&interface=BidCos-RF&address=A:1&key=MASTER" -sessions $ADMIN -xmlrpc $xp]
+  list [golden::diff [dict get $a stdout] [dict get $b stdout]] [golden::diff [dict get $c stdout] [dict get $d stdout]]
+} -result {{} {}}
+
+cleanupTests

@@ -1,0 +1,67 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP026 NFR and integration coverage (spec.json#SP026 non_functional_requirements[0..6]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234 id 1234}
+
+test sp026-nfr0 {NFR0: flag arguments reach the ReGa script as the literal strings (only the exact 'true' sets the flag inside the script)} -body {
+  set out {}
+  foreach v {true 1 True yes} {
+    set r [call Device.setVisibility [concat $S [list isVisible $v]] -rega {{*dev.Visible* true}}]
+    lappend out [string match "*var isVisible = \"$v\";*" [lindex [dict get $r rega_calls] end]]
+  }
+  set out
+} -result {1 1 1 1}
+
+test sp026-nfr1 {NFR1: setName of an unknown id answers "" (no error)} -body {
+  result [call Device.setName [concat $S {name Whatever}]]
+} -result {""}
+
+test sp026-nfr2 {NFR2: setOperateGroupOnly answers "" also for a missing device} -body {
+  result [call Device.setOperateGroupOnly [concat $S {mode false}]]
+} -result {""}
+
+test sp026-nfr3 {NFR3: a uniquified name differs from the input and is what is returned} -body {
+  result [call Device.setName [concat $S {name Lampe}] -rega {{*device.Name(name)* Lampe_2}}]
+} -result {"Lampe_2"}
+
+test sp026-nfr4 {NFR4: AES not supported - the effective mode read back stays MODE_DEFAULT} -body {
+  result [call Channel.setMode [concat $S {mode MODE_AES}] -rega {{*ChnAESActive(bIsAesActive)* MODE_DEFAULT}}]
+} -result {"MODE_DEFAULT"}
+
+test sp026-nfr5 {NFR5: unusual characters in name are escaped once before injection} -body {
+  set r [call Device.setName [list _session_id_ AbCdEf1234 id 1 name "a\"b\\c\nd\te"] -rega {{*device.Name(name)* x}}]
+  set expect {var name = "a\"b\\c\nd\te";}
+  expr {[string first $expect [lindex [dict get $r rega_calls] end]] >= 0}
+} -result 1
+
+test sp026-nfr6 {NFR6: an id that is not found for visibility/usability/logging/mode gives 500 'homematic script error'} -body {
+  set out {}
+  foreach {m extra} {Channel.setVisibility {isVisible true} Channel.setUsability {isUsable true} Channel.setLogging {isLogged true} Channel.setMode {mode MODE_AES}} {
+    lappend out [lindex [err [call $m [concat $S $extra]]] 0]
+  }
+  set out
+} -result {500 500 500 500}
+
+test sp026-golden {golden re-run: the eight mutation methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:rega-model -only {Device.setName Device.setVisibility Device.setOperateGroupOnly Channel.setName Channel.setVisibility Channel.setUsability Channel.setLogging Channel.setMode}
+} -result {}
+
+cleanupTests

@@ -1,0 +1,86 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SafeMode.enter (SP034 acceptance): /etc/config/safemode is written write-then-rename, the
+# ReGa state is persisted with 'rega system.Save()', the reboot is launched in the background
+# only after the file was moved into place. Contract: contracts/behavioral-contracts.json#SP034
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:dispatcher,security-session,system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set SESS {{AbCdEf1234 8 1000 Admin}}
+set USER {{AbCdEf1234 2 1000 User}}
+
+test safemode-0 {the staged SafeMode.enter script exists and is complete Tcl} -body {
+  set p [file join $gen system-admin methods safemode enter.tcl]
+  if {![file exists $p]} { return missing }
+  set fd [open $p r]; set c [read $fd]; close $fd
+  info complete $c
+} -result 1
+
+test safemode-1 {SafeMode.enter (ADMIN): the flag file contains '1', system.Save() is run in ReGa, a background reboot is launched, answer true} -body {
+  set fs [mock::fs::create]
+  set r [call SafeMode.enter $S -sessions $SESS -fs $fs]
+  if {[file exists [file join $fs etc config safemode]]} { set flag [mock::fs::read $fs etc/config/safemode] } else { set flag MISSING }
+  set save 0
+  foreach c [dict get $r rega_calls] { if {[string match *system.Save()* $c]} { incr save } }
+  mock::fs::destroy $fs
+  list [result $r] $flag $save [dict get $r exec_calls]
+} -result [list true "1\n" 1 [list {/sbin/reboot -d 2 2>/dev/null >/dev/null &}]]
+
+test safemode-2 {[TARGET] the flag is written write-then-rename: no temp file stays, the reboot comes after the file is in place} -body {
+  set fs [mock::fs::create]
+  # the reboot rule records what the file looked like when the command was started
+  set r [call SafeMode.enter $S -sessions $SESS -fs $fs]
+  set left [lsort [lmap f [glob -nocomplain -directory [file join $fs etc config] *] {file tail $f}]]
+  mock::fs::destroy $fs
+  list $left [llength [dict get $r exec_calls]]
+} -result {{InterfacesList.xml safemode} 1}
+
+test safemode-3 {unwritable /etc/config: error 200, no reboot, no flag file, no ReGa save} -constraints unixNotRoot -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/InterfacesList.xml "<interfaces/>"
+  file attributes [file join $fs etc config] -permissions 0555
+  set r [call SafeMode.enter $S -sessions $SESS -fs $fs -interfaces 0]
+  set flag [file exists [file join $fs etc config safemode]]
+  set save 0
+  foreach c [dict get $r rega_calls] { if {[string match *system.Save()* $c]} { incr save } }
+  file attributes [file join $fs etc config] -permissions 0755
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $flag $save [llength [dict get $r exec_calls]]
+} -result {200 0 0 0}
+
+test safemode-4 {[TARGET] one syslog line records correlation id, method and user id; no request data reaches a command} -body {
+  set fs [mock::fs::create]
+  set r [call SafeMode.enter [concat $S {paasword INJECT}] -sessions $SESS -fs $fs]
+  set n 0
+  foreach s [dict get $r syslog] { if {[regexp {cid=[0-9a-f]{16} method=SafeMode.enter uid=1000} $s]} { incr n } }
+  set inj 0
+  foreach c [dict get $r exec_calls] { if {[string match *INJECT* $c]} { incr inj } }
+  mock::fs::destroy $fs
+  list $n $inj
+} -result {1 0}
+
+test safemode-5 {ADMIN only: a USER session is denied (400) and nothing happens} -body {
+  set fs [mock::fs::create]
+  set r [call SafeMode.enter $S -sessions $USER -fs $fs]
+  set flag [file exists [file join $fs etc config safemode]]
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $flag [llength [dict get $r exec_calls]]
+} -result {400 0 0}
+
+cleanupTests

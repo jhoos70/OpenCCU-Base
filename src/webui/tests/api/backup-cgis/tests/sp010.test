@@ -1,0 +1,111 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP010 - backup CGI framework (branch B of the EG-1 decision: the endpoints stay, default
+# ADMIN + empty allow-list, hardened errors): contracts/behavioral-contracts.json#SP010
+# Branch A (deletion of the whole backup tree) is the gated EG-1 removal task.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc cgi {rel args} { return [golden::cgi $rel -candidate only:backup-cgis {*}$args] }
+proc drv {script args} { return [golden::tcl $script -candidate only:backup-cgis {*}$args] }
+set SID @AbCdEf1234@
+set SESS {{@AbCdEf1234@ 8 1000 Admin}}
+set LOGIN302 {{{HTTP/1.1 302 Found} {Location http://127.0.0.1/index.htm?sid=@AbCdEf1234@}}}
+set PRE {
+  cd backup
+  source common.tcl
+}
+proc lines {s} { return [split [string trimright $s \n] \n] }
+
+test sp010-0 {the staged files of SP010 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {common.tcl login.cgi logout.cgi} {
+    set p [file join $gen backup-cgis backup $f]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp010-1 {parseQueryString: keys and values are URL-decoded (+ -> space, %XX -> char, %0d%0a -> newline), missing keys give {}} -body {
+  set r [drv "$PRE
+    parseQueryString
+    puts \[list \[getQueryArg sid\] \[string map {\\n <LF>} \[getQueryArg name\]\] \[getQueryArg nokey\]\]
+    catch {::__backup_puts -nonewline \$::BACKUP_OUT}" -setenv {QUERY_STRING sid=%40AbCdEf1234%40&name=a+b%0d%0ac}]
+  string trim [dict get $r body]
+} -result {@AbCdEf1234@ {a b<LF>c} {}}
+
+test sp010-2 {a parameter with an empty value ('sid=') is treated as absent} -body {
+  set r [drv "$PRE
+    parseQueryString
+    puts \[list \[getQueryArg sid\] \[getQueryArg x\]\]
+    catch {::__backup_puts -nonewline \$::BACKUP_OUT}" -setenv {QUERY_STRING sid=&x=1}]
+  string trim [dict get $r body]
+} -result {{} 1}
+
+test sp010-3 {login.cgi (branch B): text/plain + the inner sid without a newline} -body {
+  set r [cgi backup/login.cgi -query "username=Admin&password=secret" -http $LOGIN302]
+  list [dict get $r stdout] [dict get $r http_calls]
+} -result [list "Content-Type: text/plain\n\nAbCdEf1234" [list {http://127.0.0.1/login.htm -query tbUsername=Admin&tbPassword=secret}]]
+
+test sp010-4 {login failures answer 'HTTP/1.0 400 Bad Request' with only TOO_MANY_SESSIONS, INVALID_CREDENTIALS or LOGIN_ERROR} -body {
+  set out {}
+  foreach {http want} [list {{{HTTP/1.1 503 Service Unavailable} {}}} TOO_MANY_SESSIONS {{{HTTP/1.1 200 OK} {}}} INVALID_CREDENTIALS {} LOGIN_ERROR] {
+    set r [cgi backup/login.cgi -query "username=A&password=B" -http $http]
+    lappend out [lines [dict get $r stdout]]
+  }
+  set out
+} -result [list \
+  {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} TOO_MANY_SESSIONS} \
+  {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} INVALID_CREDENTIALS} \
+  {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} LOGIN_ERROR}]
+
+test sp010-5 {empty credentials proceed to session_login and fail as INVALID_CREDENTIALS (MISSING_ARGUMENT is never raised)} -body {
+  set r [cgi backup/login.cgi -query "" -http {{{HTTP/1.1 200 OK} {}}}]
+  lindex [lines [dict get $r stdout]] end
+} -result INVALID_CREDENTIALS
+
+test sp010-6 {logout.cgi with a valid session: session_logout runs and OK is printed} -body {
+  set r [cgi backup/logout.cgi -query "sid=%40AbCdEf1234%40" -sessions $SESS]
+  set clears 0
+  foreach c [dict get $r rega_calls] { if {[string match *ClearSessionID* $c]} { incr clears } }
+  list [dict get $r stdout] $clears
+} -result [list "Content-Type: text/plain\n\nOK\n" 1]
+
+test sp010-7 {[TARGET] logout.cgi with an invalid sid answers INVALID_SESSION (400) and does not call ClearSessionID} -body {
+  set r [cgi backup/logout.cgi -query "sid=%40Unknown0000%40" -sessions $SESS]
+  set clears 0
+  foreach c [dict get $r rega_calls] { if {[string match *ClearSessionID* $c]} { incr clears } }
+  list [lines [dict get $r stdout]] $clears
+} -result [list {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} INVALID_SESSION} 0]
+
+test sp010-8 {[TARGET] output is buffered: an error after the Content-Type header yields only the 400 response, no partial 200 body} -body {
+  set r [drv "$PRE
+    proc main {} { puts \"Content-Type: text/plain\"; puts \"\"; puts PARTIALBODY; error UNKNOWN_INTERFACE }
+    startup"]
+  list [lines [dict get $r stdout]]
+} -result [list {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} UNKNOWN_INTERFACE}]
+
+test sp010-9 {[TARGET] a raw Tcl error message never reaches the client: unknown messages are INTERNAL_ERROR, the cause goes to the syslog} -body {
+  set r [drv "$PRE
+    proc main {} { error \"couldn't open /etc/shadow: permission denied\" }
+    startup"]
+  set sys [lindex [dict get $r syslog] end]
+  list [lines [dict get $r stdout]] [string match *shadow* [dict get $r stdout]] [regexp {cid=[0-9a-f]{16} .*shadow} $sys]
+} -result [list {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} INTERNAL_ERROR} 0 1]
+
+test sp010-10 {getInterfaceUrl: a known interface returns its URL, an unknown one raises UNKNOWN_INTERFACE (400)} -body {
+  set r [drv "$PRE
+    puts \[getInterfaceUrl BidCos-RF\]
+    puts \[catch {getInterfaceUrl nosuch} m\]:\$m
+    catch {::__backup_puts -nonewline \$::BACKUP_OUT}"]
+  lines [dict get $r body]
+} -result {xmlrpc_bin://127.0.0.1:2001 1:UNKNOWN_INTERFACE}
+
+cleanupTests

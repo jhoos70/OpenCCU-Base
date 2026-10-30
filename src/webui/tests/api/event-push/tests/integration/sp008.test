@@ -1,0 +1,82 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP008 NFR and integration coverage (spec.json#SP008 non_functional_requirements[0..1]),
+# boundary and error cases, the hm_deldev producer (acceptance[2] and [7]) and golden re-run of
+# Event.poll through the staged library.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set T0 1700000000
+proc rd {fs rel} { if {[file exists [file join $fs {*}[split $rel /]]]} { return [mock::fs::read $fs $rel] }; return MISSING }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+
+test sp008-nfr0 {NFR0: Event.poll concatenates event.DATA raw into the JSON - the producer has to supply valid JSON} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/AbCdEf1234 "{TYPE init DATA null}\n{TYPE delete DATA {\"dev\"}}\n"
+  mock::fs::write $fs tmp/event/subscriber.list [list AbCdEf1234 {EVENT_COUNT 2}]
+  set r [golden::call Event.poll {_session_id_ AbCdEf1234} -candidate only:event-push -fs $fs -now $T0 -sessions {{AbCdEf1234 1 1000 Guest}}]
+  mock::fs::destroy $fs
+  result $r
+} -result {[{"type":"init" ,"data":null},{"type":"delete" ,"data":"dev"}]}
+
+test sp008-nfr1 {NFR1: lock_release still runs when event_fire fails and the next event_fire can take the lock again} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list "[format %c 123]broken"
+  golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/event.tcl]
+    event_fire a 1
+  } -candidate only:event-push -fs $fs -now $T0
+  set lock [file exists [file join $fs tmp event lock]]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA {EVENT_COUNT 0}]
+  golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/event.tcl]
+    event_fire b 2
+  } -candidate only:event-push -fs $fs -now $T0
+  set q [rd $fs tmp/event/AAA]
+  mock::fs::destroy $fs
+  list $lock $q
+} -result [list 0 "{TYPE b DATA 2}\n"]
+
+test sp008-hm1 {[TARGET] hm_deldev fires 'delete' with the device name JSON-escaped: a name with a double quote or backslash yields valid JSON in Event.poll} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AbCdEf1234 {EVENT_COUNT 0}]
+  set r [golden::tcl {
+    set argv [list {NEQ"01\23}]
+    source rega/bin/hm_deldev
+  } -candidate only:event-push -fs $fs -now $T0]
+  set p [golden::call Event.poll {_session_id_ AbCdEf1234} -candidate only:event-push -fs $fs -now $T0 -sessions {{AbCdEf1234 1 1000 Guest}}]
+  set logged 0
+  foreach s [dict get $r syslog] { if {[string match *hm_deldev*event?fired* $s]} { incr logged } }
+  mock::fs::destroy $fs
+  list [result $p] $logged
+} -result [list {[{"type":"delete" ,"data":"NEQ\"01\\23"}]} 1]
+
+test sp008-hm2 {hm_deldev always ends with status 0 and exactly one hm_deldev syslog line, also without subscribers} -body {
+  set r [golden::tcl {
+    set argv [list NEQ0123456]
+    source rega/bin/hm_deldev
+  } -candidate only:event-push]
+  set logged 0
+  foreach s [dict get $r syslog] { if {[string match *hm_deldev* $s]} { incr logged } }
+  list [dict get $r status] $logged
+} -result {0 1}
+
+test sp008-golden {golden re-run: Event.subscribe/unsubscribe/poll replay byte-identical through the staged library} -body {
+  golden::compare_all -candidate only:event-push -only {Event.subscribe Event.unsubscribe Event.poll}
+} -result {}
+
+cleanupTests

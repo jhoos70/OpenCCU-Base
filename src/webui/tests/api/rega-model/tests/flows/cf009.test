@@ -1,0 +1,61 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF009 Device.hasLinksOrPrograms (flow-model.md#cf009): ReGa program-usage check (true stops) ->
+# ReGa link check (none -> false) -> interface URL from the interface table -> XML-RPC getLinks /
+# getDeviceDescription per channel -> a peer on another parent device -> true, else false.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model,interface-gateway
+set SESS {{AbCdEf1234 8 1000 Admin}}
+set S {_session_id_ AbCdEf1234 id 1234}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc linkrega {iface} {
+  return [list {*ChnDPUsageCount* false} {*ChnLinkCount* true} [list {*Write(dom.GetObject(device.Interface()))*} $iface] \
+    {*Write(device.Address())* NEQ1} {*channel.Address()#* {NEQ1:0 NEQ1:1}}]
+}
+
+test cf009-1 {step 1: usage in programs is true and stops - no XML-RPC call} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega {{*ChnDPUsageCount* true}}]
+  list [result $r] [llength [dict get $r xmlrpc_calls]]
+} -result {true 0}
+
+test cf009-2 {step 2: no usage and no links in ReGa gives false without XML-RPC} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega {{*ChnDPUsageCount* false} {*ChnLinkCount* false}}]
+  list [result $r] [llength [dict get $r xmlrpc_calls]]
+} -result {false 0}
+
+test cf009-3 {steps 3-5: getLinks and getDeviceDescription per channel on the interface URL; a peer on a different parent device is true} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega [linkrega BidCos-RF] -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER NEQ2:1}}} {getDeviceDescription {DIRECTION 1}}}]
+  list [result $r] [lsort -unique [lmap c [dict get $r xmlrpc_calls] {lindex $c 1}]]
+} -result {true {getDeviceDescription getLinks}}
+
+test cf009-4 {step 5: peers of the same parent device or virtual '@' peers are false} -body {
+  set a [call Device.hasLinksOrPrograms $S -rega [linkrega BidCos-RF] -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER NEQ1:2}}} {getDeviceDescription {DIRECTION 1}}}]
+  set b [call Device.hasLinksOrPrograms $S -rega [linkrega BidCos-RF] -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER @VIRTUAL:1}}} {getDeviceDescription {DIRECTION 1}}}]
+  list [result $a] [result $b]
+} -result {false false}
+
+test cf009-5 {error path: an interface outside the table is the generic error 200 with a reference (frozen quirk, no internals)} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega [linkrega Unknown-Iface]]
+  list [lindex [err $r] 0] [regexp {^internal error \(ref: [0-9a-f]{16}\)$} [lindex [err $r] 1]] [string match *ifaceList* [dict get $r body]]
+} -result {200 1 0}
+
+test cf009-6 {error path: a ReGa failure (empty STDOUT) is not an error - the check falls through to false} -body {
+  result [call Device.hasLinksOrPrograms $S -regafail {*ChnDPUsageCount*}]
+} -result false
+
+cleanupTests

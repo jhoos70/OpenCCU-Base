@@ -1,0 +1,59 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP018 NFR and integration coverage (spec.json#SP018 non_functional_requirements[0..5]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ0123456:1}
+
+test sp018-nfr0 {NFR0: an unknown address/paramsetKey raising a Tcl error inside catch surfaces as 601 (fault text discarded)} -body {
+  set r [call Interface.getParamset [concat $S {paramsetKey NOPE}] -sessions $GUEST -fault {{getParamset 1 {unknown paramset XYZ}}}]
+  list [err $r] [string match *XYZ* [dict get $r body]]
+} -result {{601 {TCL error}} 0}
+
+test sp018-nfr1 {NFR1: typed values are stringified (numbers and booleans become JSON strings)} -body {
+  result [call Interface.getParamset [concat $S {paramsetKey VALUES}] -sessions $GUEST -xmlrpc {{getParamset {A 1 B 2.5 C true D {}}}}]
+} -result {{"A":"1","B":"2.5","C":"true","D":""}}
+
+test sp018-nfr2 {NFR2: getParamsetDescription injects NAME as the first field of every object} -body {
+  set j [result [call Interface.getParamsetDescription [concat $S {paramsetKey MASTER}] -sessions $GUEST -xmlrpc {{getParamsetDescription {A {TYPE INTEGER} B {TYPE BOOL}}}}]]
+  set n 0
+  foreach m [regexp -all -inline {\{"NAME":"[AB]","TYPE":"(INTEGER|BOOL)"\}} $j] { incr n }
+  expr {$n >= 2}
+} -result 1
+
+test sp018-nfr3 {NFR3: an empty value is returned as "" and not as null} -body {
+  list [result [call Interface.getValue [concat $S {valueKey X}] -sessions $GUEST -xmlrpc {{getValue {}}}]] \
+       [result [call Interface.getParamsetId [concat $S {paramsetType MASTER}] -sessions $GUEST -xmlrpc {{getParamsetId {}}}]]
+} -result {{""} {""}}
+
+test sp018-nfr4 {NFR4: getMasterValue never forwards a caller supplied paramset key} -body {
+  set r [call Interface.getMasterValue [concat $S {valueKey X paramsetKey VALUES}] -sessions $GUEST -xmlrpc {{getParamset {X 1}}}]
+  lindex [lindex [dict get $r xmlrpc_calls] 0] 3
+} -result {string MASTER}
+
+test sp018-nfr5 {NFR5: a GUEST caller can read any address (no per-address check)} -body {
+  result [call Interface.getValue [dict replace $S address ANY:99 valueKey X] -sessions $GUEST -xmlrpc {{getValue 1}}]
+} -result {"1"}
+
+test sp018-golden {golden re-run: the five read methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.getParamset Interface.getMasterValue Interface.getParamsetDescription Interface.getParamsetId Interface.getValue}
+} -result {}
+
+cleanupTests

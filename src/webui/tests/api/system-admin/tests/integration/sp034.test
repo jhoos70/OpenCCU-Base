@@ -1,0 +1,53 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP034 NFR and integration coverage (spec.json#SP034 non_functional_requirements[0..3]),
+# boundary and error cases, golden re-run (the seeded fixtures use an ADMIN session).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:dispatcher,security-session,system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set SESS {{AbCdEf1234 8 1000 Admin}}
+
+test sp034-nfr0 {NFR0: restartLighttpd is synchronous (not detached): the exec has no trailing '&'; the audit line is written before the restart} -body {
+  set r [call User.restartLighttpd $S -sessions $SESS]
+  set c [lindex [dict get $r exec_calls] 0]
+  list [string match {*&} $c] [expr {[llength [dict get $r syslog]] >= 1}]
+} -result {0 1}
+
+test sp034-nfr1 {NFR1: SafeMode.enter declares only _session_id_ (the documented 'paasword' parameter is neither declared nor read)} -body {
+  dict get [golden::registry] SafeMode.enter ARGUMENTS
+} -result _session_id_
+
+test sp034-nfr2 {NFR2: deleteCertificate answers true when the file does not exist} -body {
+  result [call User.deleteCertificate $S -sessions $SESS]
+} -result true
+
+test sp034-nfr3 {NFR3: failing restartReGa/restartSSHDaemon are swallowed, the result is null} -body {
+  list [result [call CCU.restartReGa $S -execfail {{{*} boom}}]] [result [call CCU.restartSSHDaemon $S -execfail {{{*} boom}}]]
+} -result {null null}
+
+test sp034-err1 {the audit line never contains request data and tolerates an unresolvable user id ('-')} -body {
+  set r [call User.restartHmIPServer {_session_id_ AbCdEf1234} -regafail {*StrValueByIndex(";",?0)*}]
+  set line [lindex [dict get $r syslog] end]
+  list [result $r] [regexp {uid=-} $line] [regexp {cid=[0-9a-f]{16} method=User.restartHmIPServer} $line]
+} -result {true 1 1}
+
+test sp034-golden {golden re-run: the eight lifecycle/certificate methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:dispatcher,security-session,system-admin -only {User.restartLighttpd User.restartHmIPServer User.stopHmIPServer User.startHmIPServer CCU.restartReGa CCU.restartSSHDaemon User.deleteCertificate User.existsCertificate RecoveryMode.enter}
+} -result {}
+
+cleanupTests

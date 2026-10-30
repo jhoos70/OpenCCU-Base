@@ -1,0 +1,56 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF006 GET /api/homematic.cgi method help page (flow-model.md#cf006): the unauthenticated GET page
+# is reduced (no method names), the full documentation is the authenticated GET /api/v2/schema
+# (HTTP 401 without a sid, 405 Allow: GET for other verbs, 179 entries).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,schema-harness
+set SESS {{AbCdEf1234 1 1000 Guest}}
+proc get {uri args} {
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -sessions $::SESS {*}$args]]]
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set V2 {-setenv {REQUEST_URI /api/v2/schema} -header {X-Requested-With XMLHttpRequest}}
+
+test cf006-1 {steps 1-3: GET is answered with HTML (iso-8859-1) listing no method name, INFO, ARGUMENTS or level label - without any ReGa call} -body {
+  set r [get /api/homematic.cgi]
+  set b [dict get $r body]
+  list [string match {CONTENT-TYPE: text/html*} [dict get $r headers]] [string match *Device.* $b] [string match *Administrator* $b] [string match *ARGUMENTS* $b] [llength [dict get $r rega_calls]]
+} -result {1 0 0 0 0}
+
+test cf006-2 {step 2: the error-code table is part of the page} -body {
+  set b [dict get [get /api/homematic.cgi] body]
+  list [regexp {<td>100</td>} $b] [regexp {<td>402</td>} $b] [regexp {<td>429</td>} $b]
+} -result {1 1 1}
+
+test cf006-3 {step 4: GET /api/v2/schema with a valid sid answers the 179 method entries; without a sid HTTP 401} -body {
+  set a [get /api/v2/schema {*}$V2 -header {X-Session-Id AbCdEf1234}]
+  set b [get /api/v2/schema {*}$V2]
+  list [status $a] [regexp -all {\{"name":"[A-Za-z_.]+","level":} [dict get $a body]] [status $b]
+} -result {200 179 401}
+
+test cf006-4 {error path: other verbs on /api/v2/schema are HTTP 405 with Allow: GET} -body {
+  set out {}
+  foreach m {PUT OPTIONS HEAD} {
+    set r [get /api/v2/schema -method $m {*}$V2]
+    regexp {Allow: (\w+)} [dict get $r headers] -> allow
+    lappend out [status $r]/$allow
+  }
+  set out
+} -result {405/GET 405/GET 405/GET}
+
+test cf006-5 {error path: a verb other than GET/POST on the v1 path gives an empty body} -body {
+  string length [dict get [get /api/homematic.cgi -method OPTIONS] stdout]
+} -result 0
+
+cleanupTests

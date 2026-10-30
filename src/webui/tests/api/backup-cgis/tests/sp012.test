@@ -1,0 +1,87 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP012 - run-script.cgi, links.cgi, paramset.cgi (branch B of the EG-1 decision: ADMIN only,
+# fail-closed session check, buffered output): contracts/behavioral-contracts.json#SP012
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc cgi {rel args} { return [golden::cgi $rel -candidate only:backup-cgis {*}$args] }
+proc lines {s} { return [split $s \n] }
+set ADMIN {{@AbCdEf1234@ 8 1000 Admin}}
+set USER {{@AbCdEf1234@ 2 1000 User}}
+set GUEST {{@AbCdEf1234@ 1 1000 Guest}}
+set Q "sid=%40AbCdEf1234%40"
+set URL xmlrpc_bin://127.0.0.1:2001
+proc last {r} { return [lindex [lines [dict get $r stdout]] end] }
+
+test sp012-0 {the staged files of SP012 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {run-script.cgi links.cgi paramset.cgi} {
+    set p [file join $gen backup-cgis backup $f]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp012-1 {run-script.cgi (ADMIN): the POST body is executed with rega_exec, the UTF-8 decoded STDOUT plus a newline is printed as text/plain} -body {
+  set r [cgi backup/run-script.cgi -method POST -query $Q -body {Write("OK");} -sessions $ADMIN -rega {{*Write("OK");* OK}}]
+  list [dict get $r stdout] [string match {*Write("OK");*} [lindex [dict get $r rega_calls] end]]
+} -result [list "Content-Type: text/plain\n\nOK\n" 1]
+
+test sp012-2 {[TARGET] a session below ADMIN gets 400 INVALID_SESSION and neither the script nor an XML-RPC call is executed} -body {
+  set out {}; set n 0
+  foreach sess [list $USER $GUEST] {
+    set r [cgi backup/run-script.cgi -method POST -query $Q -body {Write("SECRET");} -sessions $sess]
+    lappend out [last $r]
+    foreach c [dict get $r rega_calls] { if {[string match *SECRET* $c]} { incr n } }
+    foreach {cgifile extra} {links.cgi {&interface=BidCos-RF} paramset.cgi {&interface=BidCos-RF&address=A:1&key=MASTER}} {
+      set r [cgi backup/$cgifile -query "$Q$extra" -sessions $sess -xmlrpc {{getLinks {}} {getParamset {}} {getParamsetDescription {}}}]
+      lappend out [last $r]
+      incr n [llength [dict get $r xmlrpc_calls]]
+    }
+  }
+  list [lsort -unique $out] $n
+} -result {INVALID_SESSION 0}
+
+test sp012-3 {links.cgi (ADMIN): getLinks('', 0) and [BEGIN LINK]/NAME=/DESCRIPTION=/SENDER=/RECEIVER=/[END LINK] blocks} -body {
+  set l {NAME L1 DESCRIPTION D1 SENDER A:1 RECEIVER B:1}
+  set r [cgi backup/links.cgi -query "$Q&interface=BidCos-RF" -sessions $ADMIN -xmlrpc [list [list getLinks [list $l $l]]]]
+  list [dict get $r stdout] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list "Content-Type: text/plain\n\n\[BEGIN LINK\]\nNAME=L1\nDESCRIPTION=D1\nSENDER=A:1\nRECEIVER=B:1\n\[END LINK\]\n\[BEGIN LINK\]\nNAME=L1\nDESCRIPTION=D1\nSENDER=A:1\nRECEIVER=B:1\n\[END LINK\]\n" \
+  [list $URL getLinks {string {}} {int 0}]]
+
+test sp012-4 {paramset.cgi (ADMIN): one '<id>:<TYPE>=<value>' line per parameter} -body {
+  set r [cgi backup/paramset.cgi -query "$Q&interface=BidCos-RF&address=NEQ1:1&key=MASTER" -sessions $ADMIN \
+    -xmlrpc {{getParamsetDescription {LEVEL {TYPE FLOAT} STATE {TYPE BOOL}}} {getParamset {LEVEL 0.5 STATE 1}}}]
+  list [dict get $r stdout] [lmap c [dict get $r xmlrpc_calls] {lindex $c 1}]
+} -result [list "Content-Type: text/plain\n\nLEVEL:FLOAT=0.5\nSTATE:BOOL=1\n" {getParamsetDescription getParamset}]
+
+test sp012-5 {[TARGET] an unknown interface: 400 with the token only (the error comes before the Content-Type header), no XML-RPC call} -body {
+  set out {}
+  foreach {cgifile extra} {links.cgi {&interface=nosuch} paramset.cgi {&interface=nosuch&address=A:1&key=MASTER}} {
+    set r [cgi backup/$cgifile -query "$Q$extra" -sessions $ADMIN -xmlrpc {{getLinks {}} {getParamset {}}}]
+    lappend out [lines [dict get $r stdout]] [llength [dict get $r xmlrpc_calls]]
+  }
+  set out
+} -result [list {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} UNKNOWN_INTERFACE} 0 {{HTTP/1.0 400 Bad Request} {Content-Type: text/plain} {} UNKNOWN_INTERFACE} 0]
+
+test sp012-6 {[TARGET] run-script.cgi without a body (CONTENT_LENGTH missing or 0) is 400 MISSING_BODY and executes nothing} -body {
+  set a [cgi backup/run-script.cgi -method GET -query $Q -sessions $ADMIN]
+  set b [cgi backup/run-script.cgi -method POST -query $Q -body {} -sessions $ADMIN]
+  set n 0
+  foreach r [list $a $b] { foreach c [dict get $r rega_calls] { if {![string match *GetSessionVarStr* $c]} { incr n } } }
+  list [last $a] [last $b] $n
+} -result {MISSING_BODY MISSING_BODY 0}
+
+test sp012-7 {[TARGET] the session is checked before the body is used: an invalid sid with a body is INVALID_SESSION} -body {
+  last [cgi backup/run-script.cgi -method POST -query "sid=%40Unknown0000%40" -body {Write(1);} -sessions $ADMIN]
+} -result INVALID_SESSION
+
+cleanupTests

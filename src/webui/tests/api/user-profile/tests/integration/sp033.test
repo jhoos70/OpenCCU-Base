@@ -1,0 +1,95 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP033 NFR and integration coverage (spec.json#SP033 non_functional_requirements[0..5]), boundary
+# and error cases of the v2 profile route, and the golden re-run of the User.* fixtures.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,user-profile
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set USER {{AbCdEf1234 2 1234 Admin}}
+set S {_session_id_ AbCdEf1234 userID 1234}
+set PROFILE {{*UserFirstName()* {NAME {Admin} FIRST {Max} PWD {false} NOEXPERT {true}}}}
+proc put {body args} {
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -method PUT -contenttype application/json -setenv {REQUEST_URI /api/v2/profile} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::USER -rega $::PROFILE {*}$args]]]
+}
+
+test sp033-nfr1 {NFR1: getLanguage resolves the user to UserFirstName (not Name) and reads <UserFirstName>.lang; setLanguage keys the file on the supplied userName} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/.keep ""
+  call User.setLanguage {_session_id_ AbCdEf1234 userName Admin userLang fr} -sessions $USER -fs $fs
+  set a [call User.getLanguage $S -sessions $USER -fs $fs -rega {{*UserFirstName()* Max}}]
+  set b [call User.getLanguage $S -sessions $USER -fs $fs -rega {{*UserFirstName()* Admin}}]
+  mock::fs::destroy $fs
+  list [result $a] [result $b]
+} -result {0 fr}
+
+test sp033-nfr2 {NFR2 (frozen v1): getLanguage builds its path from the ReGa first name without a tail strip} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/x.lang "pl"
+  mock::fs::write $fs etc/config/userprofiles/.keep ""
+  set r [call User.getLanguage $S -sessions $USER -fs $fs -rega {{*UserFirstName()* ../x}}]
+  mock::fs::destroy $fs
+  result $r
+} -result pl
+
+test sp033-nfr4 {NFR4 [V2]: PUT with an unknown key is 422 and writes nothing; a missing language is 422} -body {
+  set fs [mock::fs::create]
+  set a [put {{"language":"en","admin":"yes"}} -fs $fs]
+  set b [put {{}} -fs $fs]
+  set exists [file exists [file join $fs etc config userprofiles Max.lang]]
+  mock::fs::destroy $fs
+  list [status $a] [err $a] [status $b] [err $b] $exists
+} -result [list 422 {403 {invalid argument (admin)}} 422 {403 {invalid argument (language)}} 0]
+
+test sp033-nfr5 {NFR5: the v1 JavaScript-expression / unquoted outputs are preserved byte-for-byte} -body {
+  golden::compare_all -candidate only:user-profile -only {User.getUserName User.getUserFirstName User.hasUserPWD User.isNoExpert User.getLanguage User.setLanguage}
+} -result {}
+
+test sp033-err1 {PUT /profile: invalid JSON is HTTP 400; text/plain is HTTP 415; an unknown user (no ReGa object) is HTTP 404} -body {
+  set a [put {not json}]
+  set b [golden::call_raw {{"language":"en"}} [golden::prepare [list -candidate $::CAND -method PUT -contenttype text/plain -setenv {REQUEST_URI /api/v2/profile} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::USER -rega $::PROFILE]]]
+  set c [put {{"language":"en"}} -rega {{*UserFirstName()* nothing}}]
+  list [status $a] [status $b] [status $c]
+} -result {400 415 404}
+
+test sp033-err2 {the first name is reduced to its file tail: a name with path components never leaves /etc/config/userprofiles} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/.keep ""
+  set r [put {{"language":"en"}} -fs $fs -rega {{*UserFirstName()* {NAME {A} FIRST {../../evil} PWD {true} NOEXPERT {false}}}}]
+  set inside [file exists [file join $fs etc config userprofiles evil.lang]]
+  set outside [file exists [file join $fs etc evil.lang]]
+  mock::fs::destroy $fs
+  list [status $r] $inside $outside
+} -result {200 1 0}
+
+test sp033-err3 {a control character in the userId query is HTTP 422 and the digits-only rule holds} -body {
+  set out {}
+  foreach q {userId=12x userId=%0A userId= userId=12345678901} {
+    set r [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/profile} \
+      -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::USER -rega $::PROFILE -query $q]]]
+    lappend out [status $r]
+  }
+  set out
+} -result {422 422 422 422}
+
+cleanupTests

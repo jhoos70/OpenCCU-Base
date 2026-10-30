@@ -1,0 +1,79 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC002 dispatcher -> security-session: session_isValid sid (v2/auth.tcl).
+# Request shape: sid ^@?[A-Za-z0-9]{10}@?$ ; returns the literal true | false; false is treated as
+# not authenticated (401 on v2). The strict sid check is the flag sid_shape_strict (EG-8 gate,
+# default false): without the flag the privilege lookup alone decides.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+# the ReGa session table has both spellings of the id (inner id and '@'-wrapped)
+set SESS {{AbCdEf1234 2 1000 User} {@AbCdEf1234@ 2 1000 User}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc rpc {method sid args} {
+  return [golden::call_raw "\{\"method\":\"$method\",\"params\":\{\},\"id\":1\}" [golden::prepare [list -candidate $::CAND -sessions $::SESS \
+    -setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header [list X-Session-Id $sid] {*}$args]]]
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc isvalid {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match {*var result = false;*} $c]} { incr n } }
+  return $n
+}
+proc lookups {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *StrValueByIndex* $c]} { incr n } }
+  return $n
+}
+
+test ic002-1 {default (sid_shape_strict false): session_isValid is not called - the privilege lookup decides} -body {
+  set r [rpc SysVar.getAll AbCdEf1234]
+  list [status $r] [isvalid $r] [lookups $r]
+} -result {200 0 1}
+
+test ic002-2 {sid_shape_strict true: session_isValid is called with the sid (inner id and '@'-wrapped form are both tried); true lets the request proceed} -setup {
+  setconf {array set API_CONFIG {sid_shape_strict true}}
+} -body {
+  set r [rpc SysVar.getAll AbCdEf1234]
+  list [status $r] [expr {[isvalid $r] >= 1}] [lookups $r]
+} -cleanup { clearconf } -result {200 1 1}
+
+test ic002-3 {sid_shape_strict true: a false answer is 'not authenticated' - HTTP 401 before the privilege lookup and before the method script} -setup {
+  setconf {array set API_CONFIG {sid_shape_strict true}}
+} -body {
+  set r [rpc SysVar.getAll Unknown0001]
+  list [status $r] [lookups $r] [llength [lsearch -all -inline -glob [dict get $r rega_calls] *ID_SYSTEM_VARIABLES*]]
+} -cleanup { clearconf } -result {401 0 0}
+
+test ic002-4 {sid_shape_strict true: a sid that is not safe for the ReGa script (quotes, spaces, too long) is refused by session_isValid without any ReGa call (401)} -setup {
+  setconf {array set API_CONFIG {sid_shape_strict true}}
+} -body {
+  set out {}
+  foreach sid [list {a"b} {a b} {AAAAAAAAAAAAAAAAAAAAAAAAAAAA}] {
+    set r [rpc SysVar.getAll $sid]
+    lappend out [status $r] [llength [dict get $r rega_calls]]
+  }
+  set out
+} -cleanup { clearconf } -result {401 0 401 0 401 0}
+
+test ic002-5 {LEVEL NONE methods need no valid sid, also with sid_shape_strict (Session.login with a stale header)} -setup {
+  setconf {array set API_CONFIG {sid_shape_strict true}}
+} -body {
+  set r [rpc system.listMethods Unknown0001]
+  status $r
+} -cleanup { clearconf } -result 200
+
+cleanupTests

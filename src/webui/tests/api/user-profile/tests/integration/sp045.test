@@ -1,0 +1,59 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP045 NFR and integration coverage (spec.json#SP045 non_functional_requirements[0..4]), boundary
+# and error cases and the golden re-run of the system.* helper fixtures through the staged scripts.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,user-profile
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234}
+
+test sp045-nfr0 {NFR0 (frozen v1): an empty energyPrice file produces the invalid '{,,,,}'} -body {
+  result [call system.getEnergyPrice {} -sessions {} -files [list etc/config/energyPrice ""]]
+} -result {{,,,,}}
+
+test sp045-nfr1 {NFR1: a missing key answers the token false (not -1 as the header comment promises); a plain word is placed unquoted} -body {
+  list [result [call system.getTweak [list {*}$S key missing] -sessions $USER -files [list etc/config/tweaks "x = 1\n"]]] [result [call system.getTweak [list {*}$S key x] -sessions $USER -files [list etc/config/tweaks "x = word\n"]]]
+} -result {false word}
+
+test sp045-nfr4 {NFR4: an unreadable time.conf keeps the default CET/CEST (system.TimeZoneOffset() is not used)} -body {
+  set r [call system.getPositionData $S -sessions $USER -rega {{*system.Longitude()* {['Longitude:1','Latitude:2'}}}]
+  set used 0
+  foreach line [split [lindex [dict get $r rega_calls] end] \n] {
+    if {![string match {!*} [string trim $line]] && [string match *TimeZoneOffset()* $line]} { incr used }
+  }
+  list [result $r] $used
+} -result [list {['Longitude:1','Latitude:2','TimeZone:CET/CEST']} 0]
+
+test sp045-err1 {error case: tweak keys with regexp metacharacters or newlines are error 403 and never reach the pattern} -body {
+  set out {}
+  foreach k [list {a*} {.*} "a\nb" {a|b} {[x]}] {
+    lappend out [lindex [err [call system.getTweak [list _session_id_ AbCdEf1234 key $k] -sessions $USER -files [list etc/config/tweaks "a = 1\n"]]] 0]
+  }
+  set out
+} -result {403 403 403 403 403}
+
+test sp045-err2 {a tweak file line whose value contains '=' keeps the rest of the line} -body {
+  result [call system.getTweak [list {*}$S key url] -sessions $USER -files [list etc/config/tweaks "url = http://h/?a=b\n"]]
+} -result {http://h/?a=b}
+
+test sp045-golden {golden re-run: the system.* helper fixtures replay byte-identical through the staged scripts (v1 path)} -body {
+  golden::compare_all -candidate only:user-profile -only {system.getEnergyPrice system.getPositionData system.getTweak system.saveObjectModel}
+} -result {}
+
+cleanupTests

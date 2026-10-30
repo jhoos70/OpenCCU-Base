@@ -1,0 +1,51 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC007 dispatcher -> user-profile: the executor sources methods/<user|system|webui>/<script>.tcl
+# with the declared arguments only; v1 keeps the JavaScript expressions, /api/v2 gets strict JSON;
+# a failing script is error 200 'internal error (ref: <cid>)'.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,user-profile
+set SESS {{AbCdEf1234 2 1000 User}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+
+test ic007-1 {one method of each user-profile namespace is sourced through the executor (user, system, webui)} -body {
+  set out {}
+  foreach {m p} {User.getUserName {userID 1} system.getEnergyPrice {} WebUI.getColors {}} {
+    lappend out [expr {[lindex [err [call $m [concat {_session_id_ AbCdEf1234} $p]]] 0] ni {401 400 402}}]
+  }
+  set out
+} -result {1 1 1}
+
+test ic007-2 {v1: the JavaScript expression text is kept; /api/v2: strict JSON} -body {
+  set rega {{*user.Name()* {NAME {Admin}}}}
+  list [result [call User.getUserName {_session_id_ AbCdEf1234 userID 1} -rega $rega]] [result [call User.getUserName {userID 1} -rega $rega {*}$V2]]
+} -result {{{"UserName" : "Admin"}.UserName} {"Admin"}}
+
+test ic007-3 {declared arguments only: an undeclared parameter does not reach the ReGa script} -body {
+  set r [call User.isNoExpert {_session_id_ AbCdEf1234 id 1 junk 5}]
+  set s [lindex [dict get $r rega_calls] end]
+  list [string match {*var id = "1";*} $s] [string match *junk* $s]
+} -result {1 0}
+
+test ic007-4 {error 200: a script failure (unknown user) is 'internal error (ref: <cid>)'} -body {
+  set r [call User.getUserName {_session_id_ AbCdEf1234 userID 99} -rega {{*user.Name()* false}}]
+  regexp {^internal error \(ref: [0-9a-f]{16}\)$} [lindex [err $r] 1]
+} -result 1
+
+cleanupTests

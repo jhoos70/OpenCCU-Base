@@ -1,0 +1,72 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF002 Authentication and session creation (Session.login, login.htm; flow-model.md#cf002):
+# dispatcher steps 1-8,11 -> (opt-in) per-IP limiter -> ::http::geturl login.htm -> Location /
+# status code -> result sid; later calls pass the sid (v1 params, v2 header).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set OK302 {{{HTTP/1.1 302 Found} {Location http://127.0.0.1/index.htm?sid=@AbCdEf1234@}}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc login {args} {
+  return [golden::call Session.login {username Admin password TOPSECRET} -candidate $::CAND -sessions {} {*}$args]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest}}
+
+test cf002-1 {steps 1-5: LEVEL NONE (no privilege lookup), one POST to login.htm with tbUsername/tbPassword, the inner id (without @) is the result} -body {
+  set r [login -http $OK302]
+  list [llength [dict get $r rega_calls]] [dict get $r http_calls] [regexp {"result": "AbCdEf1234"} [dict get $r body]]
+} -result [list 0 [list {http://127.0.0.1/login.htm -query tbUsername=Admin&tbPassword=TOPSECRET}] 1]
+
+test cf002-2 {step 4 decisions: status 503 -> 503, no sid in Location -> 501} -body {
+  list [err [login -http {{{HTTP/1.1 503 Service Unavailable} {}}}]] [err [login -http {{{HTTP/1.1 200 OK} {}}}]]
+} -result {{503 {service not available}} {501 {invalid credentials or too many sessions}}}
+
+test cf002-3 {step 2 (opt-in): with rate_limit the 11th login of one REMOTE_ADDR within 60 s is 429 and login.htm is not contacted} -body {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  file mkdir [file join $fs tmp webui-ratelimit]
+  set fd [open [file join $fs tmp webui-ratelimit login-192.0.2.10] w]; puts $fd [join [lrepeat 10 1700000000] \n]; close $fd
+  set r [login -fs $fs -remote_addr 192.0.2.10 -http $OK302]
+  mock::fs::destroy $fs
+  clearconf
+  list [err $r] [llength [dict get $r http_calls]]
+} -result {{429 {rate limit exceeded}} 0}
+
+test cf002-4 {error path: login.htm unreachable is error 200 'internal error (ref: <cid>)'; credentials are never logged or returned} -body {
+  set r [login]
+  list [lindex [err $r] 0] [string match *TOPSECRET* [dict get $r body]] [string match *TOPSECRET* [dict get $r syslog]]
+} -result {200 0 0}
+
+test cf002-5 {v2 mapping (BD-04): 501 -> HTTP 401, 503 -> HTTP 503} -body {
+  set a [golden::call Session.login {username a password b} -candidate $::CAND -sessions {} -http {{{HTTP/1.1 200 OK} {}}} {*}$V2]
+  set b [golden::call Session.login {username a password b} -candidate $::CAND -sessions {} -http {{{HTTP/1.1 503 Service Unavailable} {}}} {*}$V2]
+  list [status $a] [status $b]
+} -result {401 503}
+
+test cf002-6 {step 6: the sid of the login is used for later calls - v1 as parameter, v2 as header} -body {
+  set sessions {{AbCdEf1234 1 1000 Guest}}
+  set a [golden::call Device.listAll {_session_id_ AbCdEf1234} -candidate $::CAND -sessions $sessions]
+  set b [golden::call Device.listAll {} -candidate $::CAND -sessions $sessions {*}$V2 -header {X-Session-Id AbCdEf1234}]
+  list [lindex [err $a] 0] [lindex [err $b] 0] [status $b]
+} -result {none none 200}
+
+cleanupTests

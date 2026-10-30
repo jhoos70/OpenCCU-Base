@@ -1,0 +1,112 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# Contract: golden-fixture runner (T013/T014, NFR-045 v1 frozen).
+# Fixtures {request, mock_script, expected_response} are derived from the 180-entry
+# registry (methods.conf ARGUMENTS) and replayed through the as-is dispatcher stub
+# (the unchanged src/webui/www/api tree, read-only).
+set here [file dirname [file normalize [info script]]]
+source [file join $here helpers mocks.tcl]
+source [file join $here helpers golden.tcl]
+
+test golden-registry-1 {the registry parser returns all 179 entries with LEVEL, SCRIPT_FILE and ARGUMENTS} -body {
+  set reg [golden::registry]
+  set bad {}
+  dict for {name e} $reg {
+    foreach k {LEVEL SCRIPT_FILE ARGUMENTS INFO} { if {![dict exists $e $k]} { lappend bad $name:$k } }
+  }
+  list [dict size $reg] $bad
+} -result {179 {}}
+
+test golden-registry-2 {level distribution of the v1 registry (HEAD 1651075b, BD-15) is NONE 9, GUEST 48, USER 30, ADMIN 92} -body {
+  set c [dict create]
+  dict for {name e} [golden::registry] { dict incr c [dict get $e LEVEL] }
+  list [dict get $c NONE] [dict get $c GUEST] [dict get $c USER] [dict get $c ADMIN]
+} -result {9 48 30 92}
+
+test golden-registry-3 {the re-baselined registry has RecoveryMode.enter (ADMIN, _session_id_) and no ReGa-version methods} -body {
+  set reg [golden::registry]
+  set e [dict get $reg RecoveryMode.enter]
+  list [dict get $e LEVEL] [dict get $e ARGUMENTS] [dict exists $reg User.getReGaVersion] [dict exists $reg User.setReGaVersion]
+} -result {ADMIN _session_id_ 0 0}
+
+test golden-seed-1 {a fixture exists for every registry method; its request names every ARGUMENT} -body {
+  set missing {}
+  set n 0
+  foreach fx [golden::fixtures] {
+    incr n
+    set m [dict get $fx method]
+    set e [dict get [golden::registry] $m]
+    foreach a [dict get $e ARGUMENTS] {
+      if {![string match *\"$a\"* [dict get $fx request]]} { lappend missing $m:$a }
+    }
+    foreach k {request mock_script} { if {![dict exists $fx $k]} { lappend missing $m:$k } }
+  }
+  list $n $missing
+} -result {179 {}}
+
+test golden-seed-2 {the fixture name follows Namespace.method.json} -body {
+  golden::fixture_filename Interface.getParamset
+} -result Interface.getParamset.json
+
+test golden-capture-1 {capture through the as-is stub returns a JSON-RPC 1.1 envelope} -body {
+  set fx [golden::fixture system.listMethods]
+  set out [golden::capture $fx]
+  list [regexp {^\{("id": [^,]*,)?"version": "1.1",} $out] [regexp {"error": null\}$} $out]
+} -result {1 1}
+
+test golden-capture-2 {the capture is deterministic (two runs are byte equal)} -body {
+  set fx [golden::fixture system.listMethods]
+  expr {[golden::capture $fx] eq [golden::capture $fx]}
+} -result 1
+
+test golden-capture-3 {an unknown method yields the documented error 401 envelope} -body {
+  set fx [golden::fixture system.listMethods]
+  dict set fx request {{"method":"No.suchMethod","params":{},"id":1}}
+  set out [golden::capture $fx]
+  list [regexp {"code": 401,} $out] [regexp {method not found \(No.suchMethod\)} $out]
+} -result {1 1}
+
+test golden-capture-4 {the session is honoured: a valid sid passes the privilege check of an ADMIN method, a missing one is denied} -body {
+  set fx [golden::fixture Interface.listInterfaces]
+  set ok [golden::capture $fx]
+  dict set fx mock_script sessions {}
+  set denied [golden::capture $fx]
+  list [regexp {"error": null} $ok] [regexp {"code": 400,} $denied]
+} -result {1 1}
+
+test golden-capture-5 {mock_script xmlrpc answers are used by the replay} -body {
+  set fx [golden::fixture Interface.getParamset]
+  dict set fx request {{"method":"Interface.getParamset","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF","address":"NEQ0123456:1","paramsetKey":"VALUES"},"id":7}}
+  dict set fx mock_script xmlrpc {{getParamset {LEVEL 0.5 STATE true}}}
+  golden::capture $fx
+} -result {{"id": 7,"version": "1.1","result": {"LEVEL":"0.5","STATE":"true"},"error": null}}
+
+test golden-diff-1 {identical outputs diff to the empty string} -body {
+  golden::diff abc abc
+} -result {}
+
+test golden-diff-2 {different outputs report the first differing byte offset} -body {
+  golden::diff abcdef abcxef
+} -result {first difference at byte 3: "d" vs "x"}
+
+test golden-diff-3 {different lengths are reported} -body {
+  golden::diff abc abcd
+} -result {first difference at byte 3: "" vs "d"}
+
+test golden-all-1 {every one of the 179 seeded fixtures replays through the as-is stub into a JSON-RPC envelope} -body {
+  set bad {}
+  foreach fx [golden::fixtures] {
+    set out [golden::capture $fx]
+    # Interface.searchDaliDevices ends without a JSON body on failure by design (v1: logs and exits)
+    if {$out eq "" && [dict get $fx method] eq "Interface.searchDaliDevices"} continue
+    if {![regexp {^\{("id": [^,]*,)?"version": "1.1",|^\{\s*("id": [^,]*,\s*)?"version": "1.1",} $out]} { lappend bad [dict get $fx method] }
+  }
+  set bad
+} -result {}
+
+test golden-compare-1 {compare of the as-is stub with itself is clean for every fixture (frozen-v1 check API)} -body {
+  golden::compare_all -candidate legacy
+} -result {}
+
+cleanupTests

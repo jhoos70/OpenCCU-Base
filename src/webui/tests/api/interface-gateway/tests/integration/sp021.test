@@ -1,0 +1,70 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP021 NFR and integration coverage (spec.json#SP021 non_functional_requirements[0..9]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF}
+
+test sp021-nfr0 {NFR0: STOP with on=false calls setInstallMode(bool 0) with a single argument} -body {
+  set r [call Interface.setInstallModeHMIP [concat $S {installMode STOP on false time 30 address {} key {} keymode {}}] -xmlrpc {{setInstallMode 1}}]
+  lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end
+} -result {setInstallMode {bool 0}}
+
+test sp021-nfr1 {NFR1: setInstallModeHMIP needs every ARGUMENT (even for ALL/STOP): a missing 'key' is 402} -body {
+  err [call Interface.setInstallModeHMIP [concat $S {installMode ALL on true time 30 address {} keymode {}}] -xmlrpc {{setInstallMode 1}}]
+} -result {402 {missing argument (key)}}
+
+test sp021-nfr2 {NFR2: only 'true', 1 and '1' mean on} -body {
+  set out {}
+  foreach v {true 1 TRUE 01 -1} {
+    set r [call Interface.setInstallModeHMIP [concat $S [list installMode ALL on $v time 5 address {} key {} keymode {}]] -xmlrpc {{setInstallMode 1}}]
+    lappend out [lindex [lindex [dict get $r xmlrpc_calls] 0] 2]
+  }
+  set out
+} -result {{bool 1} {bool 1} {bool 0} {bool 1} {bool 0}}
+
+test sp021-nfr3 {NFR3/9: in LOCAL mode a non-hex key is forwarded unvalidated in the struct (v1; the v2 schema validates)} -body {
+  set r [call Interface.setInstallModeHMIP [concat $S {installMode LOCAL on true time 30 address A key NOT-HEX keymode LOCAL}] -xmlrpc {{setInstallModeWithWhitelist 1}}]
+  set arr [lindex [lindex [dict get $r xmlrpc_calls] 0] 4]
+  string match *NOT-HEX* $arr
+} -result 1
+
+test sp021-nfr4 {NFR4: Interface.setInstallMode is not registered in methods.conf (unreachable through the API)} -body {
+  list [dict exists [golden::registry] Interface.setInstallMode] [lindex [err [call Interface.setInstallMode [concat $S {on true}]]] 0]
+} -result {0 401}
+
+test sp021-nfr5 {NFR5: the key mismatch serial is a raw token: non-numeric yields invalid JSON, empty yields null} -body {
+  set a [call Interface.getKeyMissmatchDevice [concat $S {reset false}] -xmlrpc {{getKeyMissmatchDevice NEQ123}}]
+  set b [call Interface.getKeyMissmatchDevice [concat $S {reset false}] -xmlrpc {{getKeyMissmatchDevice {}}}]
+  list [result $a] [result $b]
+} -result {NEQ123 null}
+
+test sp021-nfr7 {NFR7: getInstallMode and searchDevices with an empty value return null} -body {
+  list [result [call Interface.getInstallMode $S -xmlrpc {{getInstallMode {}}}]] [result [call Interface.searchDevices $S -xmlrpc {{searchDevices {}}}]]
+} -result {null null}
+
+test sp021-nfr8 {NFR8: a deleteDevice the interface refuses surfaces as 601} -body {
+  err [call Interface.deleteDevice [concat $S {address A flags 1}] -fault {{deleteDevice 1 refused}}]
+} -result {601 {TCL error}}
+
+test sp021-golden {golden re-run: the install/lifecycle methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.setInstallModeHMIP Interface.getInstallMode Interface.searchDevices Interface.deleteDevice Interface.changeDevice Interface.clearConfigCache Interface.restoreConfigToDevice Interface.getKeyMissmatchDevice}
+} -result {}
+
+cleanupTests

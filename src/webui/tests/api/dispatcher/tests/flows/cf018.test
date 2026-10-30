@@ -1,0 +1,67 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF018 Generic Tcl failure path (flow-model.md#cf018; SP005, SP001): any Tcl error becomes the
+# JSON-RPC error 200 'internal error (ref: <cid>)'; the full text goes to the syslog with the same
+# correlation id (BD-06); /api/v2 answers HTTP 500 and the header X-Correlation-Id.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+set SESS {{AbCdEf1234 2 1000 User}}
+proc post {json args} {
+  return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::SESS {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+set FAIL {{"method":"Program.get","params":{"_session_id_":"AbCdEf1234","id":"9"},"id":7}}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+
+test cf018-1 {v1: error 200 with HTTP 200, the raw id echo and the generic text with a 16-hex reference} -body {
+  set r [post $::FAIL]
+  list [lindex [err $r] 0] [regexp {^internal error \(ref: [0-9a-f]{16}\)$} [lindex [err $r] 1]] [regexp {"id": 7,} [dict get $r body]] [regexp {Status:} [dict get $r headers]]
+} -result {200 1 1 0}
+
+test cf018-2 {the syslog line carries cid, method, uid placeholder, code and the full text on ONE line; the cid equals the reference} -body {
+  set r [post $::FAIL]
+  regexp {\(ref: ([0-9a-f]{16})\)} [lindex [err $r] 1] -> cid
+  set lines {}
+  foreach s [dict get $r syslog] { if {[string match "*cid=$cid *" $s]} { lappend lines $s } }
+  list [llength $lines] [regexp {cid=[0-9a-f]{16} method=Program.get uid=\S+ code=200 errorInfo=} [lindex $lines 0]] [string first "\n" [lindex $lines 0]]
+} -result {1 1 -1}
+
+test cf018-3 {no errorInfo, procedure names, .tcl paths or /www/ in the document} -body {
+  set b [dict get [post $::FAIL] body]
+  set leak 0
+  foreach bad {errorInfo {while executing} procedure .tcl /www/} { if {[string first $bad $b] >= 0} { incr leak } }
+  set leak
+} -result 0
+
+test cf018-4 {v2: HTTP 500 with X-Correlation-Id equal to the reference in the body} -body {
+  set r [post {{"method":"Program.get","params":{"id":"9"},"id":7}} {*}$V2]
+  regexp {\(ref: ([0-9a-f]{16})\)} [lindex [err $r] 1] -> cid
+  list [regexp {Status: 500} [dict get $r headers]] [regexp "X-Correlation-Id: $cid" [dict get $r headers]]
+} -result {1 1}
+
+test cf018-5 {a request without CONTENT_LENGTH and an unreadable registry are error 200 too} -body {
+  set root [golden::root $::CAND]
+  set fs [mock::fs::create]
+  set cenv [mock::cgi_env::build POST -body {{"method":"x","params":{},"id":1}} -contenttype application/json -nolength 1]
+  set res [mock::run_cgi [file join $root api homematic.cgi] $cenv -docroot $root -alias /www/ -fsroot $fs]
+  mock::fs::destroy $fs
+  regexp {"code": 200,\s*"message": "internal error \(ref: [0-9a-f]{16}\)"} [dict get $res stdout]
+} -result 1
+
+test cf018-6 {a method script that produces an invalid JSON document is HTTP 500 on v2 (never an invalid body) } -body {
+  set r [post {{"method":"User.getUserName","params":{"userID":"1"},"id":1}} {*}$V2 -sessions {{AbCdEf1234 2 1000 User}} -rega {{*user.Name()* {NAME {x}}}}]
+  # (the v1 script of the legacy tree answers a JavaScript expression)
+  list [regexp {Status: 500} [dict get $r headers]] [regexp {\.UserName} [dict get $r body]]
+} -result {1 0}
+
+cleanupTests

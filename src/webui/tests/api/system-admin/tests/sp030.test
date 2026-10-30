@@ -1,0 +1,161 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP030 - BidCoS-RF/Wired gateway configuration, system key, LAN gateway key change:
+# contracts/behavioral-contracts.json#SP030
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:system-admin {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc setreq {method ifaces} {
+  return "\{\"method\":\"$method\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"interfaces\":$ifaces\},\"id\":1\}"
+}
+set S {_session_id_ AbCdEf1234}
+set USER {{AbCdEf1234 2 1000 User}}
+
+set RFCONF "# rfd config\nListen Port = 2001\n\n\[Interface 1\]\nType = Lan Interface\nName = LAN GW\nSerial Number = OEQ1\nEncryption Key = abc\nIP Address = 10.0.0.2\n\n\[Interface 2\]\nType = CCU2\nName = CCU\n"
+set TWO {[{"type":"Lan Interface","userName":"GW1","serialNumber":"OEQ1","encryptionKey":"k1","ipAddress":"10.0.0.2"},{"type":"Lan Interface","userName":"GW2","serialNumber":"OEQ2","encryptionKey":"k2"}]}
+
+test sp030-0 {the staged method scripts of SP030 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {bidcos/changeLanGatewayKey bidcosrf/createkeyfile bidcosrf/getconfiguration-rf bidcosrf/iskeyset bidcosrf/setconfiguration-rf bidcosrf/validatekey bidcoswired/getconfiguration-wired bidcoswired/setconfiguration-wired} {
+    set p [file join $gen system-admin methods {*}[split $f /]].tcl
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp030-1 {BidCoS_RF.getConfigurationRF (ADMIN): interfaces of rfd.conf, sections of Type CCU2 are filtered} -body {
+  result [call BidCoS_RF.getConfigurationRF $S -files [list etc/config/rfd.conf $RFCONF]]
+} -result {{"interfaces": [{"type": "Lan Interface","userName": "LAN GW","serialNumber": "OEQ1","encryptionKey": "abc","ipAddress": "10.0.0.2"}]}}
+
+test sp030-2 {BidCoS_Wired.getConfigurationWired (ADMIN): hs485d.conf parsed likewise, no Type filtering} -body {
+  set c "\[Interface 0\]\nType = HMW-LGW\nName = W1\nSerial Number = W1\nEncryption Key = k\n\[Interface 1\]\nType = CCU2\nName = X\n"
+  set j [result [call BidCoS_Wired.getConfigurationWired $S -files [list etc/config/hs485d.conf $c]]]
+  list [string match {*"type": "HMW-LGW"*} $j] [string match {*"type": "CCU2"*} $j]
+} -result {1 1}
+
+test sp030-3 {an unreadable configuration file yields interfaces: []} -body {
+  result [call BidCoS_RF.getConfigurationRF $S]
+} -result {{"interfaces": []}}
+
+test sp030-4 {BidCoS_RF.setConfigurationRF (ADMIN): header kept, one [Interface i] section per element from 1, optional IP Address, true} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf $RFCONF
+  set r [callraw [setreq BidCoS_RF.setConfigurationRF $TWO] -fs $fs]
+  set out [mock::fs::read $fs etc/config/rfd.conf]
+  mock::fs::destroy $fs
+  list [result $r] $out
+} -result [list true "# rfd config\nListen Port = 2001\n\n\n\[Interface 1\]\nType = Lan Interface\nName = GW1\nSerial Number = OEQ1\nEncryption Key = k1\nIP Address = 10.0.0.2\n\n\[Interface 2\]\nType = Lan Interface\nName = GW2\nSerial Number = OEQ2\nEncryption Key = k2\n\n"]
+
+test sp030-5 {BidCoS_Wired.setConfigurationWired (ADMIN): numbering from 0; a generated header (port 2000) if the file does not exist} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq BidCoS_Wired.setConfigurationWired {[{"type":"HMW-LGW","userName":"W1","serialNumber":"S1","encryptionKey":"k"}]}] -fs $fs]
+  set out [mock::fs::read $fs etc/config/hs485d.conf]
+  mock::fs::destroy $fs
+  list [result $r] $out
+} -result [list true "# This File was automatically generated\n# TCP Port for XmlRpc connections\nListen Port = 2000\n\nLog Destination = Syslog\nLog Identifier = hs485d\n\n\n\[Interface 0\]\nType = HMW-LGW\nName = W1\nSerial Number = S1\nEncryption Key = k\n\n"]
+
+test sp030-6 {BidCoS_RF.createKeyFile (ADMIN): /etc/config/keys with the indexes of crypttool -g and the md5 of the key} -body {
+  set fs [mock::fs::create]
+  set md5 [lindex [exec md5sum << "s3cretKey"] 0]
+  set r [call BidCoS_RF.createKeyFile [concat $S {key s3cretKey}] -fs $fs -exec [list [list {crypttool -g} "Current user key = 3\nPrevious user key = 2\n"]]]
+  set out [mock::fs::read $fs etc/config/keys]
+  mock::fs::destroy $fs
+  list [result $r] $out
+} -result [list true "Current Index = 3\nKey 0 = \nKey 2 = [lindex [exec md5sum << s3cretKey] 0]\nKey 3 = [lindex [exec md5sum << s3cretKey] 0]\nLast Index = 2\n"]
+
+test sp030-7 {BidCoS_RF.validateKey (ADMIN): crypttool -v -t 3 -k <key>, false if it fails; isKeySet mirrors the failure of crypttool -v -t 0} -body {
+  set a [call BidCoS_RF.validateKey [concat $S {key abc}] -exec {{{crypttool -v -t 3 -k abc} ok}}]
+  set b [call BidCoS_RF.validateKey [concat $S {key abc}] -execfail {{{crypttool -v*} failed}}]
+  set c [call BidCoS_RF.isKeySet $S -execfail {{{crypttool -v -t 0} failed}}]
+  set d [call BidCoS_RF.isKeySet $S]
+  list [result $a] [result $b] [result $c] [result $d] [lindex [dict get $a exec_calls] 0]
+} -result {true false true false {crypttool -v -t 3 -k abc}}
+
+test sp030-8 {BidCoS.changeLanGatewayKey (ADMIN): <lgwserial>.keychange with Class/Serial/IP/KEY/CURKEY, empty lgwserial is false} -body {
+  set fs [mock::fs::create]
+  set p {_session_id_ AbCdEf1234 lgwclass RF lgwserial OEQ1234567 lgwip 10.0.0.9 newkey NEWKEY curkey CURKEY}
+  set a [call BidCoS.changeLanGatewayKey $p -fs $fs]
+  set out [mock::fs::read $fs etc/config/OEQ1234567.keychange]
+  set b [call BidCoS.changeLanGatewayKey [dict replace $p lgwserial {}] -fs $fs]
+  mock::fs::destroy $fs
+  list [result $a] $out [result $b]
+} -result [list true "Class=RF\nSerial=OEQ1234567\nIP=10.0.0.9\nKEY=NEWKEY\nCURKEY=CURKEY\n" false]
+
+test sp030-9 {[TARGET] setConfigurationRF/Wired are atomic: an unreadable source or a malformed element leaves the previous file byte-identical (false), no temp file stays} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf $RFCONF
+  set a [callraw [setreq BidCoS_RF.setConfigurationRF {["oops"]}] -fs $fs]
+  set same [expr {[mock::fs::read $fs etc/config/rfd.conf] eq $RFCONF}]
+  set b [callraw [setreq BidCoS_RF.setConfigurationRF $TWO] -fs [set fs2 [mock::fs::create]]]
+  set created [file exists [file join $fs2 etc config rfd.conf]]
+  set left [llength [glob -nocomplain -directory [file join $fs etc config] *]]
+  mock::fs::destroy $fs
+  mock::fs::destroy $fs2
+  list [result $a] $same [result $b] $created $left
+} -result {false 1 false 0 2}
+
+test sp030-10 {[TARGET] an element with CR or LF in userName, serialNumber, encryptionKey or ipAddress is 403 'invalid argument (interfaces)', the file is not touched} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf $RFCONF
+  set out {}
+  foreach field {userName serialNumber encryptionKey ipAddress} {
+    foreach ch {\\n \\r} {
+      set j "\[\{\"type\":\"T\",\"userName\":\"u\",\"serialNumber\":\"s\",\"encryptionKey\":\"k\",\"ipAddress\":\"1\",\"$field\":\"x${ch}\[Interface 9\]\"\}\]"
+      lappend out [err [callraw [setreq BidCoS_RF.setConfigurationRF $j] -fs $fs]]
+      lappend out [err [callraw [setreq BidCoS_Wired.setConfigurationWired $j] -fs $fs]]
+    }
+  }
+  set same [expr {[mock::fs::read $fs etc/config/rfd.conf] eq $RFCONF}]
+  set wired [file exists [file join $fs etc config hs485d.conf]]
+  mock::fs::destroy $fs
+  list [lsort -unique $out] $same $wired
+} -result {{{403 {invalid argument (interfaces)}}} 1 0}
+
+test sp030-11 {[TARGET] changeLanGatewayKey: lgwserial with '/', '..' or outside ^[A-Za-z0-9_-]{1,32}$ is 403 'invalid argument (lgwserial)' and nothing is written} -body {
+  set fs [mock::fs::create]
+  set out {}
+  foreach bad {../../tmp/x a/b .. OEQ.1 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA} {
+    set p [list _session_id_ AbCdEf1234 lgwclass RF lgwserial $bad lgwip 1 newkey n curkey c]
+    lappend out [err [call BidCoS.changeLanGatewayKey $p -fs $fs]]
+  }
+  set files [glob -nocomplain -directory [file join $fs etc config] *]
+  set tmpx [file exists [file join $fs tmp x.keychange]]
+  mock::fs::destroy $fs
+  list [lsort -unique $out] [llength $files] $tmpx
+} -result {{{403 {invalid argument (lgwserial)}}} 1 0}
+
+test sp030-12 {[TARGET] changeLanGatewayKey writes /etc/config/<serial>.keychange (single slash) atomically - no temp file stays} -body {
+  set fs [mock::fs::create]
+  set p {_session_id_ AbCdEf1234 lgwclass Wired lgwserial OEQ-12_x lgwip 1.2.3.4 newkey n curkey c}
+  set r [call BidCoS.changeLanGatewayKey $p -fs $fs]
+  set files [lsort [lmap f [glob -nocomplain -directory [file join $fs etc config] *] {file tail $f}]]
+  mock::fs::destroy $fs
+  list [result $r] $files
+} -result {true {InterfacesList.xml OEQ-12_x.keychange}}
+
+test sp030-13 {ADMIN only: a USER session is denied (400) for every SP030 method} -body {
+  set codes {}
+  foreach m {BidCoS_RF.getConfigurationRF BidCoS_RF.isKeySet BidCoS_Wired.getConfigurationWired} {
+    lappend codes [lindex [err [call $m $S -sessions $USER]] 0]
+  }
+  set codes
+} -result {400 400 400}
+
+cleanupTests

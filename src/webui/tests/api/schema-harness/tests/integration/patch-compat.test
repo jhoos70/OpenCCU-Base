@@ -1,0 +1,72 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# NFR-056, BD-18 (T253b): the downstream OpenCCU rootfs patches (13 of them touch www/api or
+# www/tcl) must keep applying to the staged files. The patch directory comes from the
+# environment variable OPENCCU_PATCH_DIR, default
+# ~/dev/OpenCCU/buildroot-external/package/openccu-base/rootfs-patches. Without it the
+# gate is skipped with the literal reason 'skipped: patch directory not found'.
+set here [file dirname [file normalize [info script]]]
+set tests [file dirname $here]
+source [file join $tests helpers mocks.tcl]
+source [file join $tests helpers patchapply.tcl]
+
+set copyplan [file join $::mock::tests_root PATCH-CONFLICTS.md]
+set allowed_fail {0001 0164 0038 0044 0057 0109 0131 0205}
+set patches {0001 0031 0038 0044 0054 0057 0104 0109 0131 0163 0164 0203 0205}
+
+proc patchdir_present {} { return [file isdirectory [patchapply::patchdir]] }
+testConstraint patchdir [patchdir_present]
+
+test patchcompat-1 {report format of a result list} -body {
+  patchapply::report {{0001 OK} {0031 FAIL}} staged
+} -result "patch 0001: OK\npatch 0031: FAIL"
+
+test patchcompat-2 {the legacy report is a single summary line} -body {
+  patchapply::report {{0001 OK} {0031 OK}} legacy
+} -result {legacy tree: 2 OK}
+
+test patchcompat-3 {a missing patch directory is a skip with the literal reason} -body {
+  set r [patchapply::apply_all [patchapply::compose_legacy] /nonexistent/patch/dir]
+  list $r [patchapply::report $r legacy]
+} -result {skip {skipped: patch directory not found}}
+
+test patchcompat-4 {only the www/api and www/tcl sections of a patch are applied} -body {
+  patchapply::filter_sections "--- a/www/api/x.tcl\n+++ b/www/api/x.tcl\n@@ -1 +1 @@\n-a\n+b\n--- a/www/webui/y.js\n+++ b/www/webui/y.js\n@@ -1 +1 @@\n-c\n+d\n--- a/www/tcl/z.tcl\n+++ b/www/tcl/z.tcl\n@@ -1 +1 @@\n-e\n+f\n"
+} -result "--- a/www/api/x.tcl\n+++ b/www/api/x.tcl\n@@ -1 +1 @@\n-a\n+b\n--- a/www/tcl/z.tcl\n+++ b/www/tcl/z.tcl\n@@ -1 +1 @@\n-e\n+f\n"
+
+test patchcompat-5 {legacy tree: all 13 patches apply} -constraints patchdir -body {
+  set tree [patchapply::compose_legacy]
+  set r [patchapply::apply_all $tree]
+  file delete -force $tree
+  list [patchapply::report $r legacy] [lmap x $r {lindex $x 0}]
+} -result [list {legacy tree: 13 OK} $patches]
+
+test patchcompat-6 {staged tree: the FAIL set equals the conflicts documented in PATCH-CONFLICTS.md and is an allowed set} -constraints patchdir -body {
+  set tree [patchapply::compose_staged]
+  set r [patchapply::apply_all $tree]
+  file delete -force $tree
+  puts [patchapply::report $r staged]
+  set fail {}
+  foreach x $r { if {[lindex $x 1] eq "FAIL"} { lappend fail [lindex $x 0] } }
+  set documented {}
+  set fd [open $copyplan r]; set doc [read $fd]; close $fd
+  foreach {all n} [regexp -all -inline {patch (\d{4}) must be regenerated at the next Base bump} $doc] { lappend documented $n }
+  set outside {}
+  foreach n $fail { if {$n ni $allowed_fail} { lappend outside $n } }
+  list [lsort -unique $fail] [lsort -unique $documented] $outside
+} -match glob -result {{*} {*} {}} -cleanup {}
+
+test patchcompat-7 {the FAIL set is exactly the documented set} -constraints patchdir -body {
+  set tree [patchapply::compose_staged]
+  set r [patchapply::apply_all $tree]
+  file delete -force $tree
+  set fail {}
+  foreach x $r { if {[lindex $x 1] eq "FAIL"} { lappend fail [lindex $x 0] } }
+  set fd [open $copyplan r]; set doc [read $fd]; close $fd
+  set documented {}
+  foreach {all n} [regexp -all -inline {patch (\d{4}) must be regenerated at the next Base bump} $doc] { lappend documented $n }
+  expr {[lsort -unique $fail] eq [lsort -unique $documented]}
+} -result 1
+
+cleanupTests

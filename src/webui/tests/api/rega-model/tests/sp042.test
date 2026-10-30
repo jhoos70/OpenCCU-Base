@@ -1,0 +1,86 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP042 - program operations (Program.getAll, get, execute, deleteProgramByName; USER): v1 behaviour
+# frozen (Program.get keeps its trailing comma on v1, strict JSON on /api/v2).
+# contracts/behavioral-contracts.json#SP042 (the v2 mutation route /api/v2/programs is gated by EG-6)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+proc prog {id args} {
+  set d [dict create ID $id NAME Evening TIME "2026-10-12 21:00:00" ACTIVE true INTERNAL false]
+  foreach {k v} $args { dict set d $k $v }
+  set l {}
+  dict for {k v} $d { lappend l $k $v }
+  return $l
+}
+
+test sp042-0 {the staged method scripts of SP042 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {getall get execute deleteprogrambyname} {
+    set p [file join $gen rega-model methods program $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp042-1 {acceptance[0]: Program.getAll lists every program with unquoted booleans} -body {
+  set l [list [prog 1234] [prog 1235 NAME Night ACTIVE false INTERNAL true]]
+  result [call Program.getAll {_session_id_ AbCdEf1234} -sessions $USER -rega [list [list {*ID_PROGRAMS*EnumIDs()*} $l]]]
+} -result {[{"id":"1234","name":"Evening","isActive":true,"isInternal":false,"lastExecuteTime":"2026-10-12 21:00:00"},{"id":"1235","name":"Night","isActive":false,"isInternal":true,"lastExecuteTime":"2026-10-12 21:00:00"}]}
+
+test sp042-2 {acceptance[1],NFR0: Program.get returns the same fields for one program; v1 keeps the trailing comma} -body {
+  result [call Program.get {_session_id_ AbCdEf1234 id 1234} -sessions $USER -rega [list [list {*ProgramLastExecuteTime()*} [prog 1234]]]]
+} -result {{"id":"1234","name":"Evening","isActive":true,"isInternal":false,"lastExecuteTime":"2026-10-12 21:00:00",}}
+
+test sp042-3 {acceptance[6] [V2]: Program.get on /api/v2/rpc is strict JSON without the trailing comma} -body {
+  result [call Program.get {id 1234} -sessions $USER -rega [list [list {*ProgramLastExecuteTime()*} [prog 1234]]] {*}$::V2]
+} -result {{"id":"1234","name":"Evening","isActive":true,"isInternal":false,"lastExecuteTime":"2026-10-12 21:00:00"}}
+
+test sp042-4 {acceptance[4]: Program.get for an unknown id is internal error 200} -body {
+  lindex [err [call Program.get {_session_id_ AbCdEf1234 id 99} -sessions $USER]] 0
+} -result 200
+
+test sp042-5 {acceptance[2],[3]: Program.execute answers true only for the exact ReGa output 'true', otherwise false} -body {
+  list [result [call Program.execute {_session_id_ AbCdEf1234 id 1} -sessions $USER -rega {{*ProgramExecute()* true}}]] \
+    [result [call Program.execute {_session_id_ AbCdEf1234 id 1} -sessions $USER -rega {{*ProgramExecute()* false}}]] \
+    [result [call Program.execute {_session_id_ AbCdEf1234 id 99} -sessions $USER]]
+} -result {true false false}
+
+test sp042-6 {acceptance[5],NFR3: Program.deleteProgramByName answers the raw script output (true, or empty)} -body {
+  list [result [call Program.deleteProgramByName {_session_id_ AbCdEf1234 name Evening} -sessions $USER -rega {{*oPrograms.Remove(prog.ID())* true}}]] \
+    [result [call Program.deleteProgramByName {_session_id_ AbCdEf1234 name Nope} -sessions $USER]]
+} -result {true null}
+
+test sp042-7 {NFR1 (frozen v1): a program name with unbalanced braces breaks the Tcl list parsing of getAll - internal error 200} -body {
+  lindex [err [call Program.getAll {_session_id_ AbCdEf1234} -sessions $USER -rega [list [list {*ID_PROGRAMS*EnumIDs()*} [list "ID 1 NAME \{broken TIME x"]]]]] 0
+} -result 200
+
+test sp042-8 {privilege: all four methods need USER - a GUEST session is denied (400) and nothing runs} -body {
+  set out {}
+  foreach m {Program.getAll Program.get Program.execute Program.deleteProgramByName} {
+    set r [call $m {_session_id_ AbCdEf1234 id 1 name x} -sessions {{AbCdEf1234 1 1000 Guest}}]
+    lappend out [lindex [err $r] 0] [llength [lsearch -all -inline -glob [dict get $r rega_calls] *ID_PROGRAMS*]]
+  }
+  set out
+} -result {400 0 400 0 400 0 400 0}
+
+cleanupTests

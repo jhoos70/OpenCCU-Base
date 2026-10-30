@@ -1,0 +1,129 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP004 - parsing the JSON-RPC request (eq3/jsonrpc.tcl): contracts/behavioral-contracts.json#SP004
+# The v1 parser (eq3/json.tcl) is kept for v1; the [V2] schema typing belongs to the schema layer.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc raw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:dispatcher -sessions {} {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc setconf {text} {
+  set f [file join [golden::root only:dispatcher] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root only:dispatcher] api apiconfig.conf] }
+
+test sp004-0 {the staged jsonrpc.tcl and common.tcl exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {jsonrpc.tcl common.tcl} {
+    set p [file join $gen dispatcher eq3 $f]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp004-1 {jsonrpc_parse sets METHOD, PARAMS and ID from a well-formed request} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"Device.listAll","params":{"interface":"HmIP-RF"},"id":7}}
+    puts [list $JSONRPC(METHOD) $JSONRPC(PARAMS) $JSONRPC(ID) $JSONRPC(ID_USED)]
+  }]
+  lines $r
+} -result {{Device.listAll {interface HmIP-RF} 7 1}}
+
+test sp004-2 {without 'id' ID_USED is 0 and the response omits the id member} -body {
+  set a [drv {
+    jsonrpc_parse {{"method":"x","params":{}}}
+    puts $JSONRPC(ID_USED)
+  }]
+  set b [raw {{"method":"system.listMethods","params":{}}}]
+  list [lines $a] [string match {*"id"*} [dict get $b stdout]] [string match {*"error": null*} [dict get $b stdout]]
+} -result {0 0 1}
+
+test sp004-3 {a body that is not a valid JSON object is error 100 'invalid request (<parser message>)'} -body {
+  set out {}
+  set ob "\{"; set cb "\}"
+  foreach body [list "not json" "${ob}\"method\":\"x\"" "${ob}\"method\":\"x\",\"params\":${ob}\"a\":\"\\q\"${cb}${cb}" "${ob}\"method\":\"x\",\"params\":${ob}\"a\":${cb}${cb}"] {
+    lappend out [lindex [err [raw $body]] 0]
+  }
+  lappend out [lindex [err [raw "not json"]] 1]
+  set out
+} -result [list 100 100 100 100 "invalid request (\\\"\{\\\" expected)"]
+
+test sp004-4 {[TARGET] a body without 'method' is 102 'method not found in request', without 'params' 103 'params not found in request' (code/message pairing corrected)} -body {
+  list [err [raw {{"params":{},"id":1}}]] [err [raw {{"method":"system.listMethods","id":1}}]]
+} -result {{102 {method not found in request}} {103 {params not found in request}}}
+
+test sp004-5 {[TARGET] a string id is echoed JSON-quoted; numeric and null ids round-trip unchanged} -body {
+  set out {}
+  foreach id [list {"abc-1"} 7 null {"7"} {"x\"y"} 3.5] {
+    set r [raw "\{\"method\":\"system.listMethods\",\"params\":\{\},\"id\":$id\}"]
+    regexp {"id": ([^,]*(?:\\.[^,]*)*),} [dict get $r body] -> echoed
+    lappend out $echoed
+  }
+  set out
+} -result [list {"abc-1"} 7 null {"7"} {"x\"y"} 3.5]
+
+test sp004-6 {[TARGET] strict mode: text after the top-level object is error 100; with strict mode OFF on v1 it is ignored as before} -body {
+  set body {{"method":"system.listMethods","params":{}} xyz}
+  set off [raw $body]
+  setconf {array set API_CONFIG {strict_mode true}}
+  set on [raw $body -headers [list {Content-Type application/json} {X-Requested-With XMLHttpRequest}]]
+  clearconf
+  list [string match {*"error": null*} [dict get $off body]] [lindex [err $on] 0]
+} -cleanup { clearconf } -result {1 100}
+
+test sp004-7 {[TARGET] on a v2 request (API_V2) trailing text is error 100 as well} -body {
+  set r [drv {
+    set API_V2 1
+    jsonrpc_parse {{"method":"x","params":{}} trailing}
+    puts NOTREACHED
+  }]
+  regexp {"code": (\d+)} [dict get $r stdout] -> c
+  list $c [string match *NOTREACHED* [dict get $r stdout]]
+} -result {100 0}
+
+test sp004-8 {NFR0: a number keeps its literal text but the pattern is not end-anchored (12abc leaves abc and fails with a closing brace expected error)} -body {
+  err [raw {{"method":"x","params":{"a":12abc}}}]
+} -result [list 100 "invalid request (\\\"\}\\\" expected)"]
+
+test sp004-9 {NFR1: true/false/null become the literal strings (v1 untyped parser)} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{"a":true,"b":false,"c":null,"d":"true"},"id":1}}
+    puts $JSONRPC(PARAMS)
+  }]
+  lines $r
+} -result {{a true b false c null d true}}
+
+test sp004-10 {NFR6: a parse failure before the id is known answers with the default id "error"} -body {
+  set r [raw {broken}]
+  regexp {"id": ([^,]*),} [dict get $r body] -> id
+  set id
+} -result {"error"}
+
+test sp004-11 {NFR7: UTF-8 bytes of the body are decoded once} -body {
+  set r [drv {
+    set body "\{\"method\":\"x\",\"params\":\{\"name\":\"K\xc3\xbcche\"\},\"id\":1\}"
+    jsonrpc_parse $body
+    puts [string length [lindex $JSONRPC(PARAMS) 1]]
+  }]
+  lines $r
+} -result 5
+
+cleanupTests
