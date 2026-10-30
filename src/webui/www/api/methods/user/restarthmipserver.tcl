@@ -1,12 +1,17 @@
 ##
 # User.restartHmIPServer
-# Restartet den Lighttpd Webserver
+# Restarts the HmIP server in the background (staged SP034, ADMIN only).
 #
-# Parameter:
-#   keine
+# The command line is fixed (no request data); one syslog line records correlation id, method
+# and user id. The answer is true immediately (the restart runs detached).
 #
-# Rückgabewert: true
+# Return value: [bool] true
+##
 
-#exec /etc/init.d/S62HMServer start &
+# admin_audit is defined once in eq3/admin_audit.tcl (sourced by the dispatcher)
+
+admin_audit "restart HmIP server"
+
 exec -- /usr/bin/nohup /etc/init.d/S62HMServer restart >/dev/null &
+
 jsonrpc_response true

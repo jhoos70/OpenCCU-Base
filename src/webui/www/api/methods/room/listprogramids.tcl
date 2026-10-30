@@ -1,13 +1,14 @@
 ##
 # Room.listProgramIds
-# Liefert eine Liste der Ids aller Programme, die mindesten einen Kanal
-# in dem Raum verwenden.
+# Lists the ids of the programs that use channels of a room (staged SP027, v1 frozen).
 #
-# Parameter:
-#   id: [string] Id des Raums
+# SP043: v1 called the undefined command "-lrmdups" (every call was an internal error 200);
+# the ids are now de-duplicated in the order of first occurrence.
 #
-# Rückgabewert:
-#   Ids der entsprechenden Programme
+# Parameters:
+#   id: [string] id of the room
+#
+# Return value: [array] the ids of the programs
 ##
 
 set script {
@@ -30,16 +31,19 @@ set script {
   }
 }
 
-set ids [-lrmdups [hmscript $script args]]
+# the ids of the programs without duplicates, in the order of first occurrence (SP043 replaces
+# the undefined command "-lrmdups" of v1)
+set ids {}
+foreach programId [hmscript $script args] {
+  if { $programId ni $ids } then { lappend ids $programId }
+}
 
 set result "\["
 set first 1
-
 foreach id $ids {
   if {$first != 1} then { append result ","} else { set first 0 }
   append result [json_toString $id ]
 }
-
 append result "\]"
 
 jsonrpc_response $result

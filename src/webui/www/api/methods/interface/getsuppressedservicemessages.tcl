@@ -1,13 +1,14 @@
 ##
 # Interface.getSuppressedServiceMessages
-# Get arrays of suppressed service message parameters for given channel.
+# Returns the suppressed service parameter ids of a channel (staged SP022).
 #
-# Parameter:
-#   interface:     [string] Interface id
-#   channelAddress: [string] Channel address
+# v1: the serialised array is passed through json_toString again (a quoted string that
+# contains JSON). On the v2 route (global API_V2 set by the dispatcher) the real JSON
+# array of strings is returned.
 #
-# Returns: [array]
-#   Array of suppressed service parameter names / ids.
+# Parameters:
+#   interface     : [string] name of the interface
+#   channelAddress: [string] address of the channel
 ##
 
 set channel $args(channelAddress)
@@ -25,4 +26,8 @@ foreach param $params {
 
 append result "\]"
 
-jsonrpc_response [json_toString $result]
+if { [info exists ::API_V2] && $::API_V2 } then {
+  jsonrpc_response $result
+} else {
+  jsonrpc_response [json_toString $result]
+}

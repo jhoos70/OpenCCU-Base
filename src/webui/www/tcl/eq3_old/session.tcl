@@ -8,7 +8,7 @@ set sidname "icsessionid"
 
 set SESSIONS_FILE "/var/SESSIONS.dat"
 
-#Nur für Entwicklung auf 6000 gesetzt.
+#Nur fuer Entwicklung auf 6000 gesetzt.
 #set session_timeout 6000
 set session_timeout 900
 
@@ -20,7 +20,7 @@ array set sessions_lastactivity ""
 array set sessions_redirect ""
 
 #=======================================================================
-#Funktionen dieses Moduls (nicht vollständige Liste)
+#Funktionen dieses Moduls (nicht vollstaendige Liste)
 #=======================================================================
 #proc session_requestisvalid {needed_upl} {
 #proc session_upl {} {
@@ -58,17 +58,17 @@ proc read_sessions {} {
     global SESSIONS_FILE sessions_uid sessions_lastactivity sessions_redirect
 
 	if { ! [catch {open $SESSIONS_FILE RDONLY} f] } then {
-	
+
 		set count 0
 		while {1} {
-		
+
 			gets $f zeile
 			incr count
 
 			if { [eof $f] || [string equal $zeile "<."] } break
 
 			if { $count > 1 } then {
-			
+
 				if { [regexp {^(@[A-Za-z0-9]*@);([0-9]*);([0-9]*);(.*)$} $zeile dummy sid uid lastactivity redirect] } then {
 
 					array set sessions_uid          [list $sid $uid]
@@ -89,24 +89,24 @@ proc read_sessions {} {
 }
 
 proc write_sessions {} {
-	
+
     global SESSIONS_FILE sessions_uid sessions_lastactivity sessions_redirect
 
 	session_deletetimedoutsessions
 
 	if { ! [catch {open $SESSIONS_FILE w} f] } then {
-	
+
 		puts $f "SID;UID;LastActivity;RedirectURL"
-		
+
 		foreach key [array names sessions_uid] {
-		
+
 			set uid       $sessions_uid($key)
 			set lactivity $sessions_lastactivity($key)
 			set redirect  $sessions_redirect($key)
-			
+
 			puts $f "$key;$uid;$lactivity;$redirect"
 		}
-		
+
 		puts $f "<."
 
 		close $f
@@ -118,16 +118,16 @@ proc write_sessions {} {
 	}
 }
 
-#-1: keine sid in der URL übergeben
+#-1: keine sid in der URL uebergeben
 # 1: redirect gesetzt
 proc session_redirecturl_sid {redirecturl sid} {
 
 	global sessions_redirect
 	upvar $redirecturl redirect
-	
+
 	set ret -1
 	set redirect ""
-	
+
 	if { ! [catch { set redirect $sessions_redirect($sid)  }]   } then {
 		set ret 1
 	}
@@ -135,7 +135,7 @@ proc session_redirecturl_sid {redirecturl sid} {
 	return $ret
 }
 
-#-1: keine sid in der URL übergeben
+#-1: keine sid in der URL uebergeben
 # 1: redirect gesetzt
 proc session_redirecturl {redirecturl} {
 
@@ -146,7 +146,7 @@ proc session_redirecturl {redirecturl} {
 	if { [string equal $sid ""] } then {
 		return -1
 	}
-	
+
 	set redirect ""
 	catch { [set redirect $sessions_redirect($sid) ] }
 
@@ -157,7 +157,7 @@ proc session_setredirect_sid {redirect sid} {
 
 	global sessions_redirect
 	set ret -1
-	
+
 	if { ![catch {set test $sessions_redirect($sid)} ] } then {
 
 		set sessions_redirect($sid) $redirect
@@ -167,7 +167,7 @@ proc session_setredirect_sid {redirect sid} {
 	return $ret
 }
 
-#<0: Rückgabe wie proc session_isvalid
+#<0: Rueckgabe wie proc session_isvalid
 # 1: redirect gesetzt
 proc session_setredirect {redirect} {
 
@@ -197,11 +197,11 @@ proc session_getcurURL {} {
 
 	set params ""
 	catch { set params "?$env(QUERY_STRING)" }
-	
+
 	return "http://$env(HTTP_HOST)$env(SCRIPT_NAME)$params"
 }
 
-#-2: keine sid übergeben
+#-2: keine sid uebergeben
 #-1: keine uid in der Session vorhanden oder session nicht existent (Fehler)
 # 0: keine uid in der session vergeben
 #>0: uid der session
@@ -212,7 +212,7 @@ proc session_uid_sid {sid} {
 	if { [string equal $sid ""] } then {
 		return -2
 	}
-	
+
 	set uid ""
 	catch { [set uid $sessions_uid($sid) ] }
 
@@ -223,7 +223,7 @@ proc session_uid_sid {sid} {
 	return $uid
 }
 
-#-2: keine sid in der URL übergeben
+#-2: keine sid in der URL uebergeben
 #-1: keine uid in der Session vorhanden oder session nicht existent (Fehler)
 # 0: keine uid in der session vergeben
 #>0: uid der session
@@ -236,7 +236,7 @@ proc session_uid {} {
 	if { [string equal $sid ""] } then {
 		return -2
 	}
-	
+
 	set uid ""
 	catch { [set uid $sessions_uid($sid) ] }
 
@@ -253,7 +253,7 @@ proc session_setuid_sid {uid sid} {
 
 	global sessions_uid
 	set ret -1
-	
+
 	if { ![catch {set test $sessions_uid($sid)} ] } then {
 
 		set sessions_uid($sid) $uid
@@ -286,7 +286,7 @@ proc session_setuid {uid} {
 	return $ret
 }
 
-#== "" wenn keine (gültige) sid in der URL
+#== "" wenn keine (gueltige) sid in der URL
 #!= "" sid der URL
 proc session_urlsid { {p_tmp_sidname ""} } {
 
@@ -298,12 +298,12 @@ proc session_urlsid { {p_tmp_sidname ""} } {
 
 	if {$queryparams == ""} then { return "" }
 
-	#Austausch gegen übergebenen Namen?
+	#Austausch gegen uebergebenen Namen?
 	set oldsid ""
 	if {$p_tmp_sidname != ""} then {
 		#Sichern:
 		set oldsid $sidname
-		#Überschreiben
+		#Ueberschreiben
 		set sidname $p_tmp_sidname
 	}
 	#-----
@@ -318,7 +318,7 @@ proc session_urlsid { {p_tmp_sidname ""} } {
 		set querysid $sid
 	}
 
-	#Rücktausch nötig?
+	#Ruecktausch noetig?
 	if {$oldsid != ""} then {
 		#Wiederherstellen
 		set sidname $oldsid
@@ -328,8 +328,8 @@ proc session_urlsid { {p_tmp_sidname ""} } {
 	return $querysid
 }
 
-#Diese Funktion liefert eine sid ohne die umschließende @-Zeichen
-#== "" wenn keine (gültige) sid in der URL
+#Diese Funktion liefert eine sid ohne die umschliessende @-Zeichen
+#== "" wenn keine (gueltige) sid in der URL
 #!= "" sid der URL
 proc session_urlsid_short {} {
 
@@ -349,12 +349,12 @@ proc session_urlsidexists {} {
 	global sessions_uid
 	set sid [session_urlsid]
 	set ret 0
-	
+
 
 	if { [string equal $sid ""] } then {
 		return 0
 	}
-	
+
 	set uid ""
 	catch { [set uid $sessions_uid($sid) ] }
 
@@ -393,7 +393,7 @@ proc session_ResetTimeOut_sid {sid} {
 	set ret -1
 
 	if { ! [catch { set lactivity $sessions_lastactivity($sid)  }]   } then {
-	
+
 		set now [clock format [clock sec] -format "%s"]
 		set sessions_lastactivity($sid) $now
 		set ret 1
@@ -421,17 +421,17 @@ proc session_ResetTimeOut {} {
 	return 1
 }
 
-#-3: keine (gültige) sid in der url übergeben
+#-3: keine (gueltige) sid in der url uebergeben
 #-2: Session ist nicht existent
 #-1: Session timed out
-# 0: User nicht gesetzt, aber Session gültig
-#>0: Session gültig. Rückgabe ist die UID der Session
+# 0: User nicht gesetzt, aber Session gueltig
+#>0: Session gueltig. Rueckgabe ist die UID der Session
 proc session_isvalid {} {
 
 	if { [string equal "" [session_urlsid]] } then {
 		return -3
 	}
-	
+
 	if {[session_urlsidexists] == 0} then {
 		return -2
 	}
@@ -445,29 +445,55 @@ proc session_isvalid {} {
 	return $uid
 }
 
+# Generates a session id of 'length' characters from the 62 symbols [A-Za-z0-9] (SP014, EG-17).
+# The bytes come from /dev/urandom; a byte is used only if it is below 248 (= 4 * 62), so every
+# symbol has the same probability (rejection sampling, no modulo bias, 'z' is reachable).
+# Return: "@<id>@", or -1 when /dev/urandom cannot be read (no weak fallback: the session is not
+# created, see session_generatesession)
 proc session_generatesid {length} {
-                           
+
 	set sid ""
 	set coding_chars [list "A" "B" "C" "D" "E" "F" "G" "H" "I" "J" "K" "L" "M" "N" "O" "P" \
     	"Q" "R" "S" "T" "U" "V" "W" "X" "Y" "Z" "0" "1"  "2" "3" "4" "5" "6" "7" "8" "9" \
     	"a" "b" "c" "d" "e" "f" "g" "h" "i" "j" "k" "l" "m" "n" "o" "p" "q" "r" "s" "t" "u" \
     	"v" "w" "x" "y" "z"]
-	
-	for {set i 0} {$i < $length} {incr i} {
 
-		#rNum [0;62]
-		set r [expr rand()]
-		set rNum [expr int($r * 61)]
-		set sid $sid[lindex $coding_chars $rNum]
+	if { [catch { set f [open /dev/urandom r] ; fconfigure $f -translation binary } ] } then {
+		return -1
 	}
+
+	set rounds 0
+	while { [string length $sid] < $length } {
+
+		# bounded: a source that never yields usable bytes must not hang the request
+		if { [incr rounds] > 100 } then {
+			catch { close $f }
+			return -1
+		}
+
+		if { [catch { set bytes [read $f [expr { 2 * $length + 8 }]] } ] || [string length $bytes] == 0 } then {
+			catch { close $f }
+			return -1
+		}
+
+		binary scan $bytes c* values
+		foreach v $values {
+			set b [expr { $v & 255 }]
+			if { $b < 248 } then {
+				append sid [lindex $coding_chars [expr { $b % 62 }]]
+				if { [string length $sid] >= $length } then break
+			}
+		}
+	}
+	catch { close $f }
 
 	set sid "@$sid@"
 
 	return $sid
 }
 
-#return: -2:    session konnte nicht übergebener sid nicht angelegt werden, weil sid schon vorhanden
-#return: -1:    zu viele Sessions
+#return: -2:    session konnte nicht uebergebener sid nicht angelegt werden, weil sid schon vorhanden
+#return: -1:    zu viele Sessions (or no secure random source)
 #        sonst: neue sid
 proc session_generatesession {{uid 0} {redirect ""} {sid ""}} {
 
@@ -479,16 +505,18 @@ proc session_generatesession {{uid 0} {redirect ""} {sid ""}} {
 
 	if {$sid == ""} then {
 		set sid [session_generatesid $sid_length]
+		if { "-1" == $sid } then { return "-1" }
 
 		while { ! [ catch {info exists $sessions_uid($sid) } ] } {
 			#sid schon existent! Andere sid ziehen:
 			set sid [session_generatesid $sid_length]
+			if { "-1" == $sid } then { return "-1" }
 		}
 	} elseif { ! [ catch {info exists $sessions_uid($sid) } ] } {
 		#sid schon existent! Session braucht nicht neu angelegt werden, sondern nur aktualisiert.
 		return -2
 	}
-	
+
 	set now [clock format [clock sec] -format "%s"]
 
 	array set sessions_uid          [list $sid $uid]
@@ -507,7 +535,7 @@ proc session_deletetimedoutsessions {} {
 	set count 0
 
 	foreach key [array names sessions_uid] {
-		
+
 		set lactivity $sessions_lastactivity($key)
 
 		if { [expr $now - $lactivity > $session_timeout] } then {
@@ -532,7 +560,7 @@ proc session_geturlwithoutsid {} {
 	set querylen [string length $queryparams]
 
 	if {$querylen == 0} then {
-	
+
 		return "http://$env(HTTP_HOST)$env(SCRIPT_NAME)"
 	}
 
@@ -548,7 +576,7 @@ proc session_geturlwithoutsid {} {
 		set postlen [string length $post]
 
 		if {$prevlen > 0} then {
-			
+
 			if {[string index $prev end] == "&"} then {
 
 				decr prevlen 2
@@ -566,7 +594,7 @@ proc session_geturlwithoutsid {} {
 				decr postlen
 			}
 		}
-		
+
 		if { $prevlen > 0 && $postlen > 0 } then {
 			set queryparams $prev&$post
 		} else {
@@ -579,7 +607,7 @@ proc session_geturlwithoutsid {} {
 	if {$querylen > 0} then {
 		set url "http://$env(HTTP_HOST)$env(SCRIPT_NAME)?$queryparams"
 	} else {
-		#params bestanden nur aus der sid, die nun wegfällt.
+		#params bestanden nur aus der sid, die nun wegfaellt.
 		set url "http://$env(HTTP_HOST)$env(SCRIPT_NAME)"
 	}
 
@@ -592,9 +620,9 @@ proc session_geturlnewsid {newsid} {
 
 	set url [session_geturlwithoutsid]
 	set separator "?"
-	
-	#'?' enthalten? Ja: es gibt es schon Parameter 
-	#und die sid wird mit einem '&' angehängt
+
+	#'?' enthalten? Ja: es gibt es schon Parameter
+	#und die sid wird mit einem '&' angehaengt
 	if {[string first "?" $url] > -1} then {
 		set separator "&"
 	}
@@ -621,8 +649,8 @@ proc session_appendsid2url {url sid} {
 
 	set separator "?"
 
-	#'?' enthalten? Ja: es gibt es schon Parameter 
-	#und die sid wird mit einem '&' angehängt
+	#'?' enthalten? Ja: es gibt es schon Parameter
+	#und die sid wird mit einem '&' angehaengt
 	if {[string first "?" $url] > -1} then {
 		set separator "&"
 	}
@@ -686,17 +714,17 @@ proc session_upl {} {
 	set upl -2
 
 	if {$uid > 0} then {
-	
+
 		set upl [user_upl $uid]
 	}
 
 	return $upl
 }
 
-#return: -4: user hat nicht genügend UPL (Rechte)
+#return: -4: user hat nicht genuegend UPL (Rechte)
 #sonst:      siehe session_isvalid
 #
-#Eingabeparameter needed_upl: Benötigte upl für 
+#Eingabeparameter needed_upl: Benoetigte upl fuer
 #diese Aktion (0: jeder hat Zugriff)
 proc session_requestisvalid {needed_upl} {
 
@@ -705,7 +733,7 @@ proc session_requestisvalid {needed_upl} {
 	if {$sidname == "sid" && $sid != ""} then {
 		return [session_requestisvalid_ise $needed_upl]
 	}
-	
+
 	set uid [session_isvalid]
 	set upl [session_upl]
 
@@ -725,25 +753,25 @@ proc session_requestisvalid {needed_upl} {
 		#-2: "session ist nicht existent"
 		#-1: "session timed out"
 		# 0: "user nicht gesetzt"
-	
+
 		set url [session_geturlwithoutsid]
 
 		session_putsessiontimedout $url
-	
+
 	} elseif {$upl < 0 || $upl < $needed_upl} then {
 		#upl<0: "User nicht bekannt"
-		#sonst: "UPL des Users reicht nicht für diese Operation aus."
+		#sonst: "UPL des Users reicht nicht fuer diese Operation aus."
 
 		set uid -4
 		set url [session_geturlwithoutsid]
-		
+
 		session_ResetTimeOut
 		write_sessions
 
 		session_putinsufficientrights $url
 
 	} else {
-		#Session gültig. User hat genug Rechte. Content laden!
+		#Session gueltig. User hat genug Rechte. Content laden!
 
 		session_setURLredirect
 		session_ResetTimeOut
@@ -755,7 +783,7 @@ proc session_requestisvalid {needed_upl} {
 
 read_sessions
 
-#Um was für einen Aufruf handelt es sich? Ist der URL-Parameter "sid" in der URL,
+#Um was fuer einen Aufruf handelt es sich? Ist der URL-Parameter "sid" in der URL,
 #dann kommt der Aufruf von ise und es soll die Sessionverwaltung von ise benutzt werden.
 #if { [string first "sid=" [session_getcurURL]] > -1 || ![catch {import_as "sid" s}] } then {
 #if { ![catch {import_as "sid" s}] } then {
@@ -803,13 +831,13 @@ set urlsid $sidname=$sid
 #======================================================================
 #======================================================================
 #======================================================================
-#Funktionen fürs ise ReGa
+#Funktionen fuers ise ReGa
 #======================================================================
 #======================================================================
 #======================================================================
 
 #-2: ise-Session existiert nicht
-#-1: Fehler im Format der ise-Rückgabe
+#-1: Fehler im Format der ise-Rueckgabe
 # 1: ok
 proc session_getsessiondata_ise {} {
 
@@ -841,9 +869,9 @@ proc session_getsessiondata_ise {} {
 	return 1
 }
 
-#-3: keine (gültige) ReGa-sid in der url übergeben
+#-3: keine (gueltige) ReGa-sid in der url uebergeben
 #-2: Session existiert im Programm ise ReGa nicht
-#>0: Session gültig. Rückgabe ist die UID der Session
+#>0: Session gueltig. Rueckgabe ist die UID der Session
 proc session_isvalid_ise {} {
 
 	global REGA_SESSION
@@ -861,10 +889,10 @@ proc session_isvalid_ise {} {
 	return $REGA_SESSION(UID)
 }
 
-#return: -4: user hat nicht genügend UPL (Rechte)
+#return: -4: user hat nicht genuegend UPL (Rechte)
 #sonst:      siehe session_isvalid
 #
-#Eingabeparameter needed_upl: Benötigte upl für 
+#Eingabeparameter needed_upl: Benoetigte upl fuer
 #diese Aktion (0: jeder hat Zugriff)
 proc session_requestisvalid_ise {needed_upl} {
 
@@ -880,18 +908,18 @@ proc session_requestisvalid_ise {needed_upl} {
 		#-2: "Session existiert nicht"
 		html { puts "<div class=\"CLASS10600\"><a href=\"#\" onclick=\"javascript:reloadPage();\">Weiter</a></div>" }
 	} elseif {$upl < 0 || $upl < $needed_upl} then {
-		#-4: "UPL des Users reicht nicht für diese Operation aus."
+		#-4: "UPL des Users reicht nicht fuer diese Operation aus."
 		html { puts "<div class=\"CLASS10600\"><a href=\"#\" onclick=\"javascript:reloadPage();\">Weiter</a></div>" }
 		set uid -4
 	} else {
-		#>0: Session gültig. User hat genug Rechte. Content laden!
+		#>0: Session gueltig. User hat genug Rechte. Content laden!
 	}
 
 	return $uid
 }
 
 #
-#Liefert zurück, ob der Expertenmodus für den aktuellen User aktiviert ist
+#Liefert zurueck, ob der Expertenmodus fuer den aktuellen User aktiviert ist
 #
 proc session_is_expert {} {
     global REGA_SESSION

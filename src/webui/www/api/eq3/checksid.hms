@@ -1,5 +1,6 @@
 !##
-!# Prüft, ob eine Session-Id gültig ist
+!# Checks whether a session id is valid (v1 frozen, staged SP007). The id is injected as the
+!# variable _session_id_ by hmscript_runFromFile; the answer is the literal true or false.
 !##
 
 var result = false;

@@ -1,19 +1,20 @@
 ##
-# system.methodHelp
-# Liefert die Kurzbeschreibung einer Methode.
+# system.methodHelp (staged SP032)
+# Returns the short description of a method.
 #
-# Privilegstufe: NONE
+# Privilege level: NONE
 #
-# Parameter:
-#   name: [string] Name der Methode, deren Beschreibung gesucht ist
+# Parameters:
+#   name: [string] name of the method
 #
-# Rückgabe:
-#   [string] Kurzbeschreibung der Methode
+# Return value: [string] short description of the method; error 500 "unknown method (<name>)"
+# for a name that is not in the registry (v1 behaviour, unchanged)
 ##
 
 set methodName $args(name)
 
-if { [catch { array set method $METHOD_LIST($methodName) }] } then  {
+array unset method
+if { [catch { array set method $METHOD_LIST($methodName) }] } then {
   jsonrpc_error 500 "unknown method ($methodName)"
 }
 

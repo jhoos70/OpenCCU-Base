@@ -1,24 +1,22 @@
 ##
-# Session.Login
-# Erstellt eine Session und führt die Benutzeranmeldung durch.
+# Session.login
+# Creates a session by posting the credentials to the local login page (staged SP031).
 #
-# Parameter:
-#   username    : [string] Benutzername
-#   password    : [string] Passwort
+# Parameters:
+#   username: [string]
+#   password: [string]
 #
-# Rückgabewert: [bool]
-#   _session_id_
+# Return value: [string] the inner session id (without the '@' wrappers)
+#
+# Errors: 503 "service not available" (login page answers 503), 501 "invalid credentials or too
+# many sessions" (no sid in the Location header). v1 behaviour is kept; credentials are never
+# logged.
 ##
 
 package require http
 
 set LOGIN_URL http://127.0.0.1/login.htm
 
-##
-# getHttpHeader
-# Liefert den Wert eines HTTP-Headers oder "", falls
-# der Header nicht gesetzt ist
-##
 proc getHttpHeader { pRequest headerName } {
   upvar $pRequest request
 
@@ -29,20 +27,25 @@ proc getHttpHeader { pRequest headerName } {
       return $meta($header)
     }
   }
-  
+
   return ""
 }
-
-##
-# Einsprungpunkt
-##
 
 set username $args(username)
 set password $args(password)
 
-# Schritt 1: Benutzeranmeldung und Session erstellen
+# per-IP login limiter (opt-in: rate_limit / strict_mode / /api/v2; skipped entirely by default)
+source eq3/ratelimit.tcl
+set _remoteAddr_ ""
+if { [info exists env(REMOTE_ADDR)] } then { set _remoteAddr_ $env(REMOTE_ADDR) }
+lassign [ratelimit::login_ip_check $_remoteAddr_] _limited_ _retryAfter_
+if { $_limited_ } then {
+  # the wire mapping (HTTP 200 on v1, HTTP 429 + Retry-After on v2) is done by the dispatcher
+  set API_RETRY_AFTER $_retryAfter_
+  jsonrpc_error 429 "rate limit exceeded"
+}
 
-set request  [::http::geturl $LOGIN_URL -query [::http::formatQuery tbUsername $username tbPassword $password]]
+set request [::http::geturl $LOGIN_URL -query [::http::formatQuery tbUsername $username tbPassword $password]]
 set location [getHttpHeader $request location]
 set code     [::http::code $request]
 ::http::cleanup $request

@@ -1,11 +1,17 @@
 ##
 # User.startHmIPServer
-# Startet den Lighttpd Webserver
+# Starts the HmIP server in the background (staged SP034, ADMIN only).
 #
-# Parameter:
-#   keine
+# The command line is fixed (no request data); one syslog line records correlation id, method
+# and user id. The answer is true immediately (the start runs detached).
 #
-# Rückgabewert: true
+# Return value: [bool] true
+##
+
+# admin_audit is defined once in eq3/admin_audit.tcl (sourced by the dispatcher)
+
+admin_audit "start HmIP server"
 
 exec -- /usr/bin/nohup /etc/init.d/S62HMServer start >/dev/null &
+
 jsonrpc_response true

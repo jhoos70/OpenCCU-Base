@@ -1,19 +1,25 @@
 ##
-# Programm.get
-# Liefert Detailinformationen zu einem Programm
+# Program.get (staged SP042)
+# Returns detail information about one program.
 #
-# Parameter:
-#   id: [string] Id des betreffenden Programms
+# Parameters:
+#   id: [string] id of the program
 #
-# Rückgabewert: [object]
-#  Folgende Felder sind definiert:
-#    id             : [string] Id des Programms
-#    name           : [string] Bezeichnung des Programms
-#    isActive       : [bool]   true, falls das Programm aktiv ist
-#    isInternal     : [bool]   true, falls es ein systeminteres Programm ist
-#    lastExecuteTime: [string] Zeitpunkt der letzten Ausführung 
-#                              (JJJJ-MM-DD HH:MM::SS)
+# Return value: [object]
+#  Fields:
+#    id             : [string] id of the program
+#    name           : [string] name of the program
+#    isActive       : [bool]   true if the program is active
+#    isInternal     : [bool]   true if it is a system-internal program
+#    lastExecuteTime: [string] time of the last execution
+#                              (YYYY-MM-DD HH:MM::SS)
+#
+# v1 (frozen, the classic client eval()s it): the object keeps its trailing comma after
+# lastExecuteTime. On /api/v2 the object is strict JSON.
 ##
+
+# (without the staged dispatcher libraries there is no /api/v2)
+if { 0 == [llength [info commands jsonrpc_isV2]] } then { proc jsonrpc_isV2 { } { return 0 } }
 
 set script {
   var program = dom.GetObject(id);
@@ -34,7 +40,11 @@ append result "\"id\":[json_toString $_program_(ID)],"
 append result "\"name\":[json_toString $_program_(NAME)],"
 append result "\"isActive\":$_program_(ACTIVE),"
 append result "\"isInternal\":$_program_(INTERNAL),"
-append result "\"lastExecuteTime\":[json_toString $_program_(TIME)],"
+if { [jsonrpc_isV2] } then {
+  append result "\"lastExecuteTime\":[json_toString $_program_(TIME)]"
+} else {
+  append result "\"lastExecuteTime\":[json_toString $_program_(TIME)],"
+}
 append result "\}"
-  
+
 jsonrpc_response $result

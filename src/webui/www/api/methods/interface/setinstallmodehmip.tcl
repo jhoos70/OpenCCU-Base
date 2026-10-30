@@ -1,27 +1,21 @@
 ##
-# Interface.setLocalInstallModeHMIP
-# Aktiviert bzw. deaktiviert den Anlernmodus.
+# Interface.setInstallModeHMIP
+# Enables or disables the install mode of the HmIP interface (staged SP021).
 #
-# Parameter:
-#   on:        [boolean] Legt fest, ob der Anlernmodus aktiviert (true) oder deaktiviert (false) wird
-#   time:      [int] Legt die Zeit in Sekunden fest, nach der der Install-Mode deaktiviert werden soll. Default 30 s.
-#   address - gibt die SGTIN bzw. ID des Gerätes ls
+# Parameters:
+#   on:          [boolean] enable (true/1) or disable the install mode
+#   time:        [int]     seconds until the install mode ends, default 30
+#   address:     SGTIN or id of the device (LOCAL mode)
+#   installMode: LOCAL (key from the caller), ALL (key from the key server), anything else = STOP
+#   key:         device key (LOCAL mode)
+#   keymode:     inclusion type, LOCAL (MASTER and DEFAULT are not supported yet)
 #
-#   key_mode - gibt den verwendeten Inclusions-Typ an:
-#    LOCAL
-#    MASTER - wird zur Zeit noch nicht unterstützt
-#    DEFAULT - wird zur Zeit noch nicht unterstützt
+# Return value: true
 #
-#   key - gibt den verwendeten Geräteschlüssel an.
-#
-#  Wird KEY_MODE und KEY nicht angegeben, wird versucht, den MASTER-Key vom Keyserver zu beziehen.
-#
-# Rückgabewert: true
-#
+# v1 behaviour is frozen (EG-15): for a STOP request "set $on 0" assigns a variable named
+# after the value of $on, so STOP with on=true keeps the install mode switched ON.
+# On the v2 route (global API_V2 set by the dispatcher) STOP forces on to 0.
 ##
-
-# TODO Parameter description
-
 
 set on $args(on)
 set address $args(address)
@@ -53,7 +47,7 @@ proc array2xmlrpcstruct { array_name } {
 }
 
 if {[string equal $installMode LOCAL]} {
-  # Locales Anlernen, ohne Keyserver. Key muss übergeben werden
+  # local inclusion without key server: the key has to be provided
 
   array set whitelistDev {}
   set whitelistDev(ADDRESS) $address
@@ -64,12 +58,15 @@ if {[string equal $installMode LOCAL]} {
 
   checkXmlRpcStatus [catch {xmlrpc $interface(URL) setInstallModeWithWhitelist [list bool $on] [list int $time] [list array $whitelist]}]
 } elseif {[string equal $installMode ALL]} {
-  # Key vom Keyserver
+  # key from the key server
   checkXmlRpcStatus [catch {xmlrpc $interface(URL) setInstallMode [list bool $on] [list int $time]}]
 } else {
   # STOP
-  #exec echo "STOP" >> /tmp/hmip.log
-  set $on 0
+  if { [info exists ::API_V2] && $::API_V2 } then {
+    set on 0
+  } else {
+    set $on 0
+  }
   checkXmlRpcStatus [catch {xmlrpc $interface(URL) setInstallMode [list bool $on]}]
 }
 

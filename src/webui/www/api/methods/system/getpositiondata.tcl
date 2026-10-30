@@ -10,6 +10,29 @@
 #
 ##
 
+# staged (SP045): on /api/v2 the answer is a strict JSON array with double quotes. This block
+# comes before the v1 code, which stays unchanged (v1 keeps the JavaScript array).
+if { 0 < [llength [info commands jsonrpc_isV2]] && [jsonrpc_isV2] } then {
+  set timeZone CET/CEST
+  catch {
+    set _fd_ [open /etc/config/time.conf r]
+    while { [gets $_fd_ _buf_] >= 0 } {
+      if [regexp {^ *TIMEZONE *= *(.*)$} $_buf_ _dummy_ _tz_] { set timeZone $_tz_; break }
+    }
+    close $_fd_
+  }
+  set _script_ {
+    Write("['Longitude:"#system.Longitude()#"','Latitude:"#system.Latitude()#"'");
+  }
+  set _pos_ [hmscript $_script_]
+  set longitude ""
+  set latitude ""
+  regexp {'Longitude:([^']*)'} $_pos_ -> longitude
+  regexp {'Latitude:([^']*)'} $_pos_ -> latitude
+  jsonrpc_response "\[[json_toString Longitude:$longitude],[json_toString Latitude:$latitude],[json_toString TimeZone:$timeZone]\]"
+  return
+}
+
 proc read_var {filename varname} {
     set fd [open $filename r]
     set var ""

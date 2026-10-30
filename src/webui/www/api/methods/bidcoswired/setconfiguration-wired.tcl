@@ -1,18 +1,21 @@
 ##
-# BidCoS_Wired.setConfiguration-wired
-# Setzt die Konfiguration des BidCoS Services. Die Konfiguration wird es
-# nach erneutem Starten der HomeMatic Zentrale übernommen.
+# BidCoS_Wired.setConfiguration
+# Rewrites the interface sections of /etc/config/hs485d.conf (staged SP030).
 #
-# Parameter:
-#   interfaces         : [array] Jedes Element enthält die Konfiguration eines Interfaces
-#                               
-#	  type		   : [string] Typ des Interfaces (HMWLGW)
-#     serialNumber : [string] Seriennummer
-#     encryptionKey: [string] Zugangsschlüssel
-#     ipAddress    : [string] IP Adresse (Optional)
+# Parameters:
+#   interfaces: [array] elements {type, userName, serialNumber, encryptionKey[, ipAddress]}
+#
+# Return value: [bool] true on success, false if nothing could be written
+#
+# v1 behaviour kept: the header before the first "[Interface N]" (N = 0-9 digits) is retained,
+# a generated header (Listen Port from /etc/eq3services.ports.tcl, else 2000) is used if the file
+# does not exist, sections are numbered from 0.
+# Hardening: CR/LF in an element is 403 "invalid argument (interfaces)" before any file access;
+# the content is written to a temporary file in /etc/config and moved over hs485d.conf with
+# rename, a failure leaves the previous file byte-identical and answers false.
 ##
 
-set result true
+set CONFIG_FILE /etc/config/hs485d.conf
 
 set portnumber 2000
 catch { source "/etc/eq3services.ports.tcl" }
@@ -20,21 +23,42 @@ if { [info exists EQ3_SERVICE_HS485D_PORT] } {
 	set portnumber $EQ3_SERVICE_HS485D_PORT
 }
 
+# Step 1: validate the elements (no file access yet)
+set malformed 0
+set elements {}
+foreach _interface_ $args(interfaces) {
+  if { [catch { array set interface $_interface_ }] } then {
+    set malformed 1
+    array unset interface
+    continue
+  }
+  foreach field {type userName serialNumber encryptionKey ipAddress} {
+    if { [regexp {[\r\n]} [array_getValue interface $field]] } then {
+      jsonrpc_error 403 "invalid argument (interfaces)"
+    }
+  }
+  lappend elements [array get interface]
+  array_clear interface
+}
+
+# Step 2: the header (existing file or generated)
 set header ""
-# Read contents of current hs485d.conf until first interface section
-set configexists [file exists /etc/config/hs485d.conf ]
-if { $configexists == 1 } then { 
-	set fd [open /etc/config/hs485d.conf r]
-	while { [gets $fd line] >= 0 } {
-	        if {  ![regexp {.*\[Interface [0-9]*\].*} $line ] } then {
-	                append header $line "\n"
-	        } else {
-	                break
-	        }
+set readable 1
+if { [file exists $CONFIG_FILE] == 1 } then {
+	if { [catch { set fd [open $CONFIG_FILE r] }] } then {
+	  set readable 0
+	} else {
+	  while { [gets $fd line] >= 0 } {
+	    if { ![regexp {.*\[Interface [0-9]*\].*} $line] } then {
+	      append header $line "\n"
+	    } else {
+	      break
+	    }
+	  }
+	  close $fd
 	}
-	close $fd
 } else {
-	append header "# This File was automatically generated\n" 
+	append header "# This File was automatically generated\n"
 	append header "# TCP Port for XmlRpc connections\n"
 	append header "Listen Port = $portnumber\n"
 	append header "\n"
@@ -43,43 +67,37 @@ if { $configexists == 1 } then {
 	append header "\n"
 }
 
-#Write configuration data read above
-set fd [open /etc/config/hs485d.conf w]
-
-puts $fd $header
-
-#Write Lan Interfaces (Wired)
-set i 0
-  
-if { [catch {
-  foreach _interface_ $args(interfaces) {
+# Step 3: build the complete content, then replace the file
+set result false
+if { !$malformed && $readable && "" != $header } then {
+  set content "$header\n"
+  set i 0
+  foreach _interface_ $elements {
     array set interface $_interface_
-
-	  set type [array_getValue interface type]
-	  set userName      [array_getValue interface userName]
-    set serialNumber  [array_getValue interface serialNumber]
-    set encryptionKey [array_getValue interface encryptionKey]
-    set ipAddress     [array_getValue interface ipAddress]
-      
-    puts $fd "\[Interface $i\]"
-    puts $fd "Type = $type"
-    puts $fd "Name = $userName"
-    puts $fd "Serial Number = $serialNumber"
-    puts $fd "Encryption Key = $encryptionKey"
-    if { {} != $ipAddress } then {
-      puts $fd "IP Address = $ipAddress"
+    append content "\[Interface $i\]\n"
+    append content "Type = [array_getValue interface type]\n"
+    append content "Name = [array_getValue interface userName]\n"
+    append content "Serial Number = [array_getValue interface serialNumber]\n"
+    append content "Encryption Key = [array_getValue interface encryptionKey]\n"
+    if { {} != [array_getValue interface ipAddress] } then {
+      append content "IP Address = [array_getValue interface ipAddress]\n"
     }
-    puts $fd ""
-      
+    append content "\n"
     array_clear interface
     incr i
   }
-} ]} then {
-  set result false
+
+  set tmp "$CONFIG_FILE.[pid].tmp"
+  if { ![catch {
+    set fd [open $tmp w]
+    puts -nonewline $fd $content
+    close $fd
+    file rename -force -- $tmp $CONFIG_FILE
+  }] } then {
+    set result true
+  } else {
+    catch { file delete -force -- $tmp }
+  }
 }
-  
-
-
-close $fd
 
 jsonrpc_response $result

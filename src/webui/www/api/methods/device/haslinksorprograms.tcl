@@ -1,24 +1,46 @@
 ##
 # Device.hasLinksOrPrograms
-# Prüft, ob für ein Gerät Programme oder externe direkte Geräteverknüpfungen bestehen
+# Checks whether a device is used in programs or has external direct links (staged SP027).
 #
-# Parameter:
-#   id: [string] Id des Geräts
+# Parameters:
+#   id: [string] id of the device
 #
-# Rückgabewert: [boolean]
-#  true, falls Programme oder externe direkte Verknüpfungen für das Gerät bestehen.
+# Return value: [boolean]
+#   true if programs or external direct links exist for the device.
+#
+# Hardening: a device on an interface that is not BidCos-RF, BidCos-Wired, HmIP-RF or
+# HmIP-Wired used to raise "can't read ifaceList(URL)" (internal error with errorInfo).
+# It now ends with the generic error 200 "internal error (ref: <correlation id>)", the cause
+# goes to the syslog. The interface table itself is unchanged (EG-15).
 ##
-
 
 proc getIfaceURL {interface} {
   global INTERFACE_LIST
   switch $interface {
-   "BidCos-RF" {array set ifaceList $INTERFACE_LIST(BidCos-RF)}      
-   "BidCos-Wired" {array set ifaceList $INTERFACE_LIST(BidCos-Wired)}      
+   "BidCos-RF" {array set ifaceList $INTERFACE_LIST(BidCos-RF)}
+   "BidCos-Wired" {array set ifaceList $INTERFACE_LIST(BidCos-Wired)}
    "HmIP-RF" {array set ifaceList $INTERFACE_LIST(HmIP-RF)}
    "HmIP-Wired" {array set ifaceList $INTERFACE_LIST(HmIP-Wired)}
   }
   return $ifaceList(URL)
+}
+
+# Sanitised internal error: cid + syslog (the dispatcher provides api_cid/api_syslog; a minimal
+# fallback keeps the script usable on its own)
+proc hlpInternalError {method cause} {
+  if {[llength [info commands api_cid]]} {
+    set cid [api_cid]
+  } else {
+    set cid [format %016x [expr {int(rand() * 4294967296) * 4294967296 + int(rand() * 4294967296)}]]
+  }
+  set cause [string map [list "\r" "" "\n" {\n}] $cause]
+  set line "cid=$cid method=$method uid=- code=200 errorInfo=$cause"
+  if {[llength [info commands api_syslog]]} {
+    api_syslog daemon.err $line
+  } else {
+    catch {exec logger -t webui-api -p daemon.err $line}
+  }
+  jsonrpc_error 200 "internal error (ref: $cid)"
 }
 
 set getInterface {
@@ -37,9 +59,7 @@ set getChannels {
   var device = dom.GetObject(id);
   var channel;
   var address = "";
-
   var parentAddress = device.Address();
-
   if (device)
   {
     string channelId;
@@ -55,7 +75,6 @@ set getChannels {
 set hasPrograms {
   var device             = dom.GetObject(id);
   var hasPrograms = "false";
-  
   if (device)
   {
     string channelId;
@@ -71,14 +90,13 @@ set hasPrograms {
 set hasLinks {
   var device             = dom.GetObject(id);
   var hasLinks = "false";
-  
   if (device)
   {
     string channelId;
     foreach(channelId, device.Channels())
     {
       var channel = dom.GetObject(channelId);
-      if (channel.ChnLinkCount()    > 0) { hasLinks = "true"; break; } 
+      if (channel.ChnLinkCount()    > 0) { hasLinks = "true"; break; }
     }
   }
   Write(hasLinks);
@@ -89,10 +107,14 @@ set hasLinksOrPrograms [hmscript $hasPrograms args]
 
 # If there are no programs, check whether the device has external links
 if {$hasLinksOrPrograms == "false"} {
-  # If there are links available check whether that are external links      
-  # Internal links are links within the device with its keys. They don´t matter.
+
+  # If there are links available check whether that are external links
+  # Internal links are links within the device with its keys. They do not matter.
   if {[hmscript $hasLinks args] == "true"} {
-    set url [getIfaceURL [hmscript $getInterface args]] 
+
+    if {[catch {set url [getIfaceURL [hmscript $getInterface args]]} cause]} {
+      hlpInternalError Device.hasLinksOrPrograms $cause
+    }
     set parentAddress [hmscript $getParentAddress args]
     set channels [hmscript $getChannels args]
 
@@ -100,19 +122,20 @@ if {$hasLinksOrPrograms == "false"} {
     foreach channel $channels {
       #channel = "abc1234567:0 - abc1234567:n"
       set channelNr [lindex [split $channel ":"] 1]
-  
-      # all channels > 0 
+
+      # all channels > 0
       if {$channelNr > 0} {
-        # get all links of this channel      
-        set arrLinks [xmlrpc $url getLinks [ list string $channel] ] 
-        
-        # Go through each link 
+
+        # get all links of this channel
+        set arrLinks [xmlrpc $url getLinks [ list string $channel] ]
+
+        # Go through each link
         foreach link $arrLinks {
           array set devDescr [xmlrpc $url getDeviceDescription [list string $channel]]
           array set linkDescr $link
           set direction $devDescr(DIRECTION)
-          
-          # When I am a sender then my peer is a receiver and vice versa 
+
+          # When I am a sender then my peer is a receiver and vice versa
           if {$direction == "1"} {
             set peer $linkDescr(RECEIVER)
           } elseif {$direction == "2"} {
@@ -122,25 +145,24 @@ if {$hasLinksOrPrograms == "false"} {
             # We should never reach this point.
             break;
           }
-          # If the parent address of the link peer isn´t the same as the device parent address then it´s an external link.
+
+          # If the parent address of the link peer is not the same as the device parent address then it is an external link.
           set peerParentAddress [lindex [split $peer ":"]  0]
-          
           if {($parentAddress != $peerParentAddress) && ([string index $peerParentAddress 0] != "@") } {
             set hasLinksOrPrograms "true";
-            # We don´t need further examination.
+            # We do not need further examination.
             break;
-          }   
+          }
         }
       }
     }
   }
 }
+
 # Consider only external links and take no notice of internal links.
 # Internal links are e.g. links between a device key and the device itself.
-
 if {$hasLinksOrPrograms == "true"} then {
-  jsonrpc_response true 
+  jsonrpc_response true
 } else {
   jsonrpc_response false
 }
-

@@ -2,162 +2,39 @@
 
 ##
 # homematic.cgi
-# HomeMatic JSON API
+# HomeMatic JSON API (staged: SP001 dispatcher, SP013 central/config-tool flag, SP015 reduced GET page)
 #
-# Autor: Falk Werner
-##
-
-##
-#  A. Grobelnik, 160210
+# Original: Falk Werner. The pipeline of a POST is: strict-mode check, parse, per-sid limiter (opt-in),
+# lookup, privilege check, argument check, script sourcing (eq3/executor.tcl). /api/v2/... requests
+# (REQUEST_URI) are served by v2/router.tcl.
 #
-# Prüfen, ob es sich um die Zentrale handelt.
-# Wenn es sich um das Konfigtool handelt, dürfen
-# einige Funktionen nicht aufgerufen werden.
-#
-# Die Variable 'central' steht global zu Verfügung
-# und wird zur Zeit außer in dieser Datei noch 
-# in api/methods/webui/getcolors.tcl verwendet.
-#
-# Bei der Art der Prüfung handelt es sich zur Zeit
-# um eine Notlösung. 
+# This file is UTF-8 (methods.conf is UTF-8 in the staged tree); the CGI output stays ISO-8859-1 /
+# UTF-8 exactly as before: the JSON documents are encoded by eq3/jsonrpc.tcl.
 ##
 
-set central true 
+# the request method is read first, as in v1 (an unset REQUEST_METHOD is a Tcl error before any output)
+set REQUEST_METHOD $env(REQUEST_METHOD)
 
-# Zentrale oder Konfigtool (/www/ = Zentrale)
-if {$env(DOCUMENT_ROOT) != "\/www\/"} then {
-  set central false
+# the api tree: DOCUMENT_ROOT/api as in v1; the directory of this file if DOCUMENT_ROOT is not set
+# (the request is then answered with error 200, SP013 acceptance[3])
+if { [info exists env(DOCUMENT_ROOT)] } then {
+  set API_DIR [file join $env(DOCUMENT_ROOT) api]
+} else {
+  set API_DIR [file dirname [file normalize [info script]]]
 }
+set DOCUMENT_API_DIR $API_DIR
 
-#####################
-# Verwendete Module #
-#####################
-load tclrpc.so
-
-if {$central} then { 
-  load tclrega.so
-}
-
-source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
-source [file join $env(DOCUMENT_ROOT) api/eq3/ipc.tcl]
-source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
-source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
-source [file join $env(DOCUMENT_ROOT) api/eq3/hmscript.tcl]
-source [file join $env(DOCUMENT_ROOT) api/eq3/event.tcl]
-
-
-##############
-# Konstanten #
-##############
-
-array set INTERFACE_LIST [ipc_getInterfaces]
-
-set       METHODS_FILE "methods.conf"
-array set METHOD_LIST  [file_load $METHODS_FILE]
-
-array set USER_LEVEL ""
-set       USER_LEVEL(NONE)  0
-set       USER_LEVEL(GUEST) 1
-set       USER_LEVEL(USER)  2
-set       USER_LEVEL(ADMIN) 8
-set       USER_LEVEL(0)     NONE
-set       USER_LEVEL(1)     GUEST
-set       USER_LEVEL(2)     USER
-set       USER_LEVEL(8)     ADMIN
-
-array set USER_LEVEL_NAME ""
-set       USER_LEVEL_NAME(NONE)  "&lt;keine&gt;"
-set       USER_LEVEL_NAME(GUEST) "Gast"
-set       USER_LEVEL_NAME(USER)  "Benutzer"
-set       USER_LEVEL_NAME(ADMIN) "Administrator"
-set       USER_LEVEL_NAME(0)     $USER_LEVEL_NAME(NONE)  
-set       USER_LEVEL_NAME(1)     $USER_LEVEL_NAME(GUEST) 
-set       USER_LEVEL_NAME(2)     $USER_LEVEL_NAME(USER)  
-set       USER_LEVEL_NAME(8)     $USER_LEVEL_NAME(ADMIN) 
-
-
-##############
-# Prozeduren #
-##############
-
-##
-# Liefert eine Methode anhand ihres Namens.
-# Falls die Methode nicht gefunden werden kann, wird die Methode METHOD_NOT_FOUND zurückgegeben.
-##
-proc getMethod { methodName } {
-  global METHOD_LIST
-  
-  foreach name [array names METHOD_LIST] {
-    if { $name == $methodName } then { return $METHOD_LIST($name) }
-  }
-  
-  jsonrpc_error 401 "method not found ($methodName)"
+# the libraries that are needed to answer any error
+foreach lib {common json jsonrpc registry apiconfig} {
+  source [file join $API_DIR eq3 $lib.tcl]
 }
 
 ##
-# Prüft, ob die aktuelle Privilegstufe ausreicht, um die methode auszuführen.
-#
-# Falls die Privilegstufe nicht ausreicht, wird das Script mit einer
-# entsprechenden Fehlermeldung beendet.
+# The reduced GET page: the envelope description and the error codes only (no method names, no
+# INFO texts, no ARGUMENTS, no privilege labels - SP015 acceptance[1]); the full documentation is
+# available through the authenticated GET /api/v2/schema.
 ##
-proc checkPrivilegeLevel { p_method p_args } {
-  global USER_LEVEL
-  upvar $p_method method
-  upvar $p_args   args
-  
-  if { "NONE" != $method(LEVEL) } then {
-    array set _args_ ""
-    set _args_(_session_id_) $args(_session_id_)
-    
-    set level $USER_LEVEL($method(LEVEL))
-    set upl   [hmscript_runFromFile "eq3/getupl.hms" _args_]
-    if { $level > $upl } then {
-      jsonrpc_error 400 "access denied (\"$method(LEVEL)\" needed $upl)"
-    }
-  }
-}
-
-##
-# Prüft, ob die notwendigen Argumente einer Methode angegeben sind
-##
-proc checkArguments { p_method p_args } {
-  upvar $p_method method
-  upvar $p_args   args
-  
-  foreach argName $method(ARGUMENTS) {
-    if { ![info exists args($argName)] } then {
-      jsonrpc_error 402 "missing argument ($argName)"
-    }
-  }
-}
-
-##################
-# Einsprungpunkt #
-##################
-
-# HTTP-POST: Methode ausführen
-if {$env(REQUEST_METHOD) == "POST"} then {
-  if { [catch {   
-    jsonrpc_parse [read stdin $env(CONTENT_LENGTH)]
-    
-    array set method [getMethod $JSONRPC(METHOD)]
-    array set args   $JSONRPC(PARAMS)
-  
-    # wenn Zentrale  
-    if {$central} then {
-       checkPrivilegeLevel method args
-    }
-    
-    checkArguments      method args
-
-    source [file join $env(DOCUMENT_ROOT) "api/methods/$method(SCRIPT_FILE)"]
-  }] } then {  
-    jsonrpc_error 200 "internal error:\n$errorInfo"
-  }
-}
-
-# HTTP-GET: Schnittstellenbeschreibung ausgeben
-if {$env(REQUEST_METHOD) == "GET"} then {
+proc api_putGetPage { } {
   puts "CONTENT-TYPE: text/html; charset=iso-8859-1"
   puts {}
   puts {
@@ -173,25 +50,19 @@ if {$env(REQUEST_METHOD) == "GET"} then {
 <body>
   <h1>HomeMatic JSON API</h1>
   <p>
-    Die HomeMatic JSON API vereinheitlicht Zugriff auf die verschiedenen 
+    Die HomeMatic JSON API vereinheitlicht Zugriff auf die verschiedenen
     Teile der HomeMatic Zentrale unter einer einheitlichen Schnittstelle.
-    Diese Schnittstelle basiert auf 
-    <a href='http://json-rpc.org/wiki/specification'>JSON-RPC</a>, 
-    einer Form des entfernen Prozeduraufrufs, der auf 
+    Diese Schnittstelle basiert auf
+    <a href='http://json-rpc.org/wiki/specification'>JSON-RPC</a>,
+    einer Form des entfernen Prozeduraufrufs, der auf
     <a href='http://json.org/'>JSON</a> aufsetzt.
   </p>
-  <h2>Methoden&uuml;bersicht</h2>
-  <table border='1' cellspacing='0' cellpadding='5px'>
-    <tr><th>Methodenname</th><th>Privilegstufe</th><th>Kurzbeschreibung</th><th>Parameter</th></tr>
-  }
-  set className odd
-  foreach name [lsort [array name METHOD_LIST]] {
-    array set method $METHOD_LIST($name)
-    puts "<tr class='$className'><td>$name</td><td>$USER_LEVEL_NAME($method(LEVEL))</td><td>$method(INFO)</td><td>$method(ARGUMENTS)&nbsp;</td></tr>"
-    if { "odd" == $className } then { set className even } else { set className odd }
-  }
-  puts {
-  </table>
+  <p>
+    Anfragen werden per HTTP-POST als JSON-Objekt mit den Elementen
+    <i>method</i>, <i>params</i> und <i>id</i> gesendet. Die Antwort enth&auml;lt
+    die Elemente <i>id</i>, <i>version</i>, <i>result</i> und <i>error</i>.
+    Die Methoden&uuml;bersicht steht angemeldeten Benutzern zur Verf&uuml;gung.
+  </p>
   <h2>Fehlercodes</h2>
   <table border='1' cellspacing='0' cellpadding='5px'>
     <tr><th>Fehlercode</th><th>Kurzbeschreibung</th></tr>
@@ -199,17 +70,106 @@ if {$env(REQUEST_METHOD) == "GET"} then {
     <tr><td>101</td><td>Das Element <i>id</i> fehlt in der Anfrage</td></tr>
     <tr><td>102</td><td>Das Element <i>method</i> fehlt in der Anfrage</td></tr>
     <tr><td>103</td><td>Das Element <i>params</i> fehlt in der Anfrage</td></tr>
-    <tr><td>200</td><td>Ung&uuml;ltige Antwort</td></tr>
-    <tr><td>201</td><td>Das Element <i>id</i> fehlt in der Antwort</td></tr>
-    <tr><td>202</td><td>Das Element <i>result</i> fehlt in der Antwort</td></tr>
-    <tr><td>203</td><td>Das Element <i>error</i> fehlt in der Antwort</td></tr>
-    <tr><td>300</td><td>Interner Fehler</td></tr>
-    <tr><td>400</td><td>Privilegstufe reicht nicht</td></tr>
-    <tr><td>401</td><td>Methode nicht gefunden</td></tr>  
+    <tr><td>200</td><td>Interner Fehler (mit Referenz-ID)</td></tr>
+    <tr><td>400</td><td>Zugriff verweigert</td></tr>
+    <tr><td>401</td><td>Methode nicht gefunden</td></tr>
     <tr><td>402</td><td>Argument nicht gefunden</td></tr>
+    <tr><td>403</td><td>Ung&uuml;ltiges Argument</td></tr>
+    <tr><td>405</td><td>Anfrage nicht zul&auml;ssig</td></tr>
+    <tr><td>429</td><td>Zu viele Anfragen</td></tr>
     <tr><td>5xx</td><td>Anwendungsspezifische Fehler</td></tr>
   </table>
 </body>
 </html>
   }
+}
+
+##
+# Read trace of INTERFACE_LIST: loads the interface list on the first access
+##
+proc api_loadInterfaces { name1 name2 op } {
+  trace remove variable ::INTERFACE_LIST {read array} api_loadInterfaces
+  array set ::INTERFACE_LIST [ipc_getInterfaces]
+}
+
+##
+# The request of one CGI call
+##
+proc api_main { } {
+  global env central REQUEST_METHOD API_DIR METHOD_LIST INTERFACE_LIST API_V2 USER_LEVEL USER_LEVEL_NAME
+
+  # a missing DOCUMENT_ROOT is an internal error (answered as error 200 with a correlation id)
+  if { ![info exists env(DOCUMENT_ROOT)] } then {
+    error "the environment variable DOCUMENT_ROOT is not set"
+  }
+
+  # configuration: config-tool mode only through the explicit flag config_tool_mode (SP013)
+  apiconfig_load [file join $API_DIR apiconfig.conf]
+  set central [apiconfig_central]
+
+  #####################
+  # Verwendete Module #
+  #####################
+  load tclrpc.so
+  if { [string is true -strict $central] } then {
+    load tclrega.so
+  }
+
+  foreach lib {ipc hmscript event} {
+    uplevel #0 [list source [file join $API_DIR eq3 $lib.tcl]]
+  }
+  # optional staged libraries (the privilege check of security-session, the sid limiter)
+  foreach lib {privilege allowlist sidlimit validate executor admin_audit} {
+    set f [file join $API_DIR eq3 $lib.tcl]
+    if { [file exists $f] } then { uplevel #0 [list source $f] }
+  }
+  foreach lib {auth rpc router} {
+    uplevel #0 [list source [file join $API_DIR v2 $lib.tcl]]
+  }
+
+  ##############
+  # Konstanten #
+  ##############
+  # INTERFACE_LIST is resolved lazily (SP009 NFR5): InterfacesList.xml is only read when a method
+  # script reads the array (Interface.*, Device.hasLinksOrPrograms, backup links/paramset)
+  array set INTERFACE_LIST {}
+  trace add variable INTERFACE_LIST {read array} api_loadInterfaces
+
+  registry_load [file join $API_DIR methods.conf]
+
+  array set USER_LEVEL ""
+  set       USER_LEVEL(NONE)  0
+  set       USER_LEVEL(GUEST) 1
+  set       USER_LEVEL(USER)  2
+  set       USER_LEVEL(ADMIN) 8
+  set       USER_LEVEL(0)     NONE
+  set       USER_LEVEL(1)     GUEST
+  set       USER_LEVEL(2)     USER
+  set       USER_LEVEL(8)     ADMIN
+
+  ##################
+  # Einsprungpunkt #
+  ##################
+  set v2Path [router_v2Path]
+  if { $v2Path ne "-1" } then {
+    # /api/v2/...: real HTTP status codes, header X-Session-Id, limiter always on
+    set API_V2 1
+    router_serve $v2Path
+    return
+  }
+
+  # HTTP-POST: Methode ausführen
+  if { $REQUEST_METHOD == "POST" } then {
+    executor_checkTransport
+    executor_request [read stdin $env(CONTENT_LENGTH)]
+  }
+
+  # HTTP-GET: Schnittstellenbeschreibung ausgeben
+  if { $REQUEST_METHOD == "GET" } then {
+    api_putGetPage
+  }
+}
+
+if { [catch { api_main } message options] } then {
+  jsonrpc_error 200 "internal error:\n[dict get $options -errorinfo]"
 }

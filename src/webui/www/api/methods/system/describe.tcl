@@ -1,16 +1,15 @@
 ##
-# system.describe
-# Liefert eine Liste aller Methoden.
+# system.describe (staged SP032)
+# Describes the API and lists all methods of the registry (sorted by name).
 #
-# Privilegstufe: NONE
+# Privilege level: NONE
 #
-# Parameter: <keine>
+# Parameters: none
 #
-# Rückgabewert:
-#   Liste aller Methoden als Array. Jedes Array-Element ist ein Objekt mit den folgenden Felder:
-#     name : [string] Methodenname
-#     level: [string] Privilegstufe (NONE, GUEST, USER, ADMIN)
-#     info : [string] Kurzbeschreibung der Methode      
+# Return value: object {name, id, summary, help, procs: [{name, level, summary}]}
+#
+# v1 behaviour is kept. Hardening: the entry array is cleared for every method, so an entry that
+# misses a key can never inherit the value of the previous one.
 ##
 
 set result "\{"
@@ -23,12 +22,13 @@ append result "\"procs\": \["
 
 set first 1
 foreach name [lsort [array name METHOD_LIST]] {
+  array unset method
   array set method $METHOD_LIST($name)
-  
-  if { 1 != $first } then { append result "," } else { set first 0 } 
+
+  if { 1 != $first } then { append result "," } else { set first 0 }
   append result "\{"
-  append result "\"name\": [json_toString $name]," 
-  append result "\"level\": [json_toString $method(LEVEL)]," 
+  append result "\"name\": [json_toString $name],"
+  append result "\"level\": [json_toString $method(LEVEL)],"
   append result "\"summary\": [json_toString $method(INFO)]"
   append result "\}"
 }
@@ -38,4 +38,3 @@ append result "\]"
 append result "\}"
 
 jsonrpc_response $result
-

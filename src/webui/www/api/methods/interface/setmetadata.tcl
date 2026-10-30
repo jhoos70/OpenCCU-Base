@@ -1,12 +1,23 @@
- ##
+##
 # Interface.setMetadata
-# Fügt einem Datenobjekt Metadaten hinzu.
+# Writes metadata on a ReGa object (staged SP024).
 #
-# Parameter:
-#   objectId: [string] ID des Metadaten-Objects. Üblicherweise die Seriennummer des Gerätes oder Kanals
-#   dataId   : [string] Id des zu setzenden Metadatums. Diese ID kann frei gewählt werden
-#   value    : [string] Wert, der gespeichert werden soll.
+# Hardening: dataId has to match ^[A-Za-z0-9_.-]{1,64}$ (error 403 "invalid argument (dataId)"
+# before any ReGa script runs). objectId, dataId and value are injected by hmscript, which
+# escapes every value exactly once.
+# v1 side effect kept: an unknown objectId creates a new ReGa object with that name.
 #
+# Parameters:
+#   objectId: [string] ReGa object id or name
+#   dataId  : [string] metadata key
+#   value   : [string] metadata value
+#
+# Return value: [string] "<dataId>: <value>"
+##
+
+if { ![regexp {^[A-Za-z0-9_.-]{1,64}$} $args(dataId)] } then {
+  jsonrpc_error 403 "invalid argument (dataId)"
+}
 
 set script {
   var o = dom.GetObject(objectId);

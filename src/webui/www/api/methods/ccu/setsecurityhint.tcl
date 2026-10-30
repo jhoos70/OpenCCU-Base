@@ -1,16 +1,11 @@
 ##
 # CCU.setSecurityHint
-# Legt die Datei /etc/config/userAckSecurityHint an
+# Acknowledges the security hint: touches /etc/config/userAckSecurityHint (staged SP038,
+# USER level; argument list with the '--' guard, inside catch).
 #
-# Parameter:
-#  kein
-#
-# Rückgabewert: immer true
+# Return value: [bool] true
 ##
 
-
-catch {exec touch /etc/config/userAckSecurityHint}
+catch {exec touch -- /etc/config/userAckSecurityHint}
 
 jsonrpc_response true
-
-

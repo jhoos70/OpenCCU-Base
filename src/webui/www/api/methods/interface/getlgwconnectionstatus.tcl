@@ -1,22 +1,33 @@
 ##
-# Interface.getlgwstatus.tcl
-# Liefert eine Liste der verfügbaren Schnittstellen
+# Interface.getLGWConnectionStatus
+# Returns the connection status file of a LAN gateway (staged SP023).
 #
-# Parameter:
-# interface: [string] Bezeichnung der Schnittstelle
+# Hardening: the serial has to match ^[A-Za-z0-9_-]{1,32}$ (error 403 "invalid argument (serial)",
+# the file name is never built from anything else); a missing or unreadable status file is the
+# generic error 200 "internal error (ref: <correlation id>)" (the path stays in the syslog).
 #
-# Rückgabewert:
-# object containing:
-# 
+# Parameters:
+#   interface: [string] name of the interface (required by the dispatcher, unused)
+#   serial   : [string] serial number of the gateway
 #
+# Return value: [object] {connstat, serial}
 ##
 
-#checkXmlRpcStatus [catch {array set result [xmlrpc $interface(URL) getLGWStatus] }]
 set serial $args(serial)
-#read info from file
+
+if { ![regexp {^[A-Za-z0-9_-]{1,32}$} $serial] } then {
+  jsonrpc_error 403 "invalid argument (serial)"
+}
+
 set filename "/var/status/${serial}.connstat"
-set fd [open "$filename" "r"]
-set filedata [read $fd]
-close $fd
+if { [catch {
+  set fd [open "$filename" "r"]
+  set filedata [read $fd]
+  close $fd
+} errorMessage] } then {
+  set cid [api_cid]
+  api_syslog daemon.err "cid=$cid method=Interface.getLGWConnectionStatus uid=- code=200 errorInfo=[string map [list "\n" {\n}] $errorMessage]"
+  jsonrpc_error 200 "internal error (ref: $cid)"
+}
 
 jsonrpc_response "\{\"connstat\":[json_toString $filedata], \"serial\":[json_toString $serial]\}"

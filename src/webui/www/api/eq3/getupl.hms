@@ -1,8 +1,10 @@
 !##
-!# Liefert die Privilegstufe eines Nutzers
+!# Returns the privilege level (user privilege level, UPL) of a session (v1 frozen, staged SP003)
+!# The session id is injected as the variable _session_id_ by hmscript_runFromFile.
 !##
 
 var upl = 0;
+
 if ( system.IsVar("_session_id_") )
 {
 	var id = system.GetVar("_session_id_");

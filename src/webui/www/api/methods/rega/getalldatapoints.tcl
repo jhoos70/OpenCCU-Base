@@ -1,57 +1,107 @@
  ##
- # ReGa.getAllDatapoints
+ # ReGa.getAllDatapoints (staged SP044)
  #
- # Privilegstufe: ADMIN
- # Parameter:     <keine>
+ # Privilege level: ADMIN
+ # Parameters:      none (the session id is declared: ARGUMENTS {_session_id_})
  #
- # Rückgabewert: [string]
- #   Zeichenkette, welche die Ids und die Namen der Datenpunkte enthält.
+ # Return value: [array of string]
+ #   Lines '<id>--<type>--<name>[--<deviceName>][--<address>]' with the ids and names of the
+ #   datapoints, channels and devices (and of the other ReGa objects of the collections below),
+ #   in ascending id order, with the trailing empty element of v1.
+ #
+ # The v1 script probed all 65,535 ids with dom.GetObject; this script enumerates the object
+ # collections instead (devices, their channels and datapoints, rooms, functions, programs,
+ # system variables). The line format is unchanged. Objects outside these collections (EG-7: the
+ # equivalence has to be verified on a real object model) are no longer reported.
  ##
 
  set script {
 
   string result = "";
-  object obj;
-  integer loop = 0;
-  object device;
+  string dId;
+  string cId;
+  string pId;
+  string oId;
+  object dev;
+  object chn;
+  object dp;
+  object o;
 
-  while(loop < 65535)
+  foreach(dId, root.Devices().EnumIDs())
   {
-    obj = dom.GetObject(loop);
-    if (obj) {
-      if ((obj.TypeName() == "HSSDP") || (obj.TypeName() == "DEVICE") ||(obj.TypeName() == "CHANNEL")) {
-        if (obj.TypeName() != "DEVICE") {device = dom.GetObject(obj.Device());} else {device = dom.GetObject(obj.ID());}
-        if (device) {
-          if (device.Address() != "") {
-            if (obj.TypeName() == "HSSDP") {
-              result = result #obj.ID()#"--"#obj.TypeName()#"--"#obj.Name()#"--"#device.Name()#"--"#device.Address()#"\n";
-            } else {
-              result = result #obj.ID()#"--"#obj.TypeName()#"--"#obj.Name()#"--"#device.Address()#"\n";
-            }
-          } else {
-            result = result #obj.ID()#"--"#obj.TypeName()#"--"#obj.Name()#"--"#device.Name()#"\n";
-          }
-        } else {
-          result = result #obj.ID()#"--"#obj.TypeName()#"--"#obj.Name()#"\n";
-        }
+    dev = dom.GetObject(dId);
+    if (dev) {
+      if (dev.Address() != "") {
+        result = result #dev.ID()#"--DEVICE--"#dev.Name()#"--"#dev.Address()#"\n";
       } else {
-        result = result #obj.ID()#"--"#obj.TypeName()#"--"#obj.Name()#"\n";
+        result = result #dev.ID()#"--DEVICE--"#dev.Name()#"--"#dev.Name()#"\n";
+      }
+      foreach(cId, dev.Channels())
+      {
+        chn = dom.GetObject(cId);
+        if (chn) {
+          if (dev.Address() != "") {
+            result = result #chn.ID()#"--CHANNEL--"#chn.Name()#"--"#dev.Address()#"\n";
+          } else {
+            result = result #chn.ID()#"--CHANNEL--"#chn.Name()#"--"#dev.Name()#"\n";
+          }
+          foreach(pId, chn.DPs())
+          {
+            dp = dom.GetObject(pId);
+            if (dp) {
+              if (dev.Address() != "") {
+                result = result #dp.ID()#"--HSSDP--"#dp.Name()#"--"#dev.Name()#"--"#dev.Address()#"\n";
+              } else {
+                result = result #dp.ID()#"--HSSDP--"#dp.Name()#"--"#dev.Name()#"\n";
+              }
+            }
+          }
+        }
       }
     }
-    loop = loop + 1;
-   }
-   Write(result);
+  }
+
+  foreach(oId, dom.GetObject(ID_ROOMS).EnumUsedIDs())
+  {
+    o = dom.GetObject(oId);
+    if (o) { result = result #o.ID()#"--"#o.TypeName()#"--"#o.Name()#"\n"; }
+  }
+  foreach(oId, dom.GetObject(ID_FUNCTIONS).EnumUsedIDs())
+  {
+    o = dom.GetObject(oId);
+    if (o) { result = result #o.ID()#"--"#o.TypeName()#"--"#o.Name()#"\n"; }
+  }
+  foreach(oId, dom.GetObject(ID_PROGRAMS).EnumIDs())
+  {
+    o = dom.GetObject(oId);
+    if (o) { result = result #o.ID()#"--"#o.TypeName()#"--"#o.Name()#"\n"; }
+  }
+  foreach(oId, dom.GetObject(ID_SYSTEM_VARIABLES).EnumIDs())
+  {
+    o = dom.GetObject(oId);
+    if (o) { result = result #o.ID()#"--"#o.TypeName()#"--"#o.Name()#"\n"; }
+  }
+  Write(result);
  }
 
- set ids [split [hmscript $script] "\n"]
+ # the lines in ascending id order (the order of the v1 id scan)
+ set entries {}
+ foreach line [split [hmscript $script] "\n"] {
+   if { "" == $line } then { continue }
+   if { ![regexp {^([0-9]+)--} $line -> lineId] } then { set lineId 2147483647 }
+   lappend entries [list $lineId $line]
+ }
 
  set result "\["
  set first 1
 
- foreach id $ids {
+ foreach entry [lsort -integer -index 0 $entries] {
    if {$first != 1} then { append result ","} else { set first 0 }
-   append result [json_toString $id ]
+   append result [json_toString [lindex $entry 1]]
  }
+ # the empty last element: the output of v1 ends with '\n'
+ if {$first != 1} then { append result "," }
+ append result [json_toString ""]
 
  append result "\]"
 

@@ -1,13 +1,17 @@
 ##
-# User.getUserName
-# Ermittelt den Usernamen des Anwenders
+# User.getUserName (staged SP033)
+# Returns the user name of a user.
 #
-# Parameter:
-#   id: [string] Id des Anwenders
+# Parameters:
+#   userID: [string] id of the user
 #
-# Rückgabewert: [string]
-#    Username
+# Return value: [string]
+#   v1 (frozen, the classic client eval()s it): the JavaScript expression text
+#   {"UserName" : "<name>"}.UserName ; on /api/v2: the plain JSON string
 ##
+
+# (without the staged dispatcher libraries there is no /api/v2: v1 output)
+if { 0 == [llength [info commands jsonrpc_isV2]] } then { proc jsonrpc_isV2 { } { return 0 } }
 
 set script {
   var user = dom.GetObject(userID);
@@ -23,8 +27,12 @@ set script {
 
 array set user [hmscript $script args]
 
-set result "\{"
-append result "\"UserName\" : [json_toString $user(NAME)]"
-append result "\}"
+if { [jsonrpc_isV2] } then {
+  jsonrpc_response [json_toString $user(NAME)]
+} else {
+  set result "\{"
+  append result "\"UserName\" : [json_toString $user(NAME)]"
+  append result "\}"
 
-jsonrpc_response $result.UserName
+  jsonrpc_response $result.UserName
+}

@@ -1,20 +1,25 @@
 ##
 # Channel.pollComTest
-# Prüft das Ergebnis eines Funktionstests
+# Checks the result of a function test (staged SP028).
 #
-# Parameter:
-#   id: [string] Id des Kanals
-#   testId [string] Id des Funktionstests
+# Hardening: testId has to match ^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$ (error 403
+# "invalid argument (testId)" before any ReGa script runs).
 #
-# Rückgabewert [string/bool]
-#   Zeitpunkt, zu dem der Test erfolgreich bestanden wurde oder false
+# Parameters:
+#   id    : [string] id of the channel
+#   testId: [string] id of the function test
+#
+# Return value: [string/bool]
+#   Time at which the test was passed, or false
 ##
 
+if { ![regexp {^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$} $args(testId)] } then {
+  jsonrpc_error 403 "invalid argument (testId)"
+}
 
 set script {
   var channel   = dom.GetObject(id);
   var timestamp = testId;
-
   if (channel)
   {
     if (channel.TestCompletedTime() >= timestamp)

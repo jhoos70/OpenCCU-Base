@@ -1,15 +1,11 @@
 ##
 # CCU.setFirewallConfigured
-#Legt die Datei /etc/config/firewallConfigured an
+# Marks the firewall as configured: touches /etc/config/firewallConfigured (staged SP038,
+# ADMIN only; argument list with the '--' guard, inside catch).
 #
-# Parameter:
-#  userName
-#
-# Rückgabewert: immer true
+# Return value: [bool] true
 ##
 
-catch {exec touch /etc/config/firewallConfigured}
+catch {exec touch -- /etc/config/firewallConfigured}
 
 jsonrpc_response true
-
-

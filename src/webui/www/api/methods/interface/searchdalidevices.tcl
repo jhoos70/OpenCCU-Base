@@ -1,18 +1,18 @@
 ##
 # Interface.searchDaliDevices
-# Das ist eine Abwandlung von Interface.setValue.
-# Hier wird das setValue lediglich mit einem catch abgefangen (ohne den Wrapper checkXmlRpcStatus), um eventuelle Fehler in der Datei /tmp/searchDali.log auszugeben.
-# Im Fehlerfall wird das Script wie bei Interface.setValue mittels exit abgebrochen.
+# Starts the DALI device search (setValue without checkXmlRpcStatus, v1 semantics:
+# on failure the error text is logged and the script ends without a JSON response).
+# Hardening (staged SP019): the log line is appended with Tcl file I/O; no request
+# data reaches a command line (the v1 version used "exec echo ... >> /tmp/searchDali.log").
 #
-# Parameter:
-#   interface: [string] Bezeichnung der Schnittstelle
-#   address:   [string] Adresse des logischen Geräts
-#   valueKey:  [string] Id des Parameters
-#   type:      [string] Datentyp des Parameters (string, int, double, bool)
-#   value:     [string] Neuer Wert des Parameters
+# Parameters:
+#   interface: [string] name of the interface
+#   address  : [string] address of the logical device
+#   valueKey : [string] id of the parameter
+#   type     : [string] XML-RPC type
+#   value    : [string] the value
 #
-# Rückgabewert: [boolean]
-#   true
+# Return value: [bool] true
 ##
 
 set address  $args(address)
@@ -22,11 +22,13 @@ set value    $args(value)
 
 catch { xmlrpc $interface(URL) setValue [list string $address] [list string $valueKey] [list $type $value] } errorMessage
 
-# In case of an error
 if {$errorMessage != ""} {
   set systemTime [clock seconds]
-  exec echo "[clock format $systemTime -format %D] - [clock format $systemTime -format %H:%M:%S] setValue errorMessage: $errorMessage" >> /tmp/searchDali.log
-  #checkXmlRpcStatus [catch { xmlrpc $interface(URL) setValue [list string $address] [list string $valueKey] [list $type $value] }]
+  catch {
+    set logFd [open /tmp/searchDali.log a]
+    puts $logFd "[clock format $systemTime -format %D] - [clock format $systemTime -format %H:%M:%S] setValue errorMessage: $errorMessage"
+    close $logFd
+  }
   exit
 }
 
