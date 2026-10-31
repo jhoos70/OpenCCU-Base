@@ -195,4 +195,23 @@ test sp001-19 {acceptance[3] of SP013: with DOCUMENT_ROOT unset the CGI answers 
   list [regexp {"code": 200,\s*"message": "internal error \(ref: [0-9a-f]{16}\)"} [dict get $res stdout]]
 } -result 1
 
+test sp001-20 {/api/homematic.cgi/v2/... is served as v2 (REQUEST_URI, or SCRIPT_NAME + PATH_INFO); other paths below homematic.cgi stay v1} -body {
+  set out {}
+  foreach {cenv} {
+    {REQUEST_URI /api/homematic.cgi/v2/rpc}
+    {REQUEST_URI /api/homematic.cgi/v2/schema?x=1}
+    {SCRIPT_NAME /api/homematic.cgi PATH_INFO /v2/rpc REQUEST_URI {}}
+  } {
+    set r [post {} -method PUT -setenv $cenv]
+    regexp {Allow: (\w+)} [dict get $r headers] -> allow
+    lappend out [status $r]/$allow
+  }
+  # not v2: handled by the v1 dispatcher (no 405 and no Allow header)
+  foreach uri {/api/homematic.cgi/v3/rpc /api/homematic.cgi/x/v2/rpc /api/homematic.cgi/v2x} {
+    set r [post {} -method PUT -setenv [list REQUEST_URI $uri]]
+    lappend out [status $r]/[regexp {Allow:} [dict get $r headers]]
+  }
+  set out
+} -result {405/POST 405/GET 405/POST 200/0 200/0 200/0}
+
 cleanupTests

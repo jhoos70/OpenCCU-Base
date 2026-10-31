@@ -12,6 +12,8 @@
 #   GET|PUT /api/v2/profile v2/profile.tcl   v2_profile_handle    (IC012, user-profile)
 #
 # The request path is taken from REQUEST_URI (query removed), else SCRIPT_NAME + PATH_INFO.
+# The routes answer on /api/v2/... and also on /api/homematic.cgi/v2/...: the second form reaches
+# the CGI through lighttpd's PATH_INFO handling, so it works without a lighttpd route for /api/v2.
 # A wrong verb is HTTP 405 with the header Allow; an unknown route is HTTP 404; a route whose
 # provider file is not installed is also 404 (error 401 "route not found").
 # Every route requires the header X-Requested-With (anti-CSRF), a body route also Content-Type
@@ -38,7 +40,7 @@ set V2_ROUTES {
 }
 
 ##
-# Is the request addressed to /api/v2 ? Returns the path below /api/v2 ("/rpc", "" for the base)
+# Is the request addressed to /api/v2 (or /api/homematic.cgi/v2) ? Returns the path below /api/v2 ("/rpc", "" for the base)
 # or -1 for any other request.
 ##
 proc router_v2Path { } {
@@ -53,7 +55,7 @@ proc router_v2Path { } {
     catch { set info $env(PATH_INFO) }
     set path "$script$info"
   }
-  if { [regexp {^/api/v2(/.*)?$} $path -> rest] } then {
+  if { [regexp {^/api/(?:homematic\.cgi/)?v2(/.*)?$} $path -> rest] } then {
     return [string trimright $rest "/"]
   }
   return -1

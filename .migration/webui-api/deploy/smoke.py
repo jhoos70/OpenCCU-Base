@@ -193,11 +193,18 @@ def main():
 
     # ---- v2 (needs a lighttpd route)
     if a.v2:
-        st, doc, text = c.rpc("ReGa.isPresent", path="/api/v2/rpc", headers={"X-Requested-With": "XMLHttpRequest", "X-Session-Id": sid})
-        if st == 404:
-            report("INFO", "v2 /api/v2/rpc", "404: no lighttpd route to homematic.cgi for /api/v2/*, so v2 is not reachable")
-        else:
-            report("PASS" if result_of(doc) is True else "FAIL", "v2 /api/v2/rpc ReGa.isPresent", "HTTP %s result %r error %s" % (st, result_of(doc), err_of(doc)))
+        # /api/v2/rpc needs a lighttpd route (not in this repository); /api/homematic.cgi/v2/rpc reaches
+        # the CGI through PATH_INFO. Both need v2_enabled true in apiconfig.conf.
+        for base in ("/api/v2", "/api/homematic.cgi/v2"):
+            hdr = {"X-Requested-With": "XMLHttpRequest", "X-Session-Id": sid}
+            # v1 answers every request with HTTP 200, v2 uses real status codes: an unknown route is the
+            # JSON 404 only when the v2 router is active (a lighttpd 404 page is not JSON)
+            st, doc, text = c.rpc("No.such", path=base + "/no-such-route", headers=hdr)
+            if not (st == 404 and doc is not None):
+                report("INFO", "v2 " + base, "HTTP %s: not served by the v2 router (no lighttpd route, or v2_enabled is false)" % st)
+                continue
+            st, doc, text = c.rpc("ReGa.isPresent", path=base + "/rpc", headers=hdr)
+            report("PASS" if result_of(doc) is True else "FAIL", "v2 %s/rpc ReGa.isPresent" % base, "HTTP %s result %r error %s" % (st, result_of(doc), err_of(doc)))
 
     # ---- logout
     st, doc, text = c.rpc("Session.logout", sid=sid)

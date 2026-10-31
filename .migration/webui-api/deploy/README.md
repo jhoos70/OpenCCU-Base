@@ -59,7 +59,7 @@ Optional checks:
 
 - `--strict`: first set `strict_mode true` in `/www/api/apiconfig.conf` on the CCU (Tcl syntax,
   inside the `array set API_CONFIG {...}` block). Requests without `X-Requested-With` must then be refused.
-- `--v2`: `/api/v2/*` is not routed to `homematic.cgi` by lighttpd yet, so it reports 404 (INFO).
+- `--v2`: checks both `/api/v2/*` and `/api/homematic.cgi/v2/*`. The first needs a lighttpd route that does not exist yet (INFO). The second reaches the CGI through PATH_INFO and needs only `v2_enabled true` in `apiconfig.conf` (PASS when the v2 router answers, INFO when the v1 dispatcher does).
 
 ## Not covered
 
