@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+/* Theme tokens (shadcn style). The classic header navy is the primary colour. */
+:root {
+  --background: #f4f6f8;
+  --foreground: #1b2330;
+  --card: #ffffff;
+  --primary: #1a2b6d;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #5b6675;
+  --border: #c9d1d9;
+  --destructive: #b42318;
+}
+body { background: var(--background); color: var(--foreground); font-family: system-ui, sans-serif; }

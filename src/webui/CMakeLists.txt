@@ -32,3 +32,20 @@ add_custom_target(webui-assets
   DEPENDS webui-www-source-assets webui-scripts-assets
   VERBATIM
 )
+
+# nextGen WebUI (React/TypeScript/Vite, src/webui/next), served next to the classic UI under /webui/next/.
+# Optional because it needs Node.js and npm; without it the web root is exactly the classic one.
+option(OPENCCU_BUILD_NEXT_UI "Build the nextGen WebUI (needs Node.js and npm)" OFF)
+if(OPENCCU_BUILD_NEXT_UI)
+  find_program(OPENCCU_NPM_EXECUTABLE npm REQUIRED)
+  set(OPENCCU_NEXT_UI_DIST "${CMAKE_CURRENT_BINARY_DIR}/next-dist")
+  add_custom_target(webui-next-assets
+    COMMAND "${OPENCCU_NPM_EXECUTABLE}" ci --ignore-scripts --no-audit --no-fund
+    COMMAND "${OPENCCU_NPM_EXECUTABLE}" run build -- --outDir "${OPENCCU_NEXT_UI_DIST}" --emptyOutDir
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${ROOTFS_DIR}/www/webui/next"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${OPENCCU_NEXT_UI_DIST}" "${ROOTFS_DIR}/www/webui/next"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/next"
+    VERBATIM
+  )
+  add_dependencies(webui-assets webui-next-assets)
+endif()
