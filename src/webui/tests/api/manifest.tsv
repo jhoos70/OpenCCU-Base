@@ -159,6 +159,7 @@ rega-model	v2/system.tcl	src/webui/www/api/v2/system.tcl
 rega-model	v2/log.tcl	src/webui/www/api/v2/log.tcl
 rega-model	v2/programs.tcl	src/webui/www/api/v2/programs.tcl
 rega-model	v2/sysvars.tcl	src/webui/www/api/v2/sysvars.tcl
+rega-model	v2/values.tcl	src/webui/www/api/v2/values.tcl
 system-admin	methods/bidcos/changeLanGatewayKey.tcl	src/webui/www/api/methods/bidcos/changeLanGatewayKey.tcl
 system-admin	methods/bidcosrf/createkeyfile.tcl	src/webui/www/api/methods/bidcosrf/createkeyfile.tcl
 system-admin	methods/bidcosrf/getconfiguration-rf.tcl	src/webui/www/api/methods/bidcosrf/getconfiguration-rf.tcl

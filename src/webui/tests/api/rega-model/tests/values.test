@@ -1,0 +1,171 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# GET and POST /api/v2/values: the live values of a device and the operation of one datapoint. The ReGa scripts are
+# proven on a real ReGa (see the commit message); here: the shape of the answer, validation by type and limits, the
+# access rules, the error codes, that the value never becomes script text and that only datapoints of devices are reachable.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list [status $r] $c $m] }
+  return [list [status $r] none]
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER  {{AbCdEf1234 2 1000 User}}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set READ  {*TypeName*}
+set WRITE {*newValue*}
+set DEVICE {*deviceId*}
+proc rec {type args} {
+  set d [dict create ID 3001 NAME BidCos-RF.MEQ1:1.X CHANNEL_ID 3000 CHANNEL {Wohnzimmer:1} PARAM X TYPE $type VALUE {} UNIT {} MIN {} MAX {} LIST {} TS {1970-01-01 01:00:00} INT false READ true WRITE true]
+  foreach {k v} $args { dict set d $k $v }
+  return $d
+}
+proc post {body args} {
+  array set o [list -sessions $::ADMIN -rega {} -method POST]
+  array set o $args
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -method $o(-method) -contenttype application/json -setenv {REQUEST_URI /api/v2/values} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
+}
+# a write of the datapoint described by rec; the read before and after the write answer the same record
+proc setdp {rec body args} {
+  array set o [list -sessions $::ADMIN]
+  array set o $args
+  return [post $body -sessions $o(-sessions) -rega [list [list $::WRITE {}] [list $::READ [list $rec]]]]
+}
+proc get {query args} {
+  array set o [list -sessions $::GUEST -rega {} -method GET]
+  array set o $args
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method $o(-method) -contenttype {} -setenv {REQUEST_URI /api/v2/values} -query $query \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
+}
+proc body {r} { return [string trim [dict get $r body]] }
+proc scripts {r} { return [join [dict get $r rega_calls] \n] }
+
+test values-0 {the handler file exists, is complete Tcl and is registered as a GET and POST route} -body {
+  set fd [open [file join $gen rega-model v2 values.tcl] r]; set c [read $fd]; close $fd
+  set fd [open [file join $gen dispatcher v2 router.tcl] r]; set r [read $fd]; close $fd
+  list [info complete $c] [regexp {/values\s+\{\{GET POST\}\s+values.tcl\s+v2_values_handle\}} $r]
+} -result {1 1}
+
+test values-1 {a device's datapoints come back as strict JSON with the type, value, unit, limits and the write flag; a guest may read} -body {
+  set recs [list \
+    [rec LOGIC ID 1 PARAM STATE VALUE true MIN false MAX true] \
+    [rec NUMBER ID 2 PARAM LEVEL VALUE 0.500000 UNIT % MIN 0.000000 MAX 1.000000 WRITE false] \
+    [rec LIST ID 3 PARAM MODE VALUE 1 LIST {A;B}] \
+    [rec ACTION ID 4 PARAM PRESS VALUE {} MIN false MAX true]]
+  set r [get device=2650 -rega [list [list $::DEVICE $recs]]]
+  set b [body $r]
+  list [status $r] [regexp {^\{"device":"2650","items":\[\{"id":"1",} $b] \
+    [regexp {"param":"STATE","type":"LOGIC","value":"true","unit":"","min":"false","max":"true","valueList":"","timestamp":"1970-01-01 01:00:00","integer":false,"readable":true,"writable":true\}} $b] \
+    [regexp {"param":"LEVEL","type":"NUMBER","value":"0.500000","unit":"%","min":"0.000000","max":"1.000000","valueList":"","timestamp":"[^"]*","integer":false,"readable":true,"writable":false\}} $b] \
+    [regexp {"type":"LIST","value":"1","unit":"","min":"","max":"","valueList":"A;B"} $b] [regexp {"type":"ACTION","value":""} $b]
+} -result {200 1 1 1 1 1}
+
+test values-2 {the device query is checked: missing or odd is 422, a device without datapoints is 404; no session is 401 and no ReGa script runs} -body {
+  set none [get device=2650 -rega [list [list $::DEVICE {}]]]
+  set out [list [err [get {}]] [err [get device=26x0]] [err [get device=]] [err $none]]
+  set n [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/values} -query device=1 -header {X-Requested-With XMLHttpRequest}]]]
+  lappend out [status $n] [llength [dict get $n rega_calls]]
+} -result {{422 403 {invalid argument (device)}} {422 403 {invalid argument (device)}} {422 403 {invalid argument (device)}} {404 501 {device not found}} 401 0}
+
+test values-3 {each type is set and the datapoint as ReGa holds it afterwards comes back} -body {
+  set out {}
+  foreach {rec json} [list \
+      [rec LOGIC VALUE true] {{"id":"3001","value":false}} \
+      [rec ACTION VALUE {}] {{"id":"3001","value":true}} \
+      [rec LIST LIST {a;b;c} VALUE 2] {{"id":"3001","value":2}} \
+      [rec NUMBER MIN 4.5 MAX 30.5 VALUE 21.000000] {{"id":"3001","value":21}} \
+      [rec NUMBER MIN 4.5 MAX 30.5 VALUE 21.500000] {{"id":"3001","value":21.5}} \
+      [rec NUMBER INT true MIN 0 MAX 99 VALUE 7] {{"id":"3001","value":"7"}} \
+      [rec STRING VALUE hallo] {{"id":"3001","value":"hallo"}}] {
+    set r [setdp $rec $json]
+    lappend out [status $r] [regexp {^\{"id":"3001",.*"writable":true\}$} [body $r]]
+  }
+  set out
+} -result {200 1 200 1 200 1 200 1 200 1 200 1 200 1}
+
+test values-4 {a value that does not fit the type or the limits is 422 'invalid argument (value)' and nothing is written} -body {
+  set out {}
+  foreach {rec json} [list \
+      [rec LOGIC] {{"id":"3001","value":"yes"}} \
+      [rec LOGIC] {{"id":"3001","value":1}} \
+      [rec ACTION] {{"id":"3001","value":false}} \
+      [rec LIST LIST {a;b;c}] {{"id":"3001","value":3}} \
+      [rec LIST LIST {a;b;c}] {{"id":"3001","value":"x"}} \
+      [rec NUMBER MIN 4.5 MAX 30.5] {{"id":"3001","value":31}} \
+      [rec NUMBER MIN 4.5 MAX 30.5] {{"id":"3001","value":4}} \
+      [rec NUMBER MIN 4.5 MAX 30.5] {{"id":"3001","value":"1e1"}} \
+      [rec NUMBER INT true MIN 0 MAX 99] {{"id":"3001","value":1.5}} \
+      [rec NUMBER] {{"id":"3001","value":"abc"}} \
+      [rec STRING] "{\"id\":\"3001\",\"value\":\"a\\u0001b\"}" \
+      [rec STRING] "{\"id\":\"3001\",\"value\":\"[string repeat x 1001]\"}"] {
+    set r [setdp $rec $json]
+    lappend out [err $r] [regexp {newValue} [lindex [dict get $r rega_calls] end]]
+  }
+  set out
+} -result [lrepeat 12 {422 403 {invalid argument (value)}} 0]
+
+test values-5 {the limits themselves are valid} -body {
+  set out {}
+  foreach v {4.5 30.5 4.50} { lappend out [status [setdp [rec NUMBER MIN 4.500000 MAX 30.500000] "{\"id\":\"3001\",\"value\":$v}"]] }
+  set out
+} -result {200 200 200}
+
+test values-6 {a datapoint that cannot be written, an unknown type and an id that is no datapoint of a device are refused} -body {
+  set ro [setdp [rec NUMBER WRITE false] {{"id":"3001","value":1}}]
+  set unk [setdp [rec UNKNOWN] {{"id":"3001","value":1}}]
+  set missing [post {{"id":"1024","value":"1"}} -rega [list [list $::READ {}]]]
+  list [err $ro] [regexp {newValue} [lindex [dict get $ro rega_calls] end]] [err $unk] [err $missing] [regexp {newValue} [scripts $missing]]
+} -result {{403 400 {access denied (datapoint)}} 0 {422 403 {invalid argument (id)}} {404 501 {datapoint not found}} 0}
+
+test values-7 {the write flag already carries the user's right: a datapoint without it is refused for a user, an administrator or a user with the right may write; a guest never writes} -body {
+  set noRight [rec LOGIC WRITE false]
+  set a [setdp $noRight {{"id":"3001","value":true}} -sessions $::USER]
+  set b [setdp [rec LOGIC] {{"id":"3001","value":true}} -sessions $::USER]
+  set c [setdp [rec LOGIC] {{"id":"3001","value":true}} -sessions $::GUEST]
+  list [err $a] [status $b] [err $c] [regexp {HSSDP} [scripts $c]]
+} -result {{403 400 {access denied (datapoint)}} 200 {403 400 {access denied (\"USER\" needed, session level 1)}} 0}
+
+test values-8 {the body: not JSON is 400, a missing or odd id or value and unknown keys are 422} -body {
+  set d [rec LOGIC]
+  list [err [setdp $d {{nope}}]] [err [setdp $d {{"value":true}}]] [err [setdp $d {{"id":"30x1","value":true}}]] [err [setdp $d {{"id":"3001"}}]] [err [setdp $d {{"id":"3001","value":true,"name":"x"}}]]
+} -result {{400 100 {invalid request (\" expected)}} {422 403 {invalid argument (id)}} {422 403 {invalid argument (id)}} {422 403 {invalid argument (value)}} {422 403 {invalid argument (name)}}}
+
+test values-9 {only GET and POST are allowed (405 otherwise)} -body {
+  set out {}
+  foreach m {PUT DELETE} { lappend out [status [post {} -method $m]] }
+  set out
+} -result {405 405}
+
+test values-9b {the interface refusing the command (State answers false) is HTTP 502, not a silent success; a true or no answer is sent} -body {
+  set rec [rec LOGIC]
+  set bad [post {{"id":"3001","value":true}} -rega [list [list $::WRITE {RESULT {false}}] [list $::READ [list $rec]]]]
+  set good [post {{"id":"3001","value":true}} -rega [list [list $::WRITE {RESULT {true}}] [list $::READ [list $rec]]]]
+  list [err $bad] [status $good]
+} -result {{502 501 {the device interface did not take the command}} 200}
+
+test values-10 {a string that looks like script stays one escaped string literal: the injected line is well formed and nothing of it is code} -body {
+  set bs [format %c 92]
+  set evil "x\"); WriteLine(\"pwned\"); WriteLine(\"$bs"
+  set esc [string map [list $bs "$bs$bs" "\"" "$bs\""] $evil]
+  set r [setdp [rec STRING] "{\"id\":\"3001\",\"value\":\"$esc\"}"]
+  set lines [regexp -all -inline -line {^var newValue = .*$} [scripts $r]]
+  list [status $r] [llength $lines] [regexp {^var newValue = "(?:[^"\\]|\\.)*";$} [string trimright [lindex $lines 0]]] [regexp {pwned} [lindex $lines 0]]
+} -result {200 1 1 1}
+
+test values-11 {the id only reaches a datapoint of a channel of a device: type HSSDP, the channel, its device in the device collection} -body {
+  set fd [open [file join $gen rega-model v2 values.tcl] r]; set c [read $fd]; close $fd
+  list [regexp {dp.TypeName\(\) == "HSSDP"} $c] [regexp {dom.GetObject\(dp.Channel\(\)\)} $c] [regexp {foreach\(dId, root.Devices\(\).EnumIDs\(\)\)} $c] [regexp {dp.State\(newValue\)} $c]
+} -result {1 1 1 1}
+
+cleanupTests
