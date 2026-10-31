@@ -1,3 +1,0 @@
-"switch_off" : "Alarm aus",
-"switch_on" : "Alarm ein",
-"switch_on_off" : "Alarm ein / aus",

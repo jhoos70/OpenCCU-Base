@@ -1,2 +1,0 @@
-"servo_toggle" : "Servo Position",
-

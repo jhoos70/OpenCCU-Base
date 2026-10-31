@@ -1,6 +1,0 @@
-"toggle" : "Toggle",
-"toggleOpen" : "Unlock / Lock",
-"switch_open" : "Open door",
-"switch_unlock" : "Unlock door lock",
-"switch_lock" : "Lock door lock",
-"not_active" : "inactive",

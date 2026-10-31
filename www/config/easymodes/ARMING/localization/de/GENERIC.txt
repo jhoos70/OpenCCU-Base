@@ -1,3 +1,0 @@
-"alarm_off" : "Alarm unscharf",
-"alarm_on" : "Alarm scharf",
-"alarm_on_off" : "Alarm scharf / unscharf",
