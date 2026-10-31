@@ -2,9 +2,12 @@ import * as React from "react";
 import { describeError, login, logout, renew } from "@/lib/api";
 import { clearSession, loadSession, saveSession, type Stored } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
-import { useRoute, type Route } from "@/lib/use-route";
-import { cn } from "@/lib/utils";
+import { navFor } from "@/lib/nav";
+import { useProfile } from "@/lib/use-profile";
+import { useRoute } from "@/lib/use-route";
+import { AppBar } from "@/components/AppBar";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
+import { NavList } from "@/components/NavList";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -62,12 +65,19 @@ function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
   );
 }
 
-const TABS: readonly Route[] = ["devices", "rooms", "sysvars"];
+const PAGES: Record<string, React.ComponentType<{ sid: string; onExpired: () => void }>> = { devices: Devices, rooms: Rooms, sysvars: SysVars };
 
 function Shell({ session, onLogout }: { session: Stored; onLogout: () => void }) {
   const { t } = useI18n();
-  const route = useRoute();
+  const state = useProfile(session.sid, onLogout);
+  const profile = state.status === "ready" ? state.profile : null;
+  // No profile (yet), no level, no menu: rights are never assumed.
+  const nav = React.useMemo(() => navFor(profile?.level ?? "NONE"), [profile?.level]);
+  const route = useRoute(nav.groups.flatMap((g) => g.items.map((i) => i.id)));
   const [busy, setBusy] = React.useState(false);
+  // The classic UI takes the same session id, so both UIs run side by side.
+  const classicHref = `/pages/index.htm?sid=@${session.sid}@`;
+
   async function signOut() {
     setBusy(true);
     try {
@@ -77,40 +87,27 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
     }
     onLogout();
   }
-  const page = { sid: session.sid, onExpired: onLogout };
+
+  const Page = PAGES[route];
   return (
     <div className="min-h-screen">
-      <header className="bg-[var(--primary)] text-[var(--primary-foreground)]">
-        <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-          <strong className="mr-2">{t("appName")}</strong>
-          <nav className="flex gap-1" aria-label={t("navMain")}>
-            {TABS.map((name) => (
-              <a
-                key={name}
-                href={`#/${name}`}
-                aria-current={route === name ? "page" : undefined}
-                className={cn("rounded-md px-3 py-1.5 text-sm font-medium", route === name ? "bg-white/20" : "hover:bg-white/10")}
-              >
-                {t(name)}
-              </a>
-            ))}
-          </nav>
-          <div className="ml-auto flex items-center gap-3 text-sm">
-            <LanguageSwitch />
-            <span>{session.user}</span>
-            {/* The classic UI takes the same session id, so both UIs run side by side. */}
-            <a className="underline" href={`/pages/index.htm?sid=@${session.sid}@`}>
-              {t("openClassic")}
-            </a>
-            <Button variant="outline" className="h-8 text-[var(--foreground)]" onClick={signOut} disabled={busy}>
-              {t("signOut")}
-            </Button>
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto max-w-3xl p-4">
-        {route === "devices" ? <Devices {...page} /> : route === "rooms" ? <Rooms {...page} /> : <SysVars {...page} />}
-      </main>
+      <AppBar profile={profile} nav={nav} current={route} classicHref={classicHref} onSignOut={signOut} busy={busy} />
+      <div className="mx-auto flex max-w-6xl gap-6 p-4">
+        {nav.groups.length > 0 && (
+          <aside className="hidden w-56 shrink-0 md:block">
+            <NavList nav={nav} current={route} classicHref={classicHref} />
+          </aside>
+        )}
+        <main className="min-w-0 flex-1">
+          {state.status === "loading" && <p className="text-sm text-[var(--muted-foreground)]">{t("loading")}</p>}
+          {state.status === "error" && (
+            <p role="alert" className="text-sm text-[var(--destructive)]">
+              {state.message}
+            </p>
+          )}
+          {state.status === "ready" && (Page ? <Page sid={session.sid} onExpired={onLogout} /> : <p className="text-sm text-[var(--muted-foreground)]">{t("noAccess")}</p>)}
+        </main>
+      </div>
     </div>
   );
 }

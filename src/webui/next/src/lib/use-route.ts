@@ -1,20 +1,15 @@
 import * as React from "react";
 
-export const ROUTES = ["devices", "rooms", "sysvars"] as const;
-export type Route = (typeof ROUTES)[number];
-
 // Hash routing: the app is served from a static prefix, so no server route is needed and a reload keeps the page.
-const parse = (): Route => {
-  const name = window.location.hash.replace(/^#\/?/, "");
-  return (ROUTES as readonly string[]).includes(name) ? (name as Route) : "devices";
-};
+const wanted = (): string => window.location.hash.replace(/^#\/?/, "");
 
-export function useRoute(): Route {
-  const [route, setRoute] = React.useState<Route>(parse);
+/** The page of the address if the user may see it, else the first allowed page ("" if there is none). */
+export function useRoute(allowed: readonly string[]): string {
+  const [hash, setHash] = React.useState(wanted);
   React.useEffect(() => {
-    const on = () => setRoute(parse());
+    const on = () => setHash(wanted());
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
-  return route;
+  return allowed.includes(hash) ? hash : (allowed[0] ?? "");
 }

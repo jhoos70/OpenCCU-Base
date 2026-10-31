@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Translate } from "./i18n";
-import { ApiError, describeError, isSessionExpired, login, makeGetModel, makeRpc } from "./api";
+import { ApiError, describeError, isSessionExpired, login, makeGetModel, makeGetProfile, makeRpc } from "./api";
 
 const reply = (status: number, body: unknown) => async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
 
@@ -82,5 +82,27 @@ describe("getModel", () => {
   it("rejects an answer without the section", async () => {
     const get = makeGetModel(reply(200, {}));
     await expect(get("rooms", "x")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("getProfile", () => {
+  const profile = { userId: "1004", userName: "Admin", firstName: "Max", hasPassword: true, isNoExpert: true, language: "de", level: "ADMIN" };
+
+  it("reads the own profile with the session", async () => {
+    let url = "";
+    const get = makeGetProfile(async (u) => ((url = String(u)), new Response(JSON.stringify(profile))));
+    const p = await get("AbCdEf1234");
+    expect(url).toBe("/api/homematic.cgi/v2/profile");
+    expect([p.userName, p.level, p.isNoExpert, p.language]).toEqual(["Admin", "ADMIN", true, "de"]);
+  });
+  it("maps an unknown or missing level to NONE (no rights are assumed)", async () => {
+    for (const level of [undefined, "ROOT", 8]) {
+      const get = makeGetProfile(reply(200, { ...profile, level }));
+      expect((await get("x")).level).toBe("NONE");
+    }
+  });
+  it("recognises an expired session and a broken answer", async () => {
+    expect(isSessionExpired(await makeGetProfile(reply(401, { error: { code: 400, message: "x" } }))("x").catch((e) => e))).toBe(true);
+    await expect(makeGetProfile(reply(200, {}))("x")).rejects.toBeInstanceOf(ApiError);
   });
 });

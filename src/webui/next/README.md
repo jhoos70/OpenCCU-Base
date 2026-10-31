@@ -4,11 +4,32 @@ React 19, TypeScript, Vite and Tailwind, with shadcn/ui-style components (Radix 
 `src/components/ui` and are maintained here. It runs **next to** the classic UI, which stays untouched.
 Decisions: `.migration/plan/decisions-ui.md` (D1 to D5).
 
-Status: login, and three read-only pages: Devices (filter, channels per device), Rooms and System variables.
-It signs in with `Session.login` on the v2 API, keeps the session id in `sessionStorage`, and links to the
-classic UI with the same session, so both can be used at once. The pages read the v2 bulk model (`GET /model`);
-routes are hash based (`#/devices`, `#/rooms`, `#/sysvars`), so no server route is needed and a reload keeps the
-page. An expired session returns to the form.
+Status: login, an app shell (app bar, sidebar or drawer, user menu) and three read-only pages: Devices (filter,
+channels per device), Rooms and System variables. It signs in with `Session.login` on the v2 API, keeps the session
+id in `sessionStorage`, and links to the classic UI with the same session, so both can be used at once. The pages
+read the v2 bulk model (`GET /model`); routes are hash based (`#/devices`, `#/rooms`, `#/sysvars`), so no server
+route is needed and a reload keeps the page. An expired session returns to the form.
+
+## Shell and navigation
+
+The classic header mixes identity, a breadcrumb, alarm and service counters, logout, a save button and a two-level
+menu. Here each has its own place: the slim app bar holds the name and the **user menu** (name, level, simple or
+expert mode as information, language, the classic UI, sign out); the **navigation** is a sidebar on wide screens and
+a drawer on narrow ones; a page has a title instead of a breadcrumb. Status indicators (alarm and service
+messages) will join the app bar. There is no global "Save changes" button: dialogs that save have their own buttons.
+
+The navigation is **object-centric**: one entry per object (devices, rooms, system variables, ...) where the classic
+menu has a status page under "Status and control" and an editor under "Settings". `src/lib/nav.ts` maps every
+classic menu entry to an entry here, with the user level it needs. The menu depends on the user level, which comes
+from `GET /profile` (`level`: ADMIN, USER, GUEST). Guests and unknown levels get no navigation, as in the classic UI.
+Entries that are not built yet stay in the config and are not shown; a link points to the classic UI for them.
+
+`src/lib/nav.test.ts` reads the real `www/webui/js/mainmenu/{admin,user}.js`: every classic entry must be mapped or
+deliberately dropped, nothing may be mapped that does not exist, and each entry needs the level the classic menu
+gives it. It is the checklist of the migration; it fails when the classic menu changes.
+
+Not changeable here: the expert mode. The CCU has no API for it (the classic UI uses its account dialog), so the
+user menu shows it only.
 
 ## Languages
 
@@ -59,17 +80,24 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
 - `src/webui/tests/e2e/next_login.py`: wrong password, login, reload, the same session in the classic UI, sign out.
 - `src/webui/tests/e2e/next_pages.py`: rooms and system variables compared with the classic v1 API, tabs, reload,
   umlauts, internal variables hidden, an expired session returns to the form.
+- `src/webui/tests/e2e/next_shell.py`: sidebar, user menu, drawer on a narrow screen, user levels (mocked `/profile`:
+  user, guest, unknown level, failing and expired), at most two logins.
 - `src/webui/tests/e2e/next_i18n_devices.py`: German by browser language, the language switch, `${key}` value names
   resolved from the classic strings, and the Devices page. The test CCU has no devices, so the real answer is the
   empty state; the rest uses a mocked model answer with realistic devices (shape of `v2/model.tcl`).
 
+## Login limit
+
+The v2 API limits logins to 10 per minute and IP (and requests per session), always on. A test or script that signs
+in more often gets "Too many attempts". The classic API (v1) is not limited unless `rate_limit` is set.
+
 ## Not yet
 
-pages beyond devices, rooms and system variables (programs, the device inbox), editing, push events,
+alarm and service indicators, pages beyond devices, rooms and system variables (programs, the device inbox), editing, push events,
 device pages checked against real hardware (there is none in the test CCU), and the clean
 `/next/` and `/api/v2` URLs (they need a change in the OpenCCU packaging repository, "Route A").
 
 ## Licences
 
-Only OSI-approved open-source dependencies. The 13 shipped packages are MIT (12) and Apache-2.0 (1);
+Only OSI-approved open-source dependencies. The 50 shipped packages are MIT (48), Apache-2.0 (1) and 0BSD (1);
 re-check with every dependency change.

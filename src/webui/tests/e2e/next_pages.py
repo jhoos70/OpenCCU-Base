@@ -41,7 +41,7 @@ def main():
         try:
             pg.goto(a.base + "/webui/next/")
             pg.fill("#user", a.user); pg.fill("#password", a.password); pg.keyboard.press("Enter")
-            pg.get_by_role("button", name="Sign out").wait_for()
+            pg.get_by_role("button", name="Account menu").wait_for()
             signed_in = True
             sid = pg.evaluate("JSON.parse(sessionStorage.getItem('openccu.next.session')).sid")
 
@@ -85,7 +85,7 @@ def main():
         finally:
             if signed_in:
                 try:
-                    pg.get_by_role("button", name="Sign out").click(timeout=5000)
+                    pg.get_by_role("button", name="Account menu").click(timeout=5000); pg.get_by_role("menuitem", name="Sign out").click(timeout=5000)
                 except Exception:
                     pass
             browser.close()

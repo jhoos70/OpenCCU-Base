@@ -109,6 +109,17 @@ export interface Device {
   channels: Channel[];
 }
 
+export type Level = "ADMIN" | "USER" | "GUEST" | "NONE";
+
+export interface Profile {
+  userId: string;
+  userName: string;
+  firstName: string;
+  isNoExpert: boolean;
+  language: string;
+  level: Level;
+}
+
 export interface Model {
   devices: Section<Device>;
   rooms: Section<Room>;
@@ -127,6 +138,22 @@ export function makeGetModel(doFetch: Fetch = defaultFetch): GetModel {
     return data as Model[S];
   };
 }
+
+export type GetProfile = (sid: string) => Promise<Profile>;
+
+export function makeGetProfile(doFetch: Fetch = defaultFetch): GetProfile {
+  return async function getProfile(sid: string): Promise<Profile> {
+    const { doc, status } = await send(doFetch, "/profile", { method: "GET", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const p = doc as Partial<Profile> | null;
+    if (!p || typeof p.userName !== "string") throw new ApiError(0, "unexpected profile", status);
+    const level: Level = p.level === "ADMIN" || p.level === "USER" || p.level === "GUEST" ? p.level : "NONE";
+    return { userId: String(p.userId ?? ""), userName: p.userName, firstName: String(p.firstName ?? ""), isNoExpert: p.isNoExpert === true, language: String(p.language ?? ""), level };
+  };
+}
+
+const getProfileDefault = makeGetProfile();
+export const getProfile: GetProfile = (sid) => getProfileDefault(sid);
 
 const getModelDefault = makeGetModel();
 export const getModel: GetModel = (section, sid, limit) => getModelDefault(section, sid, limit);

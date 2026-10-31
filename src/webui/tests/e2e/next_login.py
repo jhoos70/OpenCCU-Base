@@ -42,22 +42,23 @@ def main():
             del console[:]  # the browser logs the deliberate 401 as an error; only count what follows
 
             pg.fill("#password", a.password); pg.keyboard.press("Enter")
-            pg.get_by_role("button", name="Sign out").wait_for()
+            pg.get_by_role("button", name="Account menu").wait_for()
             signed_in = True
+            pg.get_by_role("button", name="Account menu").filter(has_text=a.user).wait_for()  # the name follows once the profile has loaded
             check("login shows the signed-in view", a.user in pg.inner_text("header"))
             sid = pg.evaluate("JSON.parse(sessionStorage.getItem('openccu.next.session')).sid")
             check("session id has the CCU format", bool(re.fullmatch(r"[A-Za-z0-9]{10}", sid)), sid[:2] + "…")
 
-            pg.reload(); pg.get_by_role("button", name="Sign out").wait_for()
+            pg.reload(); pg.get_by_role("button", name="Account menu").wait_for()
             check("session survives a reload", True)
 
-            pg.get_by_text("Open the classic UI").click()
+            pg.get_by_role("button", name="Account menu").click(); pg.get_by_role("menuitem", name="Open the classic UI").click()
             pg.wait_for_url(re.compile(r"/pages/index\.htm"))
             pg.wait_for_selector("#menubar", timeout=20000)
             check("classic UI opens with the same session", "/login.htm" not in pg.url and pg.locator("#menubar").is_visible(), pg.url.replace(sid, "SID"))
 
-            pg.goto(a.base + "/webui/next/"); pg.get_by_role("button", name="Sign out").wait_for()
-            pg.get_by_role("button", name="Sign out").click()
+            pg.goto(a.base + "/webui/next/"); pg.get_by_role("button", name="Account menu").wait_for()
+            pg.get_by_role("button", name="Account menu").click(); pg.get_by_role("menuitem", name="Sign out").click()
             pg.wait_for_selector("#user")
             signed_in = False
             check("sign out returns to the form", pg.evaluate("sessionStorage.length") == 0)
@@ -70,7 +71,7 @@ def main():
         finally:
             if signed_in:
                 try:
-                    pg.goto(a.base + "/webui/next/"); pg.get_by_role("button", name="Sign out").click(timeout=5000)
+                    pg.goto(a.base + "/webui/next/"); pg.get_by_role("button", name="Account menu").click(timeout=5000); pg.get_by_role("menuitem", name="Sign out").click(timeout=5000)
                 except Exception:
                     pass
             browser.close()

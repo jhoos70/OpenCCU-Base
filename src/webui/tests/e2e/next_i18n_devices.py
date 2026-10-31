@@ -55,9 +55,10 @@ def main():
             check("login is German for a German browser", pg.get_by_role("button", name="Anmelden").is_visible() and pg.locator("label[for=user]").inner_text() == "Benutzername")
             check("html lang follows the language", pg.evaluate("document.documentElement.lang") == "de")
             login(pg, "Benutzername", "Passwort")
-            pg.get_by_role("button", name="Abmelden").wait_for(); out_label = "Abmelden"
-            tabs = [t.strip() for t in pg.locator("nav a").all_inner_texts()]
-            check("tabs are German", tabs == ["Geräte", "Räume", "Systemvariablen"], str(tabs))
+            pg.get_by_role("button", name="Benutzermenü").wait_for(); out_label = "Benutzermenü"
+            pg.wait_for_selector("aside nav li a")  # the nav follows once the profile has loaded
+            tabs = [t.strip() for t in pg.locator("aside nav li a").all_inner_texts()]
+            check("the navigation is German", tabs == ["Geräte", "Räume", "Systemvariablen"], str(tabs))
 
             # ---- the real, empty device list
             pg.get_by_text("Keine Geräte verfügbar.").wait_for()
@@ -71,13 +72,13 @@ def main():
             check("no raw ${...} key is shown", "${" not in pg.inner_text("main"))
 
             # ---- switch language, remembered across reload
-            pg.get_by_role("button", name="en", exact=True).click()
+            pg.get_by_role("button", name="Benutzermenü").click(); pg.get_by_role("menuitemradio", name="English").click()
             pg.get_by_role("heading", name="System variables").wait_for()
             check("the switch changes the language", pg.evaluate("document.documentElement.lang") == "en" and "Read only" in pg.inner_text("main"))
             check("an English fallback is shown when the classic English file lacks the key", "not triggered" in pg.locator("tbody tr", has_text="Alarmzone 1").inner_text())
             pg.reload(); pg.get_by_role("heading", name="System variables").wait_for()
             check("the choice survives a reload", pg.evaluate("localStorage.getItem('openccu.next.lang')") == "en")
-            pg.get_by_role("button", name="de", exact=True).click(); pg.get_by_role("heading", name="Systemvariablen").wait_for()
+            pg.get_by_role("button", name="Account menu").click(); pg.get_by_role("menuitemradio", name="Deutsch").click(); pg.get_by_role("heading", name="Systemvariablen").wait_for()
 
             # ---- devices with a mocked model
             def fulfil(route):
@@ -118,7 +119,7 @@ def main():
             if out_label:
                 try:
                     pg.unroute("**/v2/model?*")
-                    pg.get_by_role("button", name=out_label).click(timeout=5000)
+                    pg.get_by_role("button", name=out_label).click(timeout=5000); pg.get_by_role("menuitem", name="Abmelden").click(timeout=5000)
                 except Exception:
                     pass
             browser.close()
