@@ -10,6 +10,7 @@
 #   POST /api/v2/rooms      v2/rooms.tcl     v2_rooms_handle      (IC011, rega-model)
 #   POST /api/v2/functions  v2/rooms.tcl     v2_functions_handle  (IC011, rega-model)
 #   GET|PUT /api/v2/profile v2/profile.tcl   v2_profile_handle    (IC012, user-profile)
+#   GET  /api/v2/system     v2/system.tcl    v2_system_handle     (time, sunrise, sunset, firmware version)
 #
 # The request path is taken from REQUEST_URI (query removed), else SCRIPT_NAME + PATH_INFO.
 # The routes answer on /api/v2/... and also on /api/homematic.cgi/v2/...: the second form reaches
@@ -37,6 +38,7 @@ set V2_ROUTES {
   /rooms     {POST rooms.tcl     v2_rooms_handle}
   /functions {POST rooms.tcl     v2_functions_handle}
   /profile   {{GET PUT} profile.tcl v2_profile_handle}
+  /system    {GET  system.tcl    v2_system_handle}
 }
 
 ##

@@ -155,6 +155,7 @@ rega-model	methods/sysvar/setbool.tcl	src/webui/www/api/methods/sysvar/setbool.t
 rega-model	methods/sysvar/setenum.tcl	src/webui/www/api/methods/sysvar/setenum.tcl
 rega-model	methods/sysvar/setfloat.tcl	src/webui/www/api/methods/sysvar/setfloat.tcl
 rega-model	v2/model.tcl	src/webui/www/api/v2/model.tcl
+rega-model	v2/system.tcl	src/webui/www/api/v2/system.tcl
 system-admin	methods/bidcos/changeLanGatewayKey.tcl	src/webui/www/api/methods/bidcos/changeLanGatewayKey.tcl
 system-admin	methods/bidcosrf/createkeyfile.tcl	src/webui/www/api/methods/bidcosrf/createkeyfile.tcl
 system-admin	methods/bidcosrf/getconfiguration-rf.tcl	src/webui/www/api/methods/bidcosrf/getconfiguration-rf.tcl

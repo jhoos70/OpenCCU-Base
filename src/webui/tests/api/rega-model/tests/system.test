@@ -1,0 +1,87 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# GET /api/v2/system: the time of the CCU, sunrise, sunset and the firmware version (what the classic start page shows).
+# The time and the astro times come from one ReGa script, the version from the line VERSION= of /VERSION.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set SCRIPT {*system.Date*SunriseTime*}
+set OUT {TIME {2026-10-31 19:05:12} SUNRISE {07:08} SUNSET {16:32}}
+proc system {args} {
+  array set o [list -method GET -rega [list [list $::SCRIPT $::OUT]] -fs ""]
+  array set o $args
+  set opts [list -candidate $::CAND -method $o(-method) -contenttype {} -setenv {REQUEST_URI /api/v2/system} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::GUEST -rega $o(-rega)]
+  if {$o(-fs) ne ""} { lappend opts -fs $o(-fs) }
+  return [golden::call_raw {} [golden::prepare $opts]]
+}
+proc withVersion {text} {
+  set fs [mock::fs::create]
+  if {$text ne "-"} { mock::fs::write $fs VERSION $text }
+  return $fs
+}
+proc body {r} { return [string trim [dict get $r body]] }
+
+test system-0 {the route handler file exists, is complete Tcl and is registered in the route table} -body {
+  set p [file join $gen rega-model v2 system.tcl]
+  set fd [open $p r]; set c [read $fd]; close $fd
+  set fd [open [file join $gen dispatcher v2 router.tcl] r]; set r [read $fd]; close $fd
+  list [info complete $c] [regexp {/system\s+\{GET\s+system.tcl\s+v2_system_handle\}} $r]
+} -result {1 1}
+
+test system-1 {time, sunrise, sunset and the firmware version, as strict JSON} -body {
+  set fs [withVersion "VERSION=3.89.11.20261019\nPRODUCT=oci_amd64\nPLATFORM=oci\n"]
+  set r [system -fs $fs]
+  mock::fs::destroy $fs
+  list [status $r] [body $r]
+} -result [list 200 {{"time":"2026-10-31 19:05:12","sunrise":"07:08","sunset":"16:32","firmwareVersion":"3.89.11.20261019"}}]
+
+test system-2 {the version is the VERSION= line wherever it is in the file} -body {
+  set fs [withVersion "PRODUCT=raspmatic_rpi4\n  VERSION = 3.75.6.20240101  \nPLATFORM=x\n"]
+  set r [system -fs $fs]
+  mock::fs::destroy $fs
+  regexp {"firmwareVersion":"([^"]*)"} [body $r] -> v
+  set v
+} -result 3.75.6.20240101
+
+test system-3 {no /VERSION file: an empty version, the rest is still answered} -body {
+  set fs [withVersion -]
+  set r [system -fs $fs]
+  mock::fs::destroy $fs
+  list [status $r] [body $r]
+} -result [list 200 {{"time":"2026-10-31 19:05:12","sunrise":"07:08","sunset":"16:32","firmwareVersion":""}}]
+
+test system-4 {ReGa answers nothing: empty texts, never a guess} -body {
+  set fs [withVersion "VERSION=1.2.3\n"]
+  set r [system -fs $fs -rega [list [list $::SCRIPT {}]]]
+  mock::fs::destroy $fs
+  list [status $r] [body $r]
+} -result [list 200 {{"time":"","sunrise":"","sunset":"","firmwareVersion":"1.2.3"}}]
+
+test system-5 {a guest may read it; only GET is allowed (405 with Allow: GET)} -body {
+  set out {}
+  foreach m {PUT POST DELETE} {
+    set r [system -method $m]
+    regexp {Allow: (\w+)} [dict get $r headers] -> allow
+    lappend out [status $r]/$allow
+  }
+  set out
+} -result {405/GET 405/GET 405/GET}
+
+test system-6 {without a valid session HTTP 401 and no ReGa script is executed} -body {
+  set a [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/system} -header {X-Requested-With XMLHttpRequest} -sessions $::GUEST]]]
+  list [status $a] [llength [dict get $a rega_calls]]
+} -result {401 0}
+
+cleanupTests
