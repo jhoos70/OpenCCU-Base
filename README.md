@@ -28,7 +28,7 @@ This repository is used as the common base package that delivers:
 - `src/` - source code and module-local build logic (Makefiles) for core components.
   Closed-source components (`src/ReGaHss/`, `src/hmipserver/`) only contain a `README.md` (and a `ChangeLog`) there, their binaries are part of `bin/` and `opt/`.
 - `bin/` - architecture-specific executable binaries and helper/startup scripts.
-- `www/` - WebUI and Tcl-based runtime resources.
+- `src/webui/` - the WebUI and its Tcl-based runtime resources (the web root is built from here; there is no committed `www/` copy).
 - `etc/` - configuration templates used during deployment/runtime setup.
 - `opt/` - bundled server/runtime artifacts (including HMServer/HmIP related files).
 - `lib/`, `usr/`, `firmware/` - additional runtime libraries and firmware-related content.

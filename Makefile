@@ -24,10 +24,10 @@ deploy: $(PLATFORMS:%=deploy-%)
 
 deploy-%: install-%
 	@set -e; rootfs_dir="build/$*/selected-install"; \
-	$(CMAKE) -E make_directory "bin/$*" "lib/$*" "etc" "firmware" "www" "opt" "usr"; \
+	$(CMAKE) -E make_directory "bin/$*" "lib/$*" "etc" "firmware" "opt" "usr"; \
 	if [ -d "$$rootfs_dir/bin" ]; then cp -a "$$rootfs_dir/bin/." "bin/$*/"; fi; \
 	if [ -d "$$rootfs_dir/lib" ]; then cp -a "$$rootfs_dir/lib/." "lib/$*/"; fi; \
-	for d in etc firmware www opt usr; do \
+	for d in etc firmware opt usr; do \
 		if [ -d "$$rootfs_dir/$$d" ]; then cp -a "$$rootfs_dir/$$d/." "$$d/"; fi; \
 	done
 

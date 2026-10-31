@@ -29,7 +29,7 @@ make
 # Create a fresh image in build/<platform>/selected-install
 make install
 
-# Explicitly update repository bin/<platform>, lib/<platform>, etc/
+# Explicitly update repository bin/<platform>, lib/<platform>, etc/ (not www/)
 make deploy
 ```
 
@@ -99,6 +99,8 @@ Make wrapper accepts `CMAKE_OPTIONS`. `make install` recreates
 `build/<platform>/selected-install` without copying into the source tree.
 `make deploy` explicitly copies that selection back into the repository and
 preserves other repository files; it does not produce a minimal image.
+It never writes `www/`: the web root is built from `src/webui` only (staged in
+`build/<platform>/rootfs/www`), and `www/` is not tracked in this repository.
 When producing a new image, start with an empty destination; installation does
 not uninstall files from an older image.
 
