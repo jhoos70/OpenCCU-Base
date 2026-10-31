@@ -4,6 +4,8 @@
 # The bulk read model: devices, channels, rooms, functions, sysvars, programs and (opt-in)
 # datapoints, alarms and services, each section as {"total","offset","limit","items":[...]}.
 #   query  sections  comma list (default: devices,channels,rooms,functions,sysvars,programs)
+#   sysvars   also {"description","lastModified"} (the classic list's description and "last modified" columns;
+#             lastModified is "2026-10-31 19:34:03" in the CCU's time, the epoch if the variable was never set)
 #   alarms    the alarm system variables that are triggered (the classic header's alarm messages):
 #             {"id","name","occurredAt"}
 #   services  the open service messages (the classic header's service messages):
@@ -226,6 +228,8 @@ proc model_readSysvars { } {
         WriteLine("VALUE_LIST {" # sv.ValueList() # "}");
         WriteLine("VALUE_NAME_0 {" # sv.ValueName0() # "}");
         WriteLine("VALUE_NAME_1 {" # sv.ValueName1() # "}");
+        WriteLine("INFO {" # sv.DPInfo() # "}");
+        WriteLine("TIME {" # sv.Timestamp() # "}");
         WriteLine("}");
       }
     }
@@ -240,6 +244,8 @@ proc model_readSysvars { } {
     }
     if { "LIST" == $type } then { append j ",\"valueList\":[json_toString $s(VALUE_LIST)]" }
     if { "NUMBER" == $type } then { append j ",\"minValue\":[json_toString $s(VALUE_MIN)],\"maxValue\":[json_toString $s(VALUE_MAX)]" }
+    foreach k {INFO TIME} { if { ![info exists s($k)] } then { set s($k) "" } }
+    append j ",\"description\":[json_toString $s(INFO)],\"lastModified\":[json_toString $s(TIME)]"
     append j ",\"isLogged\":[model_bool $s(LOGGED)],\"isVisible\":[model_bool $s(VISIBLE)],\"isInternal\":[model_bool $s(INTERNAL)]\}"
     lappend items $j
     array unset s

@@ -1,0 +1,164 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# POST /api/v2/sysvars {id,value}: changes a system variable (the first v2 mutation) and the description /
+# lastModified fields of the model's sysvars. The ReGa scripts themselves are proven on a real ReGa (see the commit
+# message); here: validation by type, the access rules, the error codes, that the value never becomes script text.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list [status $r] $c $m] }
+  return [list [status $r] none]
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER  {{AbCdEf1234 2 1000 User}}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set READ  {*Visible()*FULL*}
+set WRITE {*newValue*}
+proc desc {type args} {
+  set d [dict create TYPE $type MIN {} MAX {} LIST {} VISIBLE true INTERNAL false FULL true]
+  foreach {k v} $args { dict set d $k $v }
+  set s ""
+  dict for {k v} $d { append s $k " " [list $v] " " }
+  return [string trimright $s]
+}
+set OK {VALUE {x} TIME {2026-10-31 21:00:00}}
+proc post {body args} {
+  array set o [list -sessions $::ADMIN -rega {} -method POST]
+  array set o $args
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -method $o(-method) -contenttype application/json -setenv {REQUEST_URI /api/v2/sysvars} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
+}
+proc setvar {desc body args} {
+  array set o [list -sessions $::ADMIN -out {VALUE {1} TIME {2026-10-31 21:00:00}}]
+  array set o $args
+  return [post $body -sessions $o(-sessions) -rega [list [list $::READ $desc] [list $::WRITE $o(-out)]]]
+}
+proc body {r} { return [string trim [dict get $r body]] }
+proc scripts {r} { return [join [dict get $r rega_calls] \n] }
+
+test sysvars-0 {the handler file exists, is complete Tcl and is registered as a POST route} -body {
+  set fd [open [file join $gen rega-model v2 sysvars.tcl] r]; set c [read $fd]; close $fd
+  set fd [open [file join $gen dispatcher v2 router.tcl] r]; set r [read $fd]; close $fd
+  list [info complete $c] [regexp {/sysvars\s+\{POST\s+sysvars.tcl\s+v2_sysvars_handle\}} $r]
+} -result {1 1}
+
+test sysvars-1 {each type is changed and the value and time of ReGa come back} -body {
+  set out {}
+  foreach {desc json val} [list \
+      [desc LOGIC] {{"id":"950","value":true}} true \
+      [desc LIST LIST {off;low;high}] {{"id":"950","value":2}} 2 \
+      [desc NUMBER MIN 0 MAX 10] {{"id":"950","value":7.5}} 7.5 \
+      [desc STRING] {{"id":"950","value":"hello ü"}} {hello ü}] {
+    set r [setvar $desc $json -out "VALUE {$val} TIME {2026-10-31 21:00:00}"]
+    lappend out [status $r] [body $r]
+  }
+  set out
+} -result [list 200 {{"id":"950","value":"true","lastModified":"2026-10-31 21:00:00"}} 200 {{"id":"950","value":"2","lastModified":"2026-10-31 21:00:00"}} 200 {{"id":"950","value":"7.5","lastModified":"2026-10-31 21:00:00"}} 200 "{\"id\":\"950\",\"value\":\"[encoding convertto utf-8 {hello ü}]\",\"lastModified\":\"2026-10-31 21:00:00\"}"]
+
+test sysvars-2 {a value that does not fit the type is HTTP 422 'invalid argument (value)' and nothing is written} -body {
+  set out {}
+  foreach {desc json} [list \
+      [desc LOGIC] {{"id":"950","value":"yes"}} \
+      [desc LOGIC] {{"id":"950","value":1}} \
+      [desc LIST LIST {a;b;c}] {{"id":"950","value":3}} \
+      [desc LIST LIST {a;b;c}] {{"id":"950","value":-1}} \
+      [desc LIST LIST {a;b;c}] {{"id":"950","value":"x"}} \
+      [desc NUMBER] {{"id":"950","value":"abc"}} \
+      [desc NUMBER] {{"id":"950","value":"1e5"}} \
+      [desc NUMBER MIN 0 MAX 10] {{"id":"950","value":11}} \
+      [desc NUMBER MIN 0 MAX 10] {{"id":"950","value":-0.5}} \
+      [desc STRING] "{\"id\":\"950\",\"value\":\"a\\u0001b\"}" \
+      [desc STRING] "{\"id\":\"950\",\"value\":\"[string repeat x 1001]\"}"] {
+    set r [setvar $desc $json]
+    lappend out [err $r] [regexp {newValue} [lindex [dict get $r rega_calls] end]]
+  }
+  set out
+} -result [lrepeat 11 {422 403 {invalid argument (value)}} 0]
+
+test sysvars-3 {the limits themselves are valid; a number without limits is any decimal} -body {
+  set out {}
+  foreach {desc json} [list [desc NUMBER MIN 0 MAX 10] {{"id":"950","value":0}} [desc NUMBER MIN 0 MAX 10] {{"id":"950","value":10}} [desc NUMBER MIN -1 MAX 100] {{"id":"950","value":"-1"}} [desc NUMBER] {{"id":"950","value":-123456.789}}] {
+    lappend out [status [setvar $desc $json]]
+  }
+  set out
+} -result {200 200 200 200}
+
+test sysvars-4 {an alarm variable is not changeable here (422 invalid argument (id)); an unknown type likewise} -body {
+  list [err [setvar [desc ALARM] {{"id":"950","value":"true"}}]] [err [setvar [desc UNKNOWN] {{"id":"950","value":"1"}}]]
+} -result {{422 403 {invalid argument (id)}} {422 403 {invalid argument (id)}}}
+
+test sysvars-5 {an id that is not a system variable is HTTP 404 (it is only looked up among the system variables)} -body {
+  set r [post {{"id":"1024","value":"1"}} -rega [list [list $::READ {}]]]
+  list [err $r] [regexp {newValue} [scripts $r]]
+} -result {{404 501 {system variable not found}} 0}
+
+test sysvars-6 {the system's own (internal) and the hidden variables are refused with HTTP 403} -body {
+  list [err [setvar [desc NUMBER INTERNAL true] {{"id":"40","value":"1"}}]] [err [setvar [desc NUMBER VISIBLE false] {{"id":"40","value":"1"}}]]
+} -result {{403 400 {access denied (system variable)}} {403 400 {access denied (system variable)}}}
+
+test sysvars-7 {a user needs the full access right of the variable, an administrator does not; a guest never changes anything} -body {
+  set noRight [desc LOGIC FULL false]
+  set a [setvar $noRight {{"id":"950","value":true}} -sessions $::USER]
+  set b [setvar $noRight {{"id":"950","value":true}} -sessions $::ADMIN]
+  set c [setvar [desc LOGIC] {{"id":"950","value":true}} -sessions $::USER]
+  set d [setvar [desc LOGIC] {{"id":"950","value":true}} -sessions $::GUEST]
+  list [err $a] [status $b] [status $c] [err $d] [regexp {ID_SYSTEM_VARIABLES} [scripts $d]]
+} -result {{403 400 {access denied (system variable)}} 200 200 {403 400 {access denied (\"USER\" needed, session level 1)}} 0}
+
+test sysvars-8 {the body: not JSON is 400, a missing or odd id or value and unknown keys are 422} -body {
+  set d [desc LOGIC]
+  list [err [setvar $d {{nope}}]] [err [setvar $d {{"value":true}}]] [err [setvar $d {{"id":"95x","value":true}}]] [err [setvar $d {{"id":"950"}}]] [err [setvar $d {{"id":"950","value":true,"name":"x"}}]]
+} -result {{400 100 {invalid request (\" expected)}} {422 403 {invalid argument (id)}} {422 403 {invalid argument (id)}} {422 403 {invalid argument (value)}} {422 403 {invalid argument (name)}}}
+
+test sysvars-9 {only POST is allowed (405 with Allow: POST); without a session HTTP 401 and no ReGa script runs} -body {
+  set out {}
+  foreach m {GET PUT DELETE} {
+    set r [post {} -method $m]
+    regexp {Allow: (\w+)} [dict get $r headers] -> allow
+    lappend out [status $r]/$allow
+  }
+  set n [golden::call_raw {{"id":"950","value":true}} [golden::prepare [list -candidate $::CAND -method POST -contenttype application/json -setenv {REQUEST_URI /api/v2/sysvars} -header {X-Requested-With XMLHttpRequest} -sessions $::ADMIN]]]
+  lappend out [status $n] [llength [dict get $n rega_calls]]
+} -result {405/POST 405/POST 405/POST 401 0}
+
+test sysvars-10 {a string that looks like script stays one escaped string literal: the injected line is well formed and nothing of it is code} -body {
+  set bs [format %c 92]
+  set evil "x\"); WriteLine(\"pwned\"); WriteLine(\"$bs"
+  set esc [string map [list $bs "$bs$bs" "\"" "$bs\""] $evil]
+  set json "{\"id\":\"950\",\"value\":\"$esc\"}"
+  set r [setvar [desc STRING] $json]
+  set lines [regexp -all -inline -line {^var newValue = .*$} [scripts $r]]
+  # one line holding one complete literal: the quotes inside are escaped, the closing quote and semicolon end the line
+  list [status $r] [llength $lines] [regexp {^var newValue = "(?:[^"\\]|\\.)*";$} [string trimright [lindex $lines 0]]] [regexp {pwned} [lindex $lines 0]]
+} -result {200 1 1 1}
+
+test sysvars-11 {the id is looked up in the system variable collection in both scripts and the value is a script variable} -body {
+  set fd [open [file join $gen rega-model v2 sysvars.tcl] r]; set c [read $fd]; close $fd
+  list [regexp -all {foreach\(i, dom.GetObject\(ID_SYSTEM_VARIABLES\).EnumIDs\(\)\)} $c] [regexp {dom.GetObject\(\$} $c] [regexp {sv.State\(newValue\)} $c]
+} -result {2 0 1}
+
+proc modelsysvars {extra} {
+  set sv {ID 950 NAME Anwesenheit TYPE LOGIC UNIT {} VALUE true LOGGED false VISIBLE true INTERNAL false CHANNEL_ID 65535 VALUE_MIN {} VALUE_MAX {} VALUE_LIST {} VALUE_NAME_0 away VALUE_NAME_1 home}
+  set rec [concat $sv $extra]
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/model} -query sections=sysvars \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::GUEST -rega [list [list {*ID_SYSTEM_VARIABLES*ValueSubType()*} [list $rec]]]]]]
+}
+
+test sysvars-12 {the model's sysvars carry the description and the time of the last change (empty if ReGa gives none)} -body {
+  set a [body [modelsysvars {INFO {Wer ist da} TIME {2026-10-31 19:34:03}}]]
+  set b [body [modelsysvars {}]]
+  list [regexp {"description":"Wer ist da","lastModified":"2026-10-31 19:34:03","isLogged"} $a] [regexp {"description":"","lastModified":"","isLogged"} $b]
+} -result {1 1}
+
+cleanupTests
