@@ -68,8 +68,8 @@ def main():
             # ---- desktop, real admin
             sign_in(pg)
             groups = [h.strip().lower() for h in pg.locator("aside nav h2").all_inner_texts()]
-            check("the sidebar groups the entries", groups == ["objects"], str(groups))
-            check("the sidebar lists the built objects", links(pg) == ["Overview", "Devices", "Rooms", "Programs", "System variables", "More in the classic UI"], str(links(pg)))
+            check("the sidebar groups the entries", groups == ["objects", "system"], str(groups))
+            check("the sidebar lists the built objects", links(pg) == ["Overview", "Devices", "Rooms", "Programs", "System variables", "System log", "More in the classic UI"], str(links(pg)))
             check("the current page is marked", pg.locator("aside nav a[aria-current=page]").inner_text() == "Overview")
             check("the menu button is hidden on a wide screen", not pg.get_by_role("button", name="Menu", exact=True).is_visible())
             check("the classic link carries the session", "/pages/index.htm?sid=@" in pg.locator("aside nav a", has_text="More in the classic UI").get_attribute("href"))
@@ -86,7 +86,7 @@ def main():
             check("narrow: the sidebar is hidden", not pg.locator("aside").is_visible())
             pg.get_by_role("button", name="Menu", exact=True).click()
             drawer = pg.get_by_role("dialog")
-            check("narrow: the menu button opens a drawer with the same entries", [t.strip() for t in drawer.locator("nav li a").all_inner_texts()] == ["Overview", "Devices", "Rooms", "Programs", "System variables"])
+            check("narrow: the menu button opens a drawer with the same entries", [t.strip() for t in drawer.locator("nav li a").all_inner_texts()] == ["Overview", "Devices", "Rooms", "Programs", "System variables", "System log"])
             drawer.get_by_role("link", name="Rooms").click(); pg.wait_for_selector("h1:text('Rooms')")
             check("narrow: choosing an entry navigates and closes the drawer", "#/rooms" in pg.url and pg.get_by_role("dialog").count() == 0)
             pg.get_by_role("button", name="Menu", exact=True).click(); pg.keyboard.press("Escape")
@@ -100,7 +100,7 @@ def main():
                 pg.unroute("**/v2/profile"); mock_profile(pg, **kw); pg.reload(); wait_nav(pg)
 
             with_profile(level="USER")
-            check("a user sees the entries of the user menu of the classic UI", links(pg) == ["Overview", "Devices", "Rooms", "Programs", "System variables", "More in the classic UI"], str(links(pg)))
+            check("a user sees the entries of the user menu of the classic UI", links(pg) == ["Overview", "Devices", "Rooms", "Programs", "System variables", "System log", "More in the classic UI"], str(links(pg)))
             pg.get_by_role("button", name="Account menu").click()
             check("the user menu names the level", "User" in pg.get_by_role("menu").inner_text())
             pg.keyboard.press("Escape")
@@ -121,7 +121,7 @@ def main():
 
             # the admin again, then the way out through the menu
             pg.unroute("**/v2/profile"); pg.reload(); wait_nav(pg)
-            check("the real profile restores the navigation", links(pg)[:5] == ["Overview", "Devices", "Rooms", "Programs", "System variables"])
+            check("the real profile restores the navigation", links(pg)[:6] == ["Overview", "Devices", "Rooms", "Programs", "System variables", "System log"])
             sign_out(pg)
 
             # ---- an expired session returns to the form (the real session is ended in the cleanup below)

@@ -46,7 +46,7 @@ def main():
             sid = pg.evaluate("JSON.parse(sessionStorage.getItem('openccu.next.session')).sid")
 
             # ---- the overview is the landing page (as the classic start page)
-            pg.get_by_role("heading", name="System", level=2).wait_for()
+            pg.locator("main").get_by_role("heading", name="System", level=2).wait_for()
             check("the overview is the default page", pg.locator("aside nav a[aria-current=page]").inner_text() == "Overview")
 
             # ---- devices: this CCU has none, the empty state is the real answer

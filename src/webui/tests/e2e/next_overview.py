@@ -71,7 +71,7 @@ def main():
         try:
             pg.goto(a.base + "/webui/next/"); pg.wait_for_selector("#user")
             pg.fill("#user", a.user); pg.fill("#password", a.password); pg.keyboard.press("Enter")
-            pg.get_by_role("heading", name="System", level=2).wait_for()
+            pg.locator("main").get_by_role("heading", name="System", level=2).wait_for()
             pg.wait_for_selector("main dl dd")
 
             # ---- real values against the classic start page

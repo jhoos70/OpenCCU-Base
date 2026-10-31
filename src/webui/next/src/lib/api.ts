@@ -247,6 +247,55 @@ export function makeExecuteProgram(doFetch: Fetch = defaultFetch): (sid: string,
 const executeProgramDefault = makeExecuteProgram();
 export const executeProgram = (sid: string, id: string): Promise<ProgramRun> => executeProgramDefault(sid, id);
 
+export interface LogValue {
+  value: string; // "true"/"false" for a logic or alarm value, a list's index, else the recorded text
+  type: string; // LOGIC, ALARM, LIST, NUMBER, STRING
+  unit: string;
+  valueList: string;
+  valueName0: string;
+  valueName1: string;
+}
+
+export interface LogItem {
+  time: string; // "2026-10-31 21:30:35" (CCU time)
+  name: string; // the system variable or the channel
+  kind: "SYSVAR" | "CHANNEL" | string;
+  datapoint: string; // the datapoint of a channel, "" for a system variable
+  values: LogValue[]; // the records of one event
+}
+
+export interface LogPage {
+  total: number; // records in the whole log
+  offset: number;
+  limit: number;
+  items: LogItem[]; // newest first
+}
+
+export function makeGetLog(doFetch: Fetch = defaultFetch): (sid: string, limit?: number, offset?: number) => Promise<LogPage> {
+  return async function getLog(sid: string, limit = 200, offset = 0): Promise<LogPage> {
+    const { doc, status } = await send(doFetch, `/log?limit=${limit}&offset=${offset}`, { method: "GET", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const d = doc as Partial<LogPage> | null;
+    if (!d || typeof d.total !== "number" || !Array.isArray(d.items)) throw new ApiError(0, "unexpected log", status);
+    return { total: d.total, offset: Number(d.offset ?? offset), limit: Number(d.limit ?? limit), items: d.items };
+  };
+}
+const getLogDefault = makeGetLog();
+export const getLog = (sid: string, limit?: number, offset?: number): Promise<LogPage> => getLogDefault(sid, limit, offset);
+
+/** Clears the whole system log; answers how many records are left (0 if it worked). */
+export function makeClearLog(doFetch: Fetch = defaultFetch): (sid: string) => Promise<{ cleared: boolean; total: number }> {
+  return async function clearLog(sid: string) {
+    const { doc, status } = await send(doFetch, "/log", { method: "DELETE", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const d = doc as { cleared?: boolean; total?: number } | null;
+    if (!d || typeof d.cleared !== "boolean") throw new ApiError(0, "unexpected answer", status);
+    return { cleared: d.cleared, total: Number(d.total ?? 0) };
+  };
+}
+const clearLogDefault = makeClearLog();
+export const clearLog = (sid: string) => clearLogDefault(sid);
+
 export interface SystemInfo {
   /** The CCU's clock "2026-10-31 19:05:12" (its own time zone); "" if it cannot be read. */
   time: string;
