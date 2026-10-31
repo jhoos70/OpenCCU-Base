@@ -1,5 +1,6 @@
 // Client of the v2 JSON-RPC API (src/webui/www/api/v2). v2 uses real HTTP status codes, the header
 // X-Requested-With, and X-Session-Id for the session returned by Session.login.
+import type { Translate } from "./i18n";
 
 // Route B (.migration/plan/decisions-ui.md D5): the router answers below homematic.cgi until lighttpd
 // routes /api/v2 itself. Override with VITE_API_BASE=/api/v2 once it does.
@@ -88,7 +89,28 @@ export interface SysVar {
   isInternal: boolean;
 }
 
+export interface Channel {
+  id: string;
+  name: string;
+  address: string;
+  deviceId: string;
+  index: number;
+  channelType: string;
+  category: string;
+}
+
+export interface Device {
+  id: string;
+  name: string;
+  address: string;
+  interface: string;
+  type: string; // the device type, e.g. HmIP-eTRV-B; its description is a CCU string
+  isReady: boolean;
+  channels: Channel[];
+}
+
 export interface Model {
+  devices: Section<Device>;
   rooms: Section<Room>;
   sysvars: Section<SysVar>;
 }
@@ -115,14 +137,14 @@ export const login = (username: string, password: string, call: Rpc = rpc) => ca
 export const logout = (sid: string, call: Rpc = rpc) => call<boolean>("Session.logout", {}, sid);
 export const renew = (sid: string, call: Rpc = rpc) => call<unknown>("Session.renew", {}, sid);
 
-/** A message for the user; never shows internals. */
 export const isSessionExpired = (e: unknown): boolean => e instanceof ApiError && e.status === 401;
 
-export function describeError(e: unknown): string {
-  if (!(e instanceof ApiError)) return "Something went wrong.";
-  if (e.status === 429 || e.code === 429) return "Too many attempts. Wait a moment and try again.";
-  if (e.code === 501) return "Invalid user name or password, or too many open sessions.";
-  if (e.code === 0 && e.status === 0) return "The CCU cannot be reached.";
-  if (e.code === 0) return "The v2 API does not answer. It must be enabled on the CCU (v2_enabled).";
-  return `The CCU refused the request (${e.code}).`;
+/** A message for the user; never shows internals. */
+export function describeError(e: unknown, t: Translate): string {
+  if (!(e instanceof ApiError)) return t("errGeneric");
+  if (e.status === 429 || e.code === 429) return t("errTooMany");
+  if (e.code === 501) return t("errCredentials");
+  if (e.code === 0 && e.status === 0) return t("errUnreachable");
+  if (e.code === 0) return t("errNoV2");
+  return t("errRefused", { code: e.code });
 }

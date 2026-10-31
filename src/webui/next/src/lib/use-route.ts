@@ -1,12 +1,12 @@
 import * as React from "react";
 
-export const ROUTES = ["rooms", "sysvars"] as const;
+export const ROUTES = ["devices", "rooms", "sysvars"] as const;
 export type Route = (typeof ROUTES)[number];
 
 // Hash routing: the app is served from a static prefix, so no server route is needed and a reload keeps the page.
 const parse = (): Route => {
   const name = window.location.hash.replace(/^#\/?/, "");
-  return (ROUTES as readonly string[]).includes(name) ? (name as Route) : "rooms";
+  return (ROUTES as readonly string[]).includes(name) ? (name as Route) : "devices";
 };
 
 export function useRoute(): Route {

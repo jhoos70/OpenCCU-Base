@@ -1,10 +1,12 @@
 import * as React from "react";
 import { describeError, getModel, isSessionExpired, type Model, type ModelSection } from "./api";
+import { useI18n } from "./i18n";
 
 export type ModelState<S extends ModelSection> = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: Model[S] };
 
 /** Loads one section of the bulk model. An expired session calls onExpired (back to the sign-in form). */
 export function useModel<S extends ModelSection>(section: S, sid: string, onExpired: () => void): ModelState<S> {
+  const { t } = useI18n();
   const [state, setState] = React.useState<ModelState<S>>({ status: "loading" });
   React.useEffect(() => {
     let live = true;
@@ -14,11 +16,11 @@ export function useModel<S extends ModelSection>(section: S, sid: string, onExpi
       .catch((e) => {
         if (!live) return;
         if (isSessionExpired(e)) return onExpired();
-        setState({ status: "error", message: describeError(e) });
+        setState({ status: "error", message: describeError(e, t) });
       });
     return () => {
       live = false;
     };
-  }, [section, sid, onExpired]);
+  }, [section, sid, onExpired, t]);
   return state;
 }

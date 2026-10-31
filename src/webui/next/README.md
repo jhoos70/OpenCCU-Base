@@ -4,10 +4,24 @@ React 19, TypeScript, Vite and Tailwind, with shadcn/ui-style components (Radix 
 `src/components/ui` and are maintained here. It runs **next to** the classic UI, which stays untouched.
 Decisions: `.migration/plan/decisions-ui.md` (D1 to D5).
 
-Status: login, and two read-only pages, Rooms and System variables. It signs in with `Session.login` on the
-v2 API, keeps the session id in `sessionStorage`, and links to the classic UI with the same session, so both
-can be used at once. The pages read the v2 bulk model (`GET /model`); routes are hash based (`#/rooms`,
-`#/sysvars`), so no server route is needed and a reload keeps the page. An expired session returns to the form.
+Status: login, and three read-only pages: Devices (filter, channels per device), Rooms and System variables.
+It signs in with `Session.login` on the v2 API, keeps the session id in `sessionStorage`, and links to the
+classic UI with the same session, so both can be used at once. The pages read the v2 bulk model (`GET /model`);
+routes are hash based (`#/devices`, `#/rooms`, `#/sysvars`), so no server route is needed and a reload keeps the
+page. An expired session returns to the form.
+
+## Languages
+
+English and German. The browser language decides, a DE/EN switch in the header overrides it and is remembered
+(`localStorage`). The texts of the app are in `src/lib/messages.ts`; the German catalog must have exactly the
+English keys (the compiler checks it, and a test checks the placeholders).
+
+Texts that belong to the CCU itself, namely the `${key}` value names of system variables and the descriptions of
+device types, are read from the classic UI's language files (`/webui/js/lang/<lang>/translate.lang.*.js`,
+`src/lib/ccu-strings.ts`), so both UIs show the same translations and nothing is translated twice. If a file
+cannot be read the app falls back to plain text. A unit test parses the real files of this repository, so a
+change of their format is noticed. Dialog texts that the files build by JavaScript concatenation are not
+supported (and not needed here).
 
 ## Where it runs
 
@@ -45,11 +59,14 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
 - `src/webui/tests/e2e/next_login.py`: wrong password, login, reload, the same session in the classic UI, sign out.
 - `src/webui/tests/e2e/next_pages.py`: rooms and system variables compared with the classic v1 API, tabs, reload,
   umlauts, internal variables hidden, an expired session returns to the form.
+- `src/webui/tests/e2e/next_i18n_devices.py`: German by browser language, the language switch, `${key}` value names
+  resolved from the classic strings, and the Devices page. The test CCU has no devices, so the real answer is the
+  empty state; the rest uses a mocked model answer with realistic devices (shape of `v2/model.tcl`).
 
 ## Not yet
 
-German text (the classic UI is multilingual), pages beyond rooms and system variables (devices, programs),
-editing, push events, and the clean
+pages beyond devices, rooms and system variables (programs, the device inbox), editing, push events,
+device pages checked against real hardware (there is none in the test CCU), and the clean
 `/next/` and `/api/v2` URLs (they need a change in the OpenCCU packaging repository, "Route A").
 
 ## Licences

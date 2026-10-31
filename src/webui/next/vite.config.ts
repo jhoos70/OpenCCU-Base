@@ -11,6 +11,6 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: { outDir: "dist", emptyOutDir: true },
-  server: { proxy: { "/api": process.env.CCU_URL ?? "http://127.0.0.1:18080", "/pages": process.env.CCU_URL ?? "http://127.0.0.1:18080" } },
+  server: { proxy: { "/api": process.env.CCU_URL ?? "http://127.0.0.1:18080", "/pages": process.env.CCU_URL ?? "http://127.0.0.1:18080", "/webui/js": process.env.CCU_URL ?? "http://127.0.0.1:18080" } },
   test: { environment: "node" },
 });

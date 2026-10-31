@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Translate } from "./i18n";
 import { ApiError, describeError, isSessionExpired, login, makeGetModel, makeRpc } from "./api";
 
 const reply = (status: number, body: unknown) => async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
@@ -36,22 +37,25 @@ describe("rpc", () => {
   it("treats a non-JSON answer (lighttpd 404) as an unavailable v2 API", async () => {
     const rpc = makeRpc(reply(404, "<html>404</html>"));
     const e = await rpc("Session.login").catch((x) => x);
-    expect(describeError(e)).toMatch(/v2_enabled/);
+    expect(describeError(e, t)).toBe("errNoV2");
   });
 
   it("reports an unreachable CCU", async () => {
     const rpc = makeRpc(async () => { throw new TypeError("fetch failed"); });
     const e = await rpc("Session.login").catch((x) => x);
-    expect(describeError(e)).toMatch(/cannot be reached/);
+    expect(describeError(e, t)).toBe("errUnreachable");
   });
 });
 
+// the keys themselves are the expected texts here: the catalogs are tested in i18n.test.ts
+const t = ((key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key)) as unknown as Translate;
+
 describe("describeError", () => {
-  it("maps known codes and never leaks the server message", () => {
-    expect(describeError(new ApiError(501, "secret internals", 401))).toMatch(/Invalid user name or password/);
-    expect(describeError(new ApiError(429, "rate limit exceeded", 429))).toMatch(/Too many attempts/);
-    expect(describeError(new ApiError(999, "stack trace here", 500))).not.toMatch(/stack trace/);
-    expect(describeError(new Error("x"))).toBe("Something went wrong.");
+  it("maps known codes to message keys and never leaks the server message", () => {
+    expect(describeError(new ApiError(501, "secret internals", 401), t)).toBe("errCredentials");
+    expect(describeError(new ApiError(429, "rate limit exceeded", 429), t)).toBe("errTooMany");
+    expect(describeError(new ApiError(999, "stack trace here", 500), t)).toBe('errRefused:{"code":999}');
+    expect(describeError(new Error("x"), t)).toBe("errGeneric");
   });
 });
 

@@ -1,17 +1,31 @@
 import { describe, expect, it } from "vitest";
 import type { SysVar } from "./api";
-import { formatSysVarValue, isUserVar } from "./format";
+import { translate } from "./i18n";
+import { formatSysVarValue as fmt, isUserVar, text } from "./format";
+import type { Strings } from "./ccu-strings";
 
 const v = (o: Partial<SysVar>): SysVar => ({ id: "1", name: "x", type: "STRING", unit: "", value: "", isVisible: true, isInternal: false, ...o });
+
+const formatSysVarValue = (x: SysVar, strings: Strings = {}, lang: "en" | "de" = "en") => fmt(x, (k, p) => translate(lang, k, p), strings);
 
 describe("formatSysVarValue", () => {
   it("uses the value names of a logic variable", () => {
     expect(formatSysVarValue(v({ type: "LOGIC", value: "true", valueName0: "away", valueName1: "home" }))).toBe("home");
     expect(formatSysVarValue(v({ type: "LOGIC", value: "false", valueName0: "away", valueName1: "home" }))).toBe("away");
   });
-  it("does not show raw i18n keys", () => {
+  it("resolves ${key} value names with the CCU strings", () => {
+    const strings = { sysVarAlarmZone1NotTriggered: "nicht ausgelöst" };
+    expect(formatSysVarValue(v({ type: "ALARM", value: "false", valueName0: "${sysVarAlarmZone1NotTriggered}" }), strings, "de")).toBe("nicht ausgelöst");
+  });
+  it("does not show raw i18n keys while the strings are missing, but a text in the language of the app", () => {
     expect(formatSysVarValue(v({ type: "ALARM", value: "false", valueName0: "${sysVarAlarmZone1NotTriggered}" }))).toBe("not triggered");
-    expect(formatSysVarValue(v({ type: "LOGIC", value: "true", valueName1: "${x}" }))).toBe("yes");
+    expect(formatSysVarValue(v({ type: "ALARM", value: "false", valueName0: "${sysVarAlarmZone1NotTriggered}" }), {}, "de")).toBe("nicht ausgelöst");
+    expect(formatSysVarValue(v({ type: "LOGIC", value: "true", valueName1: "${x}" }), {}, "de")).toBe("ja");
+  });
+  it("text() resolves keys and leaves plain text alone", () => {
+    expect(text("${a}", { a: "A" })).toBe("A");
+    expect(text("${b}", { a: "A" })).toBe("${b}");
+    expect(text("plain", {})).toBe("plain");
   });
   it("picks the entry of an enum list and falls back to the raw value", () => {
     expect(formatSysVarValue(v({ type: "ENUM", value: "1", valueList: "off;on;auto" }))).toBe("on");

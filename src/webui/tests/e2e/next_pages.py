@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Browser test of the nextGen pages (Rooms, System variables) against a CCU with v2_enabled.
+"""Browser test of the nextGen pages (Devices, Rooms, System variables) against a CCU with v2_enabled.
 
     python3 next_pages.py --base http://127.0.0.1:18080 --user Admin --password Admin
 
@@ -45,18 +45,23 @@ def main():
             signed_in = True
             sid = pg.evaluate("JSON.parse(sessionStorage.getItem('openccu.next.session')).sid")
 
-            # ---- rooms (default page)
+            # ---- devices (default page): this CCU has none, the empty state is the real answer
+            pg.get_by_text("No devices available.").wait_for()
+            check("devices is the default page", pg.locator("h1").inner_text() == "Devices")
+
+            # ---- rooms
+            pg.get_by_role("link", name="Rooms").click()
             pg.wait_for_selector("tbody tr")
-            check("rooms is the default page", pg.locator("h1").inner_text() == "Rooms" and "#/rooms" in pg.url or pg.url.endswith("/webui/next/"))
+            check("tab sets the route", "#/rooms" in pg.url)
             ui_rooms = sorted(column(pg, 1))
             v1_rooms = sorted(r["name"] for r in pg.evaluate(V1, ["Room.getAll", sid]))
             check("rooms equal the classic API", ui_rooms == v1_rooms, "%d rooms" % len(ui_rooms))
-            check("umlauts are intact", any("ü" in n or "ä" in n or "ö" in n for n in ui_rooms) and not any("Ã" in n or "�" in n for n in ui_rooms), str([n for n in ui_rooms if not n.isascii()][:3]))
+            check("umlauts are intact", any("ü" in n or "ä" in n or "ö" in n for n in ui_rooms) and not any("Ã" in n or "\ufffd" in n for n in ui_rooms), str([n for n in ui_rooms if not n.isascii()][:3]))
 
             # ---- system variables
             pg.get_by_role("link", name="System variables").click()
             pg.wait_for_selector("h1:text('System variables')"); pg.wait_for_selector("tbody tr")
-            check("tab sets the route", "#/sysvars" in pg.url)
+            check("sysvars tab sets the route", "#/sysvars" in pg.url)
             v1_vars = pg.evaluate(V1, ["SysVar.getAll", sid])
             visible = sorted(column(pg, 1))
             check("internal variables are hidden by default", "Alarmmeldungen" not in visible and len(visible) < len(v1_vars), "%d of %d shown" % (len(visible), len(v1_vars)))
