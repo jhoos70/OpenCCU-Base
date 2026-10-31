@@ -1,0 +1,1533 @@
+{
+  "feature": "webui-api",
+  "target_stack": "Tcl retained for method scripts (UTF-8 for new/edited files; ISO-8859-1/CRLF kept for files patched downstream) with HomeMatic script (.hms); same bridges tclrpc.so and tclrega.so; single JSON serializer; schema-validated params (JSON Schema data files); JSON-RPC 1.1 as v1 plus additive JSON v2 paths; tcltest contract tests with mock bridges in GitHub Actions; lighttpd CGI, ReGaHss, CMake/Make and OpenCCU packaging unchanged; optional FastCGI/reverse-proxy gateway (C++ per repo toolchain or Tcl) only if gated in.",
+  "strategy": "Refactor in place, safety-net first (D002, D020). Shared layers before features: Phase 0 builds the tcltest harness, mock bridges and golden fixtures for the registry methods and removes or CI-checks the stale www/api copy; Phase 1 closes exposure (backup CGIs stay ADMIN + empty allow-list, not removed now; createFile/existsFile allow-lists incl. 2 existsFile patterns, exec audit, Session.logout, reduced help page, checksid path fix); Phase 2 hardens the dispatcher and security-session (single serializer, error sanitisation + correlation id, whitelisting, strict mode, CSPRNG sid, explicit config-tool flag, registry cache); Phase 3 adds the 179-entry method schema and central validation (fixes ARGUMENTS gaps); Phase 4 adds v2 read endpoints first (rpc, batch, schema, model, profile), then edit endpoints once EG-6 is prototyped; Phase 5 adds event queue fixes and the long-poll endpoint, with the datapoint producer gated by EG-2; Phase 6 measures and decides on the optional gateway. v1 behaviour is frozen under default configuration at every step (NFR-045) and every phase is a revertible change to the Tcl tree. Within a phase, tasks follow the dependency order of functional_trace (dependencies[]) with the contract owner (behavioral contract) written test-first.",
+  "phases": [
+    {
+      "phase": 0,
+      "name": "Safety net and single source of truth",
+      "components": [
+        "schema-harness"
+      ],
+      "specs": [],
+      "verifies": "SP001-SP047"
+    },
+    {
+      "phase": "0+3",
+      "name": "Frozen v1 methods: golden fixtures (Phase 0) and schema validation / ARGUMENTS fixes (Phase 3)",
+      "components": [
+        "schema-harness",
+        "interface-gateway",
+        "rega-model",
+        "dispatcher"
+      ],
+      "specs": [
+        "SP009",
+        "SP016",
+        "SP017",
+        "SP018",
+        "SP019",
+        "SP020",
+        "SP021",
+        "SP022",
+        "SP023",
+        "SP024",
+        "SP026",
+        "SP027",
+        "SP028"
+      ]
+    },
+    {
+      "phase": 1,
+      "name": "Exposure closure",
+      "components": [
+        "backup-cgis",
+        "system-admin",
+        "security-session",
+        "event-push"
+      ],
+      "specs": [
+        "SP010",
+        "SP011",
+        "SP012",
+        "SP030",
+        "SP034",
+        "SP035",
+        "SP036",
+        "SP037",
+        "SP038",
+        "SP039",
+        "SP047",
+        "SP031",
+        "SP015",
+        "SP008"
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Dispatcher hardening",
+      "components": [
+        "dispatcher",
+        "security-session"
+      ],
+      "specs": [
+        "SP001",
+        "SP002",
+        "SP003",
+        "SP004",
+        "SP005",
+        "SP006",
+        "SP007",
+        "SP013",
+        "SP014"
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Machine-readable schema and central validation",
+      "components": [
+        "schema-harness",
+        "dispatcher"
+      ],
+      "specs": [
+        "SP032"
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "v2 additive endpoints",
+      "components": [
+        "rega-model",
+        "user-profile",
+        "dispatcher"
+      ],
+      "specs": [
+        "SP025",
+        "SP033",
+        "SP040",
+        "SP041",
+        "SP042",
+        "SP043",
+        "SP044",
+        "SP045",
+        "SP046"
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Event producers and push",
+      "components": [
+        "event-push"
+      ],
+      "specs": [
+        "SP029"
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "Gateway decision gate",
+      "components": [
+        "optional-gateway"
+      ],
+      "specs": []
+    }
+  ],
+  "functional_trace": [
+    {
+      "spec_id": "SP001",
+      "source": "src/webui/www/api/homematic.cgi:83-157",
+      "contracts": [
+        "REQUEST_METHOD=POST and a body that is a JSON object with a registered method name, a params object containing every name listed in the method's ARGUMENTS, and (when central) a session whose user leve -> it reads exactly CONTENT_LENGTH characters from stdin (line 141), looks the name up in METHOD_LIST (getMethod, lines 87-95), loads params into array 'args' (line 144), runs checkPrivilegeLevel (only i",
+        "strict mode OFF (default) and a POST with Content-Type 'application/x-www-form-urlencoded' carrying a valid JSON body AND WHEN the dispatcher runs -> it is accepted unchanged (v1 compatibility for the 133 client-used methods)",
+        "POST /api/v2/rpc with Content-Type 'application/json', header X-Requested-With: XMLHttpRequest, header X-Session-Id: <sid> (header name locked, BD-05) and body {\"method\":\"Device.listAll\",\"params\" -> the same registry, privilege and argument pipeline runs with the sid taken from the header (a _session_id_ in params is not required) and success is HTTP 200 with the v1 result shape",
+        "rate_limit=true (per_sid_limit 60, per_sid_window_seconds 10) and 60 requests with _session_id_=AbCdEf1234 on /api/homematic.cgi within the last 10 s AND WHEN the 61st request with _session_id_=AbCdEf1234 arrives within that 10 s -> JSON-RPC error 429 \"rate limit exceeded\" is returned with HTTP 200, no method script is sourced and no privilege lookup (getupl.hms) is executed",
+        "rate_limit=false or true and 60 requests with header X-Session-Id: AbCdEf1234 on POST /api/v2/rpc within 10 s AND WHEN the 61st request with the same header arrives within that 10 s -> HTTP 429 with header Retry-After (integer 1..10) and the JSON-RPC error body code 429 \"rate limit exceeded\" are returned and nothing is sourced (the limiter is always enforced on /api/v2)",
+        "60 requests with sid AbCdEf1234 in the current 10 s window AND WHEN a request with a different sid ZyXwVu9876 arrives -> it is processed normally (counters are per sid), and a request carrying no sid (a LEVEL NONE method such as system.listMethods) is not counted by the per-sid limiter",
+        "sid AbCdEf1234 reached 60 requests at t=0 s AND WHEN the next request with that sid arrives at t=11 s -> the window has expired, the counter restarts at 1 and no 429 is returned",
+        "the default configuration (rate_limit=false, strict_mode=false, v1 path /api/homematic.cgi) AND WHEN 61 or 200 requests with the same _session_id_ arrive within 10 s -> no request returns error 429, each is processed exactly as in v1 (HTTP 200, same result shape), no counter file is created and the 133 golden fixtures stay green (NFR-045)"
+      ],
+      "non_functional_requirements": [
+        "WHEN REQUEST_METHOD is neither POST nor GET (PUT, OPTIONS, HEAD...) THEN neither block runs and the CGI emits an empty body with no headers (lines 139, 160)",
+        "WHEN REQUEST_METHOD is unset THEN the script dies with a Tcl error before any output (line 139: can't read env(REQUEST_METHOD))",
+        "WHEN params is a JSON array with an even number of elements THEN it is silently treated as key/value pairs by 'array set args' (line 144); with an odd number the Tcl error 'list must have an even number of elements' becomes error 200",
+        "WHEN jsonrpc_error or a method script calls exit THEN the catch cannot intercept it (Tcl exit is not catchable) and the process ends immediately",
+        "WHEN methods.conf is missing or unreadable THEN file_load returns '' (common.tcl:59-69), METHOD_LIST is empty and every call returns 401",
+        "WHEN the method script outputs with puts before calling jsonrpc_response THEN that text precedes the JSON envelope (no output buffering or isolation)",
+        "WHEN the method name differs only in case from a registry name THEN lookup fails with 401 (string == compare, line 91)",
+        "WHEN SCRIPT_FILE comes from methods.conf only THEN the client cannot influence the sourced path (no path traversal via method name)",
+        "WHEN the HTTP method is PUT, OPTIONS or HEAD on the v1 path /api/homematic.cgi THEN v1 keeps emitting an empty body with no headers (frozen)",
+        "WHEN a request from one sid exceeds the configured per-sid request limit THEN the dispatcher rejects it with a JSON-RPC error and (v2) HTTP 429 without sourcing any method script (limit value and window fixed in blueprint, EG-13)",
+        "WHEN the per-sid limiter runs THEN it executes after the body/params are parsed (sid known) and before method lookup, privilege check, argument check and script sourcing; the counter lives in one file per sid under /tmp/webui-ratelimit/ (name sid-<sid with characters outside [A-Za-z0-9._-] mapped to '_', truncated to 64>) holding request timestamps of the last per_sid_window_seconds (10), replaced by write-to-temp-then-rename; on v2 Retry-After is the integer seconds until the oldest counted request leaves the window (1..10)",
+        "WHEN rate_limit is false (default) and neither strict_mode nor /api/v2 applies THEN the per-sid limiter is skipped entirely (no file access, no 429) so v1 default behaviour is byte-identical (NFR-045)"
+      ],
+      "component": "dispatcher",
+      "dependencies": [
+        "SP002",
+        "SP003",
+        "SP004",
+        "SP005"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP001"
+    },
+    {
+      "spec_id": "SP002",
+      "source": "src/webui/www/api/methods.conf:1-1285",
+      "contracts": [
+        "methods.conf in the CGI working directory AND WHEN a request starts -> the registry is served from a precompiled/cached array that is rebuilt only when the mtime of methods.conf is newer than the cache, so an unchanged methods.conf is parsed 0 times per request after the",
+        "a method entry AND WHEN dispatched -> LEVEL is one of NONE(0), GUEST(1), USER(2), ADMIN(8); target distribution after the deliberate changes is ADMIN 93 (92 incl. RecoveryMode.enter, + CCU.createFile), GUEST 48 (48 - createFile + Session.logout; CCU.existsFile stays GUEST per EG-3), USER 30, NONE 8 (9 - Session.logout) = 179 entries"
+      ],
+      "non_functional_requirements": [
+        "WHEN two entries share a name THEN Tcl array semantics keep the later one (no duplicates exist today: 179 unique names)",
+        "WHEN some entries use TAB or mixed indentation of keys THEN parsing is unaffected (Tcl whitespace); the only TAB-indented entry of the old tree was removed at HEAD 1651075b",
+        "WHEN INFO or ARGUMENTS contain non-ASCII ISO-8859-1 characters THEN GET output is declared charset iso-8859-1 (homematic.cgi:161) while JSON output is UTF-8 (jsonrpc.tcl:48)",
+        "WHEN methods.conf is malformed Tcl (unbalanced braces) or unreadable THEN the dispatcher answers JSON-RPC error 200 with a correlation id (no CGI crash without envelope, no errorInfo) and logs the parse error to syslog; with a missing file every call returns 401 as in v1"
+      ],
+      "component": "dispatcher",
+      "dependencies": [],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP002"
+    },
+    {
+      "spec_id": "SP003",
+      "source": "src/webui/www/api/homematic.cgi:103-118",
+      "contracts": [
+        "central=true, a method with LEVEL != NONE and args(_session_id_) of a live ReGa session whose session string is '<uid>;<upl>;...' AND WHEN checkPrivilegeLevel runs -> it executes eq3/getupl.hms through hmscript_runFromFile with _session_id_ injected (lines 109-113); getupl.hms returns StrValueByIndex(';',1) of system.GetSessionVarStr(id) (getupl.hms:5-13); if USER_",
+        "rate_limit=true and sid AbCdEf1234 already at 60 requests in the last 10 s AND WHEN the 61st request with that sid reaches the dispatcher -> error 429 \"rate limit exceeded\" is returned BEFORE checkPrivilegeLevel runs: getupl.hms / rega_script call count is 0 for the rejected request",
+        "the default configuration (rate_limit=false, v1 path) AND WHEN the 61st request with sid AbCdEf1234 arrives within 10 s -> checkPrivilegeLevel runs normally (exactly one getupl.hms execution per non-NONE request) and the outcome is the unchanged v1 privilege result, never 429"
+      ],
+      "non_functional_requirements": [
+        "WHEN LEVEL is NONE THEN no session lookup happens at all (line 108) and _session_id_ is not required unless listed in ARGUMENTS",
+        "WHEN args(_session_id_) is absent for a non-NONE method THEN Tcl error 'no such element in array' -> error 200 with stack trace, not 402 (line 110)",
+        "WHEN the session user level is non-numeric (e.g. malformed session string) THEN comparison semantics are Tcl expr string fallback; behaviour not proven by tests",
+        "WHEN LEVEL=GUEST (1) THEN any live session with upl >= 1 passes; upl 0 (user level NONE) is rejected",
+        "WHEN central=false THEN checkPrivilegeLevel is never invoked (lines 147-149)",
+        "WHEN _session_id_ contains quotes/backslashes/newlines THEN hmscript_escapeString escapes them before embedding (hmscript.tcl:62-71)",
+        "WHEN central=false is selected only through the explicit config-tool flag (SP013) THEN checkPrivilegeLevel is skipped and one syslog line 'privilege check disabled (config-tool mode)' is written per request",
+        "WHEN the request is rejected by the per-sid limiter THEN no session lookup happens (0 rega_script calls), so an attacker flooding with random sids cannot drive ReGa load beyond per_sid_limit 60 per 10 s per sid when the limiter is active"
+      ],
+      "component": "security-session",
+      "dependencies": [
+        "SP007",
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP003"
+    },
+    {
+      "spec_id": "SP004",
+      "source": "src/webui/www/api/eq3/jsonrpc.tcl:20-36",
+      "contracts": [
+        "a well-formed JSON object containing method and params (and optionally id) AND WHEN jsonrpc_parse runs -> json_parse returns a flat Tcl key/value list, the whole list is converted from UTF-8 (jsonrpc.tcl:24), JSONRPC(METHOD) and JSONRPC(PARAMS) are set and JSONRPC(ID) is set when present, else ID_USED=0 (",
+        "a request without 'id' AND WHEN processed -> ID_USED=0 and the response omits the id member entirely (jsonrpc.tcl:27-29, 52-54, 83-85)",
+        "a request with \"id\":\"abc-1\" (JSON string) AND WHEN the response is built -> the id is echoed JSON-quoted as \"id\": \"abc-1\" (valid JSON); numeric ids (\"id\":7) and null ids round-trip unchanged"
+      ],
+      "non_functional_requirements": [
+        "WHEN a value is a number THEN it is kept as the literal text and the template ^-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-][0-9]+)? is not end-anchored, so '12abc' yields 12 and leaves 'abc' (json.tcl:161-168); an exponent without sign ('1e5') parses '1' then fails with '\"}\" expected'",
+        "WHEN true/false/null appear THEN they become the literal strings 'true'/'false'/'null', indistinguishable from strings (json.tcl:174-184); json null params arrive as the 4-character string null",
+        "WHEN nested objects/arrays are parsed THEN both become Tcl lists with no type tag, so object vs array cannot be distinguished by a method script (json.tcl:43-101)",
+        "WHEN text follows the closing brace of the top-level object THEN it is ignored (json_parse, line 36-38, never checks for trailing text)",
+        "WHEN a string contains \\uXXXX THEN it is decoded with 'subst \"\\\\u$c\"' without hex validation (json.tcl:189-198); no surrogate-pair handling",
+        "WHEN an object key has no ':' THEN the value defaults to '' instead of raising (json.tcl:56-62)",
+        "WHEN parse fails before the id is known THEN the default JSONRPC(ID) '\"error\"' is used and ID_USED=1, so the error response carries \"id\": \"error\" (jsonrpc.tcl:14-15)",
+        "WHEN bytes are UTF-8 THEN stdin is read with default encoding (iso8859-1/system) and re-decoded via 'encoding convertfrom utf-8' on the entire flattened list (jsonrpc.tcl:24)",
+        "WHEN the error-table page documents 101 (id missing) and 201-203 THEN these codes are never raised by code",
+        "WHEN a v2 request carries params whose JSON types differ from the method schema (e.g. refCounter:\"abc\" for an integer) THEN the request is rejected before execution with a validation error (code 403 locked by BD-02 'invalid argument (refCounter)', HTTP 422, EG-12); v1 keeps the legacy untyped parser (numbers/true/false/null as strings)"
+      ],
+      "component": "dispatcher",
+      "dependencies": [],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP004"
+    },
+    {
+      "spec_id": "SP005",
+      "source": "src/webui/www/api/eq3/jsonrpc.tcl:41-94",
+      "contracts": [
+        "jsonrpc_error is called for an internal failure AND WHEN it serialises -> the message text never contains errorInfo, Tcl stack text or filesystem paths and ends with / contains the correlation id of the request; the same id is written to syslog next to the full errorInfo",
+        "any v1 outcome AND WHEN the response is written -> the HTTP status is 200 and header 'CONTENT-TYPE: application/json; charset=utf-8' is kept (frozen)",
+        "a result string or an error message containing control characters U+0000-U+001F other than \\b \\f \\n \\r \\t (e.g. U+0001) AND WHEN serialised by the single JSON serializer -> they are escaped as \\u0001 so the document is always valid JSON"
+      ],
+      "non_functional_requirements": [
+        "WHEN the result string is empty or whitespace THEN 'result' is null (lines 87-91)",
+        "WHEN a method script supplies invalid JSON as result THEN it is emitted unvalidated (no serializer)",
+        "WHEN a method calls jsonrpc_response twice or after puts output THEN multiple concatenated documents are emitted",
+        "WHEN a method never calls jsonrpc_response THEN the CGI ends with only partial or no output (no default response)",
+        "WHEN any error occurs THEN HTTP status stays 200; only the JSON error member signals failure",
+        "WHEN jsonrpc_error is called twice (e.g. in a nested handler) THEN second call is unreachable because exit is called at line 66",
+        "WHEN the error code passed to jsonrpc_error is not an integer THEN the serializer coerces to 200 and logs the programming error (no invalid JSON with a raw token in the code position) [TARGET]"
+      ],
+      "component": "dispatcher",
+      "dependencies": [
+        "SP004"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP005"
+    },
+    {
+      "spec_id": "SP006",
+      "source": "src/webui/www/api/eq3/hmscript.tcl:8-98",
+      "contracts": [
+        "a value containing backslash, single quote, double quote, newline, CR or TAB AND WHEN escaped -> each is prefixed/mapped (\\\\, \\', \\\", \\n, \\r, \\t) so that the value cannot leave the string literal (hmscript.tcl:63-70)",
+        "a parameter name containing characters outside [A-Za-z0-9_] AND WHEN sanitized -> those characters are removed, a leading char not in [A-Za-z_] gets '_' prepended, and the name is truncated to 64 characters (hmscript.tcl:92-98)",
+        "a method calls hmscript with its params AND WHEN it runs -> only variables for names listed in that method's ARGUMENTS (schema-declared parameters) are prepended as 'var <name> = \"<escaped>\";' lines; any extra client-supplied param name (e.g. 'id' sent to Sess"
+      ],
+      "non_functional_requirements": [
+        "WHEN two client param names sanitize to the same identifier (e.g. 'a-b' and 'ab') THEN two 'var' declarations with the same name are emitted; the later array iteration order is Tcl hash order, not deterministic by input",
+        "WHEN a client adds an extra param named like a variable used by the method script (e.g. 'id', 'result') THEN it is declared before the script; whether the script's own 'var' redeclaration overrides it is determined by the ReGa interpreter (not verified)",
+        "WHEN a hmscript_runFromFile filename is relative (e.g. 'eq3/getupl.hms') THEN it resolves against the CGI working directory api/ (file_load, no error on missing file: empty script)",
+        "WHEN the function 'hmscript' (lines 10-25) and the file variant (46-60) are used THEN they duplicate the injection logic; hmscript_runInline (39-44) does no injection",
+        "WHEN hmscript.tcl is sourced THEN 'package require HomeMatic' (line 8) is executed unconditionally, also in config-tool mode",
+        "WHEN a request supplies 200 undeclared params of 64+ characters each THEN none of them reaches the generated ReGa script (script prefix contains exactly the declared names) and the request still succeeds"
+      ],
+      "component": "security-session",
+      "dependencies": [],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP006"
+    },
+    {
+      "spec_id": "SP007",
+      "source": "src/webui/www/tcl/eq3/session.tcl:6-134",
+      "contracts": [
+        "valid credentials AND WHEN session_login POSTs tbUsername/tbPassword to http://127.0.0.1/login.htm without following redirects -> the Location header is searched for 'sid=@([^@]*)@' and the captured inner id (without the surrounding @) is returned (session.tcl:51-64)",
+        "an id that starts with @, ends with @ and has total length 12 AND WHEN session_isValid runs -> it executes a ReGa script var _session_id_=\"<sid>\"; ... system.GetSessionVarStr(_session_id_) and returns the script output 'true' or 'false' (lines 74-92)",
+        "a sid that fails the shape check or contains a quote, backslash or newline AND WHEN session_isValid, session_getUserId or session_logout is called -> it returns 'false'/'' without contacting ReGa, and a valid sid is embedded only after hmscript_escapeString-equivalent escaping"
+      ],
+      "non_functional_requirements": [
+        "WHEN session_login/ReGa returns the inner id THEN session_isValid insists on '@'-wrapped 12-character ids, while the JSON API passes the inner id to GetSessionVarStr unwrapped (getupl.hms:8-9) and legacy session.tcl:902 uses the short unwrapped form; consistency of ReGa's session key format cannot be proven from source",
+        "WHEN session_renew calls http://127.0.0.1/pages/index.htm?sid=@<sid>@ THEN it only cleans up the response; the renewal is a side effect of ReGa serving the page (no validation of result)",
+        "WHEN ::http::geturl fails (connection refused) THEN the Tcl error message is propagated; login.cgi maps any other message to LOGIN_ERROR",
+        "WHEN session_getUserId is called THEN it does not validate sid shape and returns StrValueByIndex(';',0) or '' (lines 101-109)",
+        "WHEN rega_escape (rega.tcl:14-24) is defined THEN it is not used by session.tcl and no other caller was found in src/webui/www except via the backup CGIs sourcing rega.tcl",
+        "WHEN ReGa fails during session_isValid THEN the result is 'false' for all callers (backup CGIs no longer fail open) [TARGET]"
+      ],
+      "component": "security-session",
+      "dependencies": [
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP007"
+    },
+    {
+      "spec_id": "SP008",
+      "source": "src/webui/www/api/eq3/event.tcl:10-52",
+      "contracts": [
+        "subscribers recorded in /tmp/event/subscriber.list as a Tcl array id -> {EVENT_COUNT n} AND WHEN event_fire type message runs -> for each subscriber whose EVENT_COUNT < EVENT_LIMIT (64), a line '{TYPE <type> DATA <message>}\\n' is appended to /tmp/event/<id>, EVENT_COUNT is incremented, and the subscriber list is rewritten (even",
+        "homematic.cgi sources event.tcl on every request AND WHEN /tmp/event/subscriber.list does not exist -> the directory is created and an empty list file written (event.tcl:49-52)",
+        "an event producer outside the JSON API AND WHEN rega/bin/hm_deldev runs -> it calls event_fire delete \"<device>\" (src/webui/rega/bin/hm_deldev:17); Event.subscribe fires 'init null' (methods/event/subscribe.tcl:54)"
+      ],
+      "non_functional_requirements": [
+        "WHEN Event.poll returns events THEN event.DATA is concatenated raw into JSON (poll.tcl:27); the producer must supply valid JSON ('null', '\"<dev>\"')",
+        "WHEN event_fire catches an internal error THEN the error is written to syslog with the correlation id instead of being swallowed silently, and lock_release still runs"
+      ],
+      "component": "event-push",
+      "dependencies": [
+        "SP007"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP008"
+    },
+    {
+      "spec_id": "SP009",
+      "source": "src/webui/www/api/eq3/ipc.tcl:14-84",
+      "contracts": [
+        "/var/tmp/api_ipc.cache is non-empty AND WHEN ipc_getInterfaces runs -> the cached array text is returned without re-reading the XML (ipc.tcl:28-34)",
+        "no cache AND WHEN the interface file /etc/config/InterfacesList.xml is parsed -> for each <ipc> node having <name>, <url> and <info> children an entry name -> {PORT <port> URL <url> INFO <info>} is built, PORT being the first ':<digits>' of the URL else 0 (ipc.tcl:56-70, 78-84), a",
+        "env(BIDCOS_SERVICE) is defined (config tool) AND WHEN loading -> a 'default' interface with INFO 'Allgemeine BidCoS-Schnittstelle' is added from it before the XML (lines 45-51)"
+      ],
+      "non_functional_requirements": [
+        "WHEN InterfacesList.xml is missing THEN file_load returns '' and the interface list is empty (and an empty cache means the file is re-read every time)",
+        "WHEN an <ipc> node starts at offset 0 THEN '0 < $node_start' skips it (ipc.tcl:58)",
+        "WHEN tags contain attributes or multiple matches THEN simple greedy regexes (.+) are used, not an XML parser (ipc.tcl:61-63)",
+        "WHEN /var/tmp is not writable THEN file_save silently does nothing (common.tcl:39-44) and the XML is parsed on every request",
+        "WHEN INTERFACE_LIST is consumed THEN only methods/interface/listinterfaces.tcl, dispatch.tcl:158 and device/haslinksorprograms.tcl:14-16 read it (verified by grep)",
+        "WHEN a method does not use INTERFACE_LIST (all except Interface.*, Device.hasLinksOrPrograms, backup links/paramset) THEN the interface list is resolved lazily and ipc_getInterfaces is not executed for that request [TARGET]"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP009"
+    },
+    {
+      "spec_id": "SP010",
+      "source": "src/webui/www/api/backup/common.tcl:38-107",
+      "contracts": [
+        "a QUERY_STRING AND WHEN parseQueryString splits on '&' and matches '([^=]+)=(.+)' -> each key/value is URL-decoded (+ -> space, %XX -> char, %0d%0a -> newline) and stored; getQueryArg returns {} for missing keys (common.tcl:38-61, 73-79)"
+      ],
+      "non_functional_requirements": [
+        "WHEN a parameter has an empty value ('sid=') THEN the regexp (.+) does not match and the key is treated as absent",
+        "WHEN credentials are supplied THEN they travel in the query string (GET), appearing in access logs and proxies; the POST body is not parsed for login.cgi (getPostData is used only by run-script.cgi)",
+        "WHEN login.cgi documents MISSING_ARGUMENT (header comment lines 9-12) THEN that code is never raised; empty credentials proceed to session_login and fail as INVALID_CREDENTIALS",
+        "WHEN login.cgi returns the id THEN it is the inner id without '@'; other backup CGIs require an '@'-wrapped 12-character id (see A-S7), so the client must add the wrappers",
+        "WHEN decodeUrl runs THEN %XX sequences are rewritten to \\u00XX and run through 'subst -novar -nocommand' then 'encoding convertfrom' (system encoding), backslashes are doubled first (common.tcl:74-76); multi-byte UTF-8 is decoded per byte through the system encoding",
+        "WHEN backup/common.tcl is sourced THEN the files do 'source common.tcl' relative to the CWD, which requires the web server to run the CGI with its own directory as working directory",
+        "WHEN common.tcl loads THEN it loads tclrega.so and tclrpc.so and sources /www/tcl/eq3/session.tcl and rega.tcl with absolute paths (lines 1-5)",
+        "WHEN (branch B) an error is raised after 'Content-Type' was printed THEN the CGI buffers output until completion so the 400 status line is emitted before any body (no 400 text inside a 200 body) [TARGET]"
+      ],
+      "component": "backup-cgis",
+      "dependencies": [
+        "SP007"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP010"
+    },
+    {
+      "spec_id": "SP011",
+      "source": "src/webui/www/api/backup/binfile.cgi:7-26",
+      "contracts": [
+        "version.cgi AND WHEN called with no parameters -> it returns the content of /VERSION as text/plain without newline (version.cgi:5-9, read at line 8); the file is read with loadFile (common.tcl:81-91), '' if missing",
+        "branch B and binfile.cgi?sid=<valid sid with upl 8>&file=/etc/config/rfd.conf where that exact string is an entry of the configured path allow-list (allow-list is EMPTY by default, deny-all) AND WHEN -> the file is streamed in 32 KiB binary chunks with 'application/octet-stream' (textfile.cgi: 'text/plain')",
+        "branch B and tarfile.cgi with an allow-listed path AND WHEN main runs -> tar is invoked as an argument list 'tar c -- <path>' (no Tcl list splitting, '--' guard) and streamed as 'application/x-tar'"
+      ],
+      "non_functional_requirements": [
+        "WHEN file is a directory in tarfile.cgi THEN tar recursively archives it",
+        "WHEN the pipe closes with non-zero status THEN 'close $fd' raises and the Tcl error text is appended after the already streamed body (line 25)",
+        "WHEN version.cgi is called THEN no session is required and the file path is /VERSION (aligned with tcl/eq3_old/common.tcl:173 get_version after HEAD 1651075b)",
+        "WHEN these four files have CR-only line endings THEN tools reporting 'wc -l = 0' misclassify them as empty; they are 150-567 bytes and active",
+        "WHEN session_isValid returns '' or anything other than 'true' (ReGa failure) THEN the request is denied with INVALID_SESSION (fail-closed, replaces NFR-003 fail-open) [TARGET]",
+        "WHEN the file parameter is absent or empty THEN '400 Bad Request' PATH_NOT_ALLOWED is returned (not a raw 'open {}' Tcl error) [TARGET]"
+      ],
+      "component": "backup-cgis",
+      "dependencies": [
+        "SP010"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP011"
+    },
+    {
+      "spec_id": "SP012",
+      "source": "src/webui/www/api/backup/run-script.cgi:7-16",
+      "contracts": [
+        "branch B and run-script.cgi?sid=<valid sid with upl 8> with a POST body 'Write(\"OK\");' AND WHEN main runs -> the body is executed with rega_exec and the UTF-8-decoded STDOUT 'OK' followed by a newline is printed as text/plain (equivalent to ReGa.runScript, ADMIN only)",
+        "branch B, links.cgi?sid=..&interface=BidCos-RF with an ADMIN sid AND WHEN main runs -> XML-RPC getLinks('', 0) is called and '[BEGIN LINK]/NAME=/DESCRIPTION=/SENDER=/RECEIVER=/[END LINK]' blocks are printed; paramset.cgi prints one '<id>:<TYPE>=<value>' line per parameter"
+      ],
+      "non_functional_requirements": [
+        "WHEN rega_exec fails or produces nothing THEN the response body is just a newline (rega_exec swallows errors, rega.tcl:34-37)",
+        "WHEN the XML-RPC call returns a link lacking NAME/DESCRIPTION/SENDER/RECEIVER THEN 'can't read link(NAME)' aborts mid-response (links.cgi:11-14)",
+        "WHEN a parameter id returned by getParamset has no description entry THEN '$types($id)' fails mid-stream (paramset.cgi:32), after earlier lines have been printed",
+        "WHEN interface/address/key are passed as XML-RPC strings THEN they are not validated (links.cgi:28 sends fixed args; paramset.cgi:24,30 pass address and key through)",
+        "WHEN paramset.cgi declares 'run-script' in its header comment (line 2) and links.cgi header says 'run-script' (line 2) THEN these are copy-paste comments, not behavior",
+        "WHEN (branch B) CONTENT_LENGTH is missing THEN run-script.cgi answers 400 'MISSING_BODY' and executes nothing (no empty-script execution) [TARGET]"
+      ],
+      "component": "backup-cgis",
+      "dependencies": [
+        "SP010"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP012"
+    },
+    {
+      "spec_id": "SP013",
+      "source": "src/webui/www/api/homematic.cgi:25-39",
+      "contracts": [
+        "central=false AND env BIDCOS_SERVICE set AND WHEN interfaces are loaded -> a 'default' interface pointing to BIDCOS_SERVICE is exposed (ipc.tcl:45-51)",
+        "the config flag config_tool_mode is absent or 'false' (default; flag name locked, BD-08) AND WHEN homematic.cgi starts -> central=true, tclrega.so is loaded and checkPrivilegeLevel is enforced regardless of the value of DOCUMENT_ROOT ('/www', '/www//', '/opt/cfg/' all behave as central)",
+        "config_tool_mode='true' in the Tcl-readable config file of the API tree AND WHEN homematic.cgi starts -> central=false: tclrega.so is not loaded, checkPrivilegeLevel is skipped and one syslog line is written per request (CfgTool deployments must set the flag, EG-9)"
+      ],
+      "non_functional_requirements": [
+        "WHEN central=false THEN rega-dependent code still executes: hmscript.tcl:8 'package require HomeMatic' runs and methods that call rega_script fail via error 200 or return ''; the 'central' variable is also read by api/methods/webui/getcolors.tcl:32 to select behavior",
+        "WHEN central=false THEN checkArguments still runs (line 151), so argument presence is enforced but session id is not",
+        "WHEN source/CfgTool deployments exist in the repo (src/webui/CfgTool) THEN how the config tool's web server sets DOCUMENT_ROOT is not visible in this partition",
+        "WHEN the config file is missing or unreadable THEN defaults apply: config_tool_mode=false, strict mode=false, v2 disabled (v1 default behaviour preserved) [TARGET]"
+      ],
+      "component": "dispatcher",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP013"
+    },
+    {
+      "spec_id": "SP014",
+      "source": "src/webui/www/tcl/eq3_old/session.tcl:7-912",
+      "contracts": [
+        "file-session mode (sidname 'icsessionid') AND WHEN session_requestisvalid runs -> return codes are -3 (no sid; 'Unauthorized' page), -2/-1/0 (missing/timed-out/unset user; 'Sitzung ungueltig' page), -4 (UPL<0 or < needed; 'zu wenig Rechte' page + timeout reset) or the uid, and vali",
+        "user.tcl in file mode AND WHEN user_verify/user_upl run -> credentials are matched in plaintext against /etc/config/USERS.dat lines 'uid;name;password;upl;eq3' (regex user.tcl:47) and only users with eq3==1 are valid (user.tcl:136-169)",
+        "session_generatesid builds an id AND WHEN it runs -> each of the 10 characters is selected from the full 62-character alphabet [A-Za-z0-9] using bytes read from /dev/urandom with rejection sampling (no modulo bias, 'z' now reachable) and the id keeps th"
+      ],
+      "non_functional_requirements": [
+        "WHEN mode detection runs THEN 'sid' mode is chosen if sid appears as URL query parameter 'sid', or POST param, or the current URL contains 'sid=' (session.tcl:762-766); otherwise file-session mode 'icsessionid'",
+        "WHEN session_generatesid builds ids THEN rand() * 61 indexes a 62-char alphabet so the last char 'z' is never produced (lines 456-462); length 10 (line 15); rand() is not a cryptographic source",
+        "WHEN the sid uniqueness loop runs THEN it relies on catching a failing 'info exists $sessions_uid($sid)' (lines 483, 487) rather than a direct existence test",
+        "WHEN passwords are stored THEN USERS.dat holds them in clear text (user.tcl:85-92) and a hard-coded default admin/elv exists but its auto-creation code is commented out (user.tcl:9-11, 69-75)",
+        "WHEN read_users_ise is used THEN a fixed placeholder 'blabla' replaces the password (user.tcl:218)",
+        "WHEN user_upl_ise/user_name_ise/user_uid_ise/user_isExpert_ise (user.tcl:231-299) interpolate $uid or $uname into ReGa scripts THEN no escaping is applied (injection surface if values are attacker-controlled)",
+        "WHEN session_getsessiondata_ise regex captures upl THEN the group is '([0-9])*' (line 825) so only the LAST digit of a multi-digit level is kept (single digit levels 0,1,2,8 are unaffected)",
+        "WHEN session_isvalid_ise reports uid<=0 THEN rendered output is the same 'reloadPage' anchor for every failure (lines 876-881)",
+        "WHEN tcl/eq3_old files are loaded by classic pages THEN they are symlinked into /www, /www/config, /www/config/display and /www/tools by src/webui/CMakeLists.txt:12-31",
+        "WHEN once.tcl sourceOnce is used THEN files are deduplicated by normalized path and fall back to '..' if not found (once.tcl:15-49); common.tcl:2-3 loads cgi.tcl and tclrpc.so once",
+        "WHEN classic file-session behaviour (900 s timeout, MAX_SESSIONS=10, return codes -4..0, SESSIONS.dat format) is exercised THEN it is unchanged; only the id source changes (classic UI stays intact)"
+      ],
+      "component": "security-session",
+      "dependencies": [],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP014"
+    },
+    {
+      "spec_id": "SP015",
+      "source": "src/webui/www/api/homematic.cgi:160-215",
+      "contracts": [
+        "backup/version.cgi (kept minimal) AND WHEN called without session -> it returns /VERSION content only; GIVEN branch A (SP010) login.cgi no longer exists",
+        "the INFO text of a method contains '<script>&' AND WHEN any HTML page is rendered by the dispatcher -> '<' and '&' are HTML-escaped as '&lt;' and '&amp;'"
+      ],
+      "non_functional_requirements": [
+        "WHEN the GET listing iterates METHOD_LIST with 'array set method' repeatedly THEN keys are never cleared, so an entry missing a key would inherit the previous entry's value (all 179 entries currently carry all keys)",
+        "WHEN Session.login fails THEN it distinguishes only 503 ('service not available') from 501 ('invalid credentials or too many sessions') (methods/session/login.tcl:50-56)",
+        "WHEN Session.renew and Session.setSessionVar are GUEST-level THEN they require a live session (not part of the unauthenticated set)",
+        "WHEN a failure occurs before the privilege check on the allow-listed surface (invalid JSON 100, unknown method 401) THEN the generic error contract is still returned without session but with no errorInfo/path content [TARGET]"
+      ],
+      "component": "security-session",
+      "dependencies": [
+        "SP001",
+        "SP003",
+        "SP032"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP015"
+    },
+    {
+      "spec_id": "SP016",
+      "source": "src/webui/www/api/methods/interface/dispatch.tcl:132-162",
+      "contracts": [
+        "an Interface.* method whose methods.conf SCRIPT_FILE is interface/dispatch.tcl and args.interface names a key of INTERFACE_LIST AND WHEN the method is called -> dispatch.tcl loads that entry into the array 'interface' (PORT, URL, INFO) and sources methods/<METHOD_FILE> (dispatch.tcl:156-162)",
+        "a method script wraps an xmlrpc call as checkXmlRpcStatus [catch {xmlrpc ...}] AND WHEN catch returns 0 -> processing continues and the method emits its normal jsonrpc_response (dispatch.tcl:132-133)",
+        "a valid session with GUEST level AND WHEN Interface.listInterfaces is called -> an array of {name, port, info} is returned, one element per INTERFACE_LIST key, with port emitted as an unquoted number (listinterfaces.tcl:15-34; methods.conf:241-247)"
+      ],
+      "non_functional_requirements": [
+        "WHEN an xmlrpc call raises an error inside catch THEN the catch body returns code 1, so the observable error is always 601 'TCL error' unless tclrpc.so itself returns other codes; the XML-RPC fault text is discarded because no result variable is passed to catch (every method script, e.g. getparamset.tcl:17)",
+        "WHEN a method script uses a bare jsonrpc_error with 501 (getmastervalue.tcl:23, device/get.tcl:130) THEN the code collides with the XML-RPC 'general error' code 501 above",
+        "WHEN an INTERFACE_LIST URL has no ':<digits>' THEN listInterfaces reports port 0 (ipc.tcl:78-84)",
+        "WHEN listInterfaces iterates INTERFACE_LIST THEN element order follows Tcl 'array names' order (unspecified), not a stable order (listinterfaces.tcl:18)",
+        "WHEN the INTERFACE_LIST entry for the named interface is missing INFO/PORT THEN listInterfaces fails with a Tcl error (200 internal error) (listinterfaces.tcl:25-26)",
+        "WHEN Interface.isPresent is called with a bad interface name THEN 500 'unknown interface' is returned (not false) because dispatch resolves first (dispatch.tcl:158)",
+        "WHEN a bare jsonrpc_error 501 is raised by getmastervalue ('invalid value key') or Device.get ('device not found') THEN v1 keeps code 501 with its message (collision with XML-RPC 501 is documented and frozen, EG-15); the schema marks these two as application errors"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP009",
+        "SP001",
+        "SP005"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP016"
+    },
+    {
+      "spec_id": "SP017",
+      "source": "src/webui/www/api/methods/interface/dispatch.tcl:66-127",
+      "contracts": [
+        "a GUEST session and a valid interface and address AND WHEN Interface.getDeviceDescription is called -> xmlrpc getDeviceDescription(string address) is called and the struct is serialised to {type,address,paramsets,version,flags,...} (getdevicedescription.tcl:13-17; dispatch.tcl:66-127; methods.conf:105-",
+        "the struct contains CHILDREN (a device) AND WHEN serialised -> children plus optional firmware, availableFirmware, updatable, firmwareUpdateState are emitted (dispatch.tcl:78-92)",
+        "the struct has no CHILDREN (a channel) AND WHEN serialised -> parent, parentType, index, aesActive, linkSourceRoles, linkTargetRoles, direction plus optional group, team, teamTag are emitted (dispatch.tcl:93-114)"
+      ],
+      "non_functional_requirements": [
+        "WHEN the struct contains TEAM_CHANNELS but not the misspelled key TEAM_CHANNELD THEN 'teamChannels' is never emitted: the guard at dispatch.tcl:111 tests TEAM_CHANNELD (typo) while the body at line 112 reads TEAM_CHANNELS",
+        "WHEN a required key (TYPE, ADDRESS, PARAMSETS, VERSION, FLAGS, or for channels PARENT, PARENT_TYPE, INDEX, AES_ACTIVE, LINK_SOURCE_ROLES, LINK_TARGET_ROLES, DIRECTION) is missing THEN Tcl raises 'can't read device(<KEY>)' and homematic.cgi returns JSON-RPC 200 'internal error:\\n<errorInfo>' (dispatch.tcl:72-101)",
+        "WHEN AES_ACTIVE or ROAMING is the string 'true' rather than the integer 1 THEN toJSONBoolean returns false because only the value 1 maps to true (dispatch.tcl:30-36, 98, 121)",
+        "WHEN version, flags, index or direction are emitted THEN they are unquoted raw tokens, so a non-numeric value yields invalid JSON (dispatch.tcl:75-76, 97, 101)",
+        "WHEN UPDATABLE is present THEN it is emitted as a quoted string, not a boolean (dispatch.tcl:87-89)",
+        "WHEN INTERFACE or ROAMING are present (BidCoS-RF devices) THEN they are emitted as ',\"interface\": <str>' and ',\"roaming\": <bool>' with a space after the colon (dispatch.tcl:117-122)",
+        "WHEN listDevices returns an empty list THEN '[]' is returned (listdevices.tcl:14-22)",
+        "WHEN addDevice finds no device THEN behavior depends on the interface fault code (see B-S1); no local handling exists (adddevice.tcl:15)",
+        "WHEN the struct contains TEAM_CHANNELS but not TEAM_CHANNELD THEN v1 keeps omitting 'teamChannels' (typo preserved; golden fixtures stay valid, defect recorded in EG-15)"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP016"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP017"
+    },
+    {
+      "spec_id": "SP018",
+      "source": "src/webui/www/api/methods/interface/getparamset.tcl:14-29",
+      "contracts": [
+        "a GUEST session, address and paramsetKey AND WHEN Interface.getParamset is called -> xmlrpc getParamset(string address, string paramsetKey) is called and the flat name/value list is serialised to a JSON object with every value as a string (getparamset.tcl:14-29; methods.conf:161-167)",
+        "a GUEST session AND WHEN Interface.getParamsetDescription is called -> each parameter description struct becomes an object {NAME: <param>, <FIELD>: <string>, ...} in a JSON array (getparamsetdescription.tcl:34-57; methods.conf:169-175)",
+        "a GUEST session AND WHEN Interface.getParamsetId is called with address and paramsetType -> the xmlrpc getParamsetId string is returned JSON-quoted (getparamsetid.tcl:14-19; methods.conf:177-183)"
+      ],
+      "non_functional_requirements": [
+        "WHEN address or paramsetKey is unknown to the interface THEN the xmlrpc fault surfaces as 601 'TCL error' (fault text discarded), not 502/503 (getparamset.tcl:17)",
+        "WHEN getParamset returns nested/typed values THEN every value is stringified with json_toString, so numbers and booleans are returned as JSON strings (getparamset.tcl:24)",
+        "WHEN getParamsetDescription runs THEN parameter order follows Tcl 'array names' (unspecified) and the key NAME is injected as the first field (getparamsetdescription.tcl:42-46)",
+        "WHEN getValue returns an empty string THEN jsonrpc_response receives the quoted empty string and the result is '\"\"' (not null) (getvalue.tcl:19)",
+        "WHEN Interface.getMasterValue is called THEN no caller-supplied paramset key is used: it always requests 'MASTER' (getmastervalue.tcl:17)",
+        "WHEN a GUEST-level caller reads MASTER or any paramset THEN there is no per-address access check (methods.conf:161-167, 185-191, 209-215)"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP016"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP018"
+    },
+    {
+      "spec_id": "SP019",
+      "source": "src/webui/www/api/methods/interface/putparamset.tcl:19-37",
+      "contracts": [
+        "a USER session and a 'set' array of {name,type,value} objects AND WHEN Interface.putParamset is called -> each element becomes [list name [list type value]] and xmlrpc putParamset(string address, string paramsetKey, struct paramset) is invoked, returning true (putparamset.tcl:19-37; methods.conf:272-278)",
+        "a GUEST session AND WHEN Interface.setValue is called with address, valueKey, type, value -> xmlrpc setValue(string address, string valueKey, [type value]) is invoked and true returned (setvalue.tcl:16-23; methods.conf:376-382)",
+        "a USER session and a 'set' array containing a PARTY_TEMPERATURE entry AND WHEN Interface.putThermParamset is called -> the paramset is written to the VALUES paramset of address and true is returned (putthermparamset.tcl:18-41; methods.conf:280-286)"
+      ],
+      "non_functional_requirements": [
+        "WHEN Interface.putThermParamset receives a set without a PARTY_TEMPERATURE element THEN validParamset is never assigned and line 38 raises 'can't read validParamset: no such variable', returned as JSON-RPC 200 'internal error:\\n<errorInfo>' (putthermparamset.tcl:31-38)",
+        "WHEN a set element lacks name, type or value THEN 'can't read parameter(<key>)' is raised and returned as 200 internal error (putparamset.tcl:27-29)",
+        "WHEN type is not one of the XML-RPC types known to tclrpc (doc: string,int,double,bool) THEN it is passed through unvalidated to xmlrpc (setvalue.tcl:21; putparamset.tcl:30)",
+        "WHEN GUEST-level callers invoke Interface.setValue THEN actuators can be driven without USER rights because LEVEL is GUEST (methods.conf:376-377); Interface.putParamset needs USER (methods.conf:272-273)",
+        "WHEN Interface.searchDaliDevices runs THEN it behaves as setValue without checkXmlRpcStatus: errorMessage is the catch result variable, so any non-empty xmlrpc return value or error text is appended to /tmp/searchDali.log via exec echo and the script calls 'exit' without sending any JSON response (searchdalidevices.tcl:23-31); it is registered at GUEST level (methods.conf:384-390)",
+        "WHEN Interface.searchDaliDevices succeeds with an empty errorMessage THEN true is returned (searchdalidevices.tcl:33)",
+        "WHEN refCounter is not numeric THEN xmlrpc int conversion fails with 601 (reportvalueusage.tcl:19)",
+        "WHEN putThermParamset's set contains several elements THEN all are sent, PARTY_TEMPERATURE only has to appear once (putthermparamset.tcl:23-36)",
+        "WHEN Interface.searchDaliDevices appends the xmlrpc result to /tmp/searchDali.log via 'exec echo' THEN the target uses Tcl file append (no exec, no request data in a command line) and still exits without a JSON body on failure as in v1 [TARGET]"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP016"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP019"
+    },
+    {
+      "spec_id": "SP020",
+      "source": "src/webui/www/api/methods/interface/getlinks.tcl:51-84",
+      "contracts": [
+        "a GUEST session and address (channel address or empty string) and flags AND WHEN Interface.getLinks is called -> xmlrpc getLinks(string address, int flags) returns link structs serialised as [{name,description,flags,sender,receiver[,senderParamset][,receiverParamset]}] (getlinks.tcl:51-84; methods.conf:145-151)",
+        "flags request paramsets (GL_FLAG_SENDER_PARAMSET 0x02, GL_FLAG_RECEIVER_PARAMSET 0x04) and the interface returns SENDER_PARAMSET/RECEIVER_PARAMSET AND WHEN getLinks is serialised -> those paramsets are appended as nested objects of stringified values (getlinks.tcl:33-45, 70-76)",
+        "an ADMIN session AND WHEN Interface.addLink is called with sender, receiver, name, description -> xmlrpc addLink is invoked with four strings and true returned (addlink.tcl:16-23; methods.conf:65-71)"
+      ],
+      "non_functional_requirements": [
+        "WHEN getLinks flags value is non-numeric THEN xmlrpc int conversion fails with 601 (getlinks.tcl:54)",
+        "WHEN a link struct lacks NAME, DESCRIPTION, FLAGS, SENDER or RECEIVER THEN a Tcl read error becomes 200 internal error (getlinks.tcl:64-68)",
+        "WHEN link FLAGS is not numeric THEN invalid JSON is emitted because FLAGS is unquoted (getlinks.tcl:66)",
+        "WHEN getLinks address is '' THEN links for the whole interface are requested (getlinks.tcl:7 doc, 54)",
+        "WHEN getLinkInfo returns no NAME or DESCRIPTION key THEN Tcl read error -> 200 internal error (getlinkinfo.tcl:21-22)",
+        "WHEN longPress is JSON true THEN it arrives as the string 'true' and is passed as [list bool true] without normalisation (activatelinkparamset.tcl:17,19)",
+        "WHEN Interface.setTeam is called by a legacy client that supplies the misspelled argument 'inteface' in addition to 'interface' THEN the request is accepted and 'inteface' is ignored [TARGET]"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP016"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP020"
+    },
+    {
+      "spec_id": "SP021",
+      "source": "src/webui/www/api/methods/interface/setinstallmodehmip.tcl:26-76",
+      "contracts": [
+        "an ADMIN session, installMode=LOCAL, address, key, keymode AND WHEN Interface.setInstallModeHMIP is called -> xmlrpc setInstallModeWithWhitelist(bool on, int time, array[struct{ADDRESS,KEY,KEY_MODE}]) is invoked and true returned (setinstallmodehmip.tcl:55-65; methods.conf:336-342)",
+        "installMode=ALL AND WHEN Interface.setInstallModeHMIP is called -> xmlrpc setInstallMode(bool on, int time) is invoked (key obtained by the interface from the key server) (setinstallmodehmip.tcl:66-68)",
+        "time is '' AND WHEN setInstallModeHMIP runs -> time defaults to 30 seconds (setinstallmodehmip.tcl:38-42)"
+      ],
+      "non_functional_requirements": [
+        "WHEN setInstallModeHMIP receives any installMode other than LOCAL or ALL (documented as STOP) THEN line 72 executes 'set $on 0', which assigns a variable named after the value of $on instead of resetting $on, so setInstallMode is called with the original on value; installMode=STOP with on=true therefore switches install mode ON (setinstallmodehmip.tcl:69-74)",
+        "WHEN setInstallModeHMIP is called THEN methods.conf requires installMode, interface, on, time, address, key and keymode in ARGUMENTS even for ALL/STOP, so all must be present (possibly empty) to avoid 402 (methods.conf:341)",
+        "WHEN on is non-empty and equals 'true', 1 or '1' THEN on=1; anything else (including 'false', '' and other numbers) gives 0 (setinstallmodehmip.tcl:32-36); note setinstallmode.tcl (unregistered) uses a different test (1 == $on or 'true' == $on) (setinstallmode.tcl:14)",
+        "WHEN key and keymode are provided in LOCAL mode THEN the key travels in the XML-RPC struct in clear and no validation of key format occurs (setinstallmodehmip.tcl:58-63)",
+        "WHEN Interface.setInstallMode (plain) exists as methods/interface/setinstallmode.tcl THEN it is not registered in methods.conf and is unreachable through the API (setinstallmode.tcl:1-18; no entry in methods.conf)",
+        "WHEN Interface.getKeyMissmatchDevice returns a serial THEN jsonrpc_response is called with the raw unquoted token, so a non-numeric serial yields invalid JSON, and an empty serial yields result null (getkeymissmatchdevice.tcl:18; jsonrpc.tcl:87-91)",
+        "WHEN reset is 'true' or 1 THEN [list bool 1] is sent, otherwise bool 0 (getkeymissmatchdevice.tcl:14)",
+        "WHEN getInstallMode / searchDevices return an empty value THEN result is null (getinstallmode.tcl:14; searchdevices.tcl:14)",
+        "WHEN deleteDevice cannot delete the device THEN the interface fault surfaces as 601 (deletedevice.tcl:20)",
+        "WHEN installMode is LOCAL and key contains non-hex characters THEN v1 forwards it unvalidated (frozen); the v2 schema validates key against ^[0-9A-Fa-f]{32}$ (locked, BD-10)"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP016"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP021"
+    },
+    {
+      "spec_id": "SP022",
+      "source": "src/webui/www/api/methods/interface/updatefirmware.tcl:15-19",
+      "contracts": [
+        "an ADMIN session AND WHEN Interface.refreshDeployedDeviceFirmwareList is called -> xmlrpc refreshDeployedDeviceFirmwareList is executed under catch and the method returns toJSONBoolean of the catch status (refreshDeployedDeviceFirmwareList.tcl:15-17)",
+        "a GUEST session AND WHEN Interface.getServiceMessageCount is called -> the number of elements of xmlrpc getServiceMessages is returned as an integer (getservicemessagecount.tcl:13-15; methods.conf:193-199)",
+        "an ADMIN session AND WHEN Interface.suppressServiceMessages is called with channelAddress, parameterId and suppress -> xmlrpc suppressServiceMessages is invoked and true returned; an empty parameterId suppresses all service parameters of the channel (suppressservicemessages.tcl:16-22)"
+      ],
+      "non_functional_requirements": [
+        "WHEN refreshDeployedDeviceFirmwareList runs THEN the body is '[xmlrpc ...]' inside catch, so the xmlrpc result string is executed as a Tcl command; catch status 1 is mapped to true by toJSONBoolean, meaning the response is true exactly when catch reports an error (refreshDeployedDeviceFirmwareList.tcl:15-17)",
+        "WHEN updateFirmware's XML-RPC result is not exactly 1 THEN false is returned; doc claims per-device array but only a boolean is produced (updatefirmware.tcl:11-19)",
+        "WHEN getSuppressedServiceMessages succeeds THEN the already-serialised JSON array is passed through json_toString again, returning a quoted string containing JSON instead of an array (getsuppressedservicemessages.tcl:18-28)",
+        "WHEN suppressServiceMessages runs THEN the XML-RPC type token is 'boolean' rather than 'bool' used elsewhere (suppressservicemessages.tcl:20)",
+        "WHEN getServiceMessageCount runs THEN it counts all returned service messages, no filtering by suppression (getservicemessagecount.tcl:13-15)",
+        "WHEN level in setLogLevel is outside 0-6 THEN validation is left to the interface; no local check (setloglevel.tcl:20-24)"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP016"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP022"
+    },
+    {
+      "spec_id": "SP023",
+      "source": "src/webui/www/api/methods/interface/listbidcosinterfaces.tcl:17-44",
+      "contracts": [
+        "a USER session AND WHEN Interface.listBidcosInterfaces is called -> xmlrpc listBidcosInterfaces is invoked and each struct is mapped to {address, description, dutyCycle, isConnected, isDefault, fwVersion, type} (listbidcosinterfaces.tcl:17-44; methods.conf:416-422)",
+        "an ADMIN session AND WHEN Interface.setBidcosInterface is called with deviceId, interfaceId and roaming -> xmlrpc setBidcosInterface(string, string, bool) is invoked and true returned (setbidcosinterface.tcl:15-21; methods.conf:424-430)",
+        "a GUEST session AND WHEN Interface.rssiInfo is called -> [{name, partner:[{name, rssiData:[a,b]}]}] is built from xmlrpc rssiInfo (rssiinfo.tcl:19-52; methods.conf:320-326)"
+      ],
+      "non_functional_requirements": [
+        "WHEN Interface.changeKey runs THEN the xmlrpc call has no method name: 'xmlrpc $interface(URL) [list string $passphrase]', so the passphrase is interpreted as the method name argument and the call cannot perform a key change as documented (changekey.tcl:15)",
+        "WHEN Interface.setTempKey runs THEN the passphrase is sent as the literal string 'passphrase' ([list string passphrase], no $), not the caller value (settempkey.tcl:15)",
+        "WHEN getLGWConnectionStatus runs THEN the 'interface' argument is required and validated by dispatch but unused; xmlrpc getLGWStatus is commented out (getlgwconnectionstatus.tcl:14)",
+        "WHEN a gateway struct lacks ADDRESS, DESCRIPTION, DUTY_CYCLE, CONNECTED, DEFAULT, FIRMWARE_VERSION or TYPE THEN a Tcl read error -> 200 internal error (listbidcosinterfaces.tcl:29-35)",
+        "WHEN listBidcosInterfaces serialises dutyCycle THEN it is a quoted string although documented as integer; isConnected/isDefault are true only for the value 1 (listbidcosinterfaces.tcl:31-33)",
+        "WHEN rssiInfo partner data has fewer than two values THEN empty tokens produce invalid JSON like '[,]' (rssiinfo.tcl:39)",
+        "WHEN rssiData value is 65536 THEN it means no information (rssiinfo.tcl:16 doc)",
+        "WHEN Interface.init runs THEN registration of an arbitrary callback URL at the interface is possible at ADMIN level only (methods.conf:217-223)",
+        "WHEN Interface.changeKey/setTempKey are called THEN v1 keeps the as-is defective behaviour (no method name / literal 'passphrase') as frozen; correction is a v2 decision (EG-15)"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP016"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP023"
+    },
+    {
+      "spec_id": "SP024",
+      "source": "src/webui/www/api/methods/interface/setmetadata.tcl:11-27",
+      "contracts": [
+        "a GUEST session AND WHEN Interface.getMetadata is called with objectId and dataId -> a ReGa script returns o.MetaData(dataId) for dom.GetObject(objectId) as a JSON string (getmetadata.tcl:13-23; methods.conf:439-444)",
+        "the objectId does not resolve to a ReGa object AND WHEN getMetadata runs -> the string 'No metadata available' is returned (getmetadata.tcl:18-20)",
+        "an ADMIN session AND WHEN Interface.setMetadata is called -> existing metadata dataId is removed then re-added with value on the ReGa object and the string '<dataId>: <value>' is returned (setmetadata.tcl:11-27; methods.conf:432-437)"
+      ],
+      "non_functional_requirements": [
+        "WHEN Interface.setMetadata targets an objectId that does not exist THEN the script creates a new ReGa object (OT_OBJECT) named objectId and stores the metadata on it, i.e. a write side effect creating arbitrary named objects (setmetadata.tcl:19-23)",
+        "WHEN removeMetadata targets a missing object THEN 'o.MetaData(dataId)' is evaluated on a null object (no null check at removemetadata.tcl:11-12); hmscript_run returns '' on script failure (hmscript.tcl:33-37), so the response would be '\"\"' (ReGa behavior on the null dereference unverified)",
+        "WHEN the three ReGa-based methods are called THEN they are registered with SCRIPT_FILE pointing directly to the method file (not dispatch.tcl), so no 'interface' argument is needed or validated (methods.conf:432-467)",
+        "WHEN the crRFD variants call xmlrpc THEN they are not wrapped in checkXmlRpcStatus: faults raise a Tcl error returned as 200 internal error; setMetadata_crRFD passes $value raw instead of [list string $value] and returns the unquoted raw result (setmetadata_crRFD.tcl:16-18; getmetadata_crRFD.tcl:14-16)",
+        "WHEN value or dataId contain quotes/backslashes/newlines THEN hmscript_escapeString escapes them before injection as ReGa 'var' declarations (hmscript.tcl:62-71)",
+        "WHEN getMetadata is called at GUEST level THEN any ReGa object's metadata can be read by object id (methods.conf:439-440)"
+      ],
+      "component": "interface-gateway",
+      "dependencies": [
+        "SP016",
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP024"
+    },
+    {
+      "spec_id": "SP025",
+      "source": "src/webui/www/api/methods/device/listalldetail.tcl:170-285",
+      "contracts": [
+        "a GUEST session and device id AND WHEN Device.get is called -> the same device/channel model for a single device is returned (device/get.tcl:17-177; methods.conf:510-515)",
+        "a GUEST session AND WHEN Device.getNewDeviceCount is called -> the count of enabled devices that are not ReadyConfig and not named 'Gateway' is returned as a JSON string (getnewdevicecount.tcl:13-28; methods.conf:490-495)",
+        "an ADMIN session and a serial address AND WHEN Device.getReGaIDByAddress is called -> the matching device ID() is returned (getregaidbyaddress.tcl:13-26; methods.conf:524-529)"
+      ],
+      "non_functional_requirements": [
+        "WHEN Device.listAllDetail executes THEN one hmscript (ReGa) round-trip is made per device (N+1 pattern) and any device whose script output cannot be parsed into an array is silently skipped (listalldetail.tcl:188-208)",
+        "WHEN Device.listAllDetail reads a device whose operateGroupOnly metadata is null THEN the read call writes it (AddMetaData operateGroupOnly=false); for HmIP-DRG-DALI and HmIP-FALMOT channels it also writes maxCap/chnActive defaults, so a GUEST-level read mutates ReGa metadata (listalldetail.tcl:33-35, 147, 158)",
+        "WHEN a channel Label contains 'HmIP-FALMOT' with channelType CLIMATECONTROL_FLOOR_TRANSCEIVER but is not exactly HmIP-FALMOT-C8/C12 THEN the Tcl side reads channel(FALMOT_CHN_ACTIVE) which the ReGa side never wrote, raising a Tcl error that fails the whole list as 200 internal error (listalldetail.tcl:152, 268-270)",
+        "WHEN isVirtual is computed THEN listAllDetail also flags Label 'HmIP-RCV-50' as virtual while Device.get flags only ChannelType()==29 (listalldetail.tcl:94 vs device/get.tcl:95)",
+        "WHEN GROUP_PARTNER_ID is 65535 THEN partnerId is emitted as an empty string (device/get.tcl:148-149; listalldetail.tcl:234-235)",
+        "WHEN Device.getReGaIDByAddress finds no device THEN the literal 'noDeviceFound' is returned as a normal result; getRFAddressByAddress returns 'unknown' (getregaidbyaddress.tcl:15; getrfaddressbyaddress.tcl:15, 30-34)",
+        "WHEN Device.getRFAddressOfAllDevices runs THEN it calls 'hmscript $script' without args and returns a tab/newline separated string 'RF_ADDRESS..<tab>address<tab>name<newline>' per device (getrfaddressofalldevices.tcl:28, 36)",
+        "WHEN ReGa script fails or returns nothing for Device.listAll / getNewDeviceCount THEN hmscript_run returns '' and an empty array / quoted empty string is returned (hmscript.tcl:33-37)",
+        "WHEN device channels include Internal() channels THEN they are excluded from channel lists (device/get.tcl:47; listalldetail.tcl:46)",
+        "WHEN the ReGa field isReady for the device is emitted in listAllDetail THEN it is a quoted string, whereas channel isReady is an unquoted raw ReGa boolean (listalldetail.tcl:222 vs 246)",
+        "WHEN /api/v2/model is requested with limit=0 or limit above the configured maximum THEN HTTP 422 with error 403 \"invalid argument (limit)\" (maximum fixed in blueprint, EG-13) [V2]",
+        "WHEN Device.listAllDetail is called on v1 THEN behaviour and N+1 cost are preserved (frozen); the bulk path is only /api/v2/model [TARGET]"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP001",
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP025"
+    },
+    {
+      "spec_id": "SP026",
+      "source": "src/webui/www/api/methods/channel/setmode.tcl:10-37",
+      "contracts": [
+        "an ADMIN session, device/channel id and name AND WHEN Device.setName or Channel.setName is called -> the ReGa object's Name() is set and the resulting (possibly uniquified) name is returned as a JSON string (device/setname.tcl:16-25; channel/setname.tcl:17-26; methods.conf:517-522, 714-719)",
+        "an ADMIN session AND WHEN Device.setVisibility / Channel.setVisibility is called with isVisible -> Visible(bool) is set and the resulting boolean is returned as JSON true/false (device/setvisibility.tcl:10-28; channel/setvisibility.tcl:10-28)",
+        "an ADMIN session AND WHEN Channel.setUsability is called with isUsable -> UserAccessRights(iulOtherThanAdmin) is set to iarFullAccess (true) or iarRead (otherwise) and the effective state is returned as true/false (channel/setusability.tcl:10-34; methods.conf:741-746)"
+      ],
+      "non_functional_requirements": [
+        "WHEN a flag argument is the JSON boolean true THEN it arrives as the string 'true' and only the exact string 'true' sets the flag; any other value (including '1', 'True') means false (device/setvisibility.tcl:12; channel/setusability.tcl:12; channel/setlogging.tcl:12)",
+        "WHEN Device.setName or Channel.setName gets an id with no object THEN the script writes nothing and '\"\"' is returned (no error) (device/setname.tcl:18-22)",
+        "WHEN Device.setOperateGroupOnly succeeds THEN the script writes nothing, so the result is the quoted empty string; it also returns '\"\"' when the device does not exist (device/setoperategrouponly.tcl:15-22)",
+        "WHEN a name is not unique THEN ReGa uniquifies it and the returned name differs from the input (device/setname.tcl:12 doc)",
+        "WHEN Channel.setMode sets AES but the channel does not support it THEN the effective mode read back may remain MODE_DEFAULT (channel/setmode.tcl:20-27)",
+        "WHEN unusual characters appear in name THEN hmscript_escapeString escapes backslash, quotes, CR, LF, tab before ReGa injection (hmscript.tcl:62-71)",
+        "WHEN id is not found for visibility/usability/logging/mode THEN empty script output leads to 500 'homematic script error' (channel/setvisibility.tcl:27)"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP026"
+    },
+    {
+      "spec_id": "SP027",
+      "source": "src/webui/www/api/methods/device/haslinksorprograms.tcl:13-145",
+      "contracts": [
+        "a GUEST session and device id AND WHEN Device.listProgramIds is called -> the de-duplicated ids of all programs using any non-internal channel of the device are returned as a JSON string array (device/listprogramids.tcl:13-44; methods.conf:560-565)",
+        "an ADMIN session AND WHEN Device.hasPrograms is called -> true is returned iff any channel has ChnDPUsageCount() > 0 (device/hasprograms.tcl:12-35; methods.conf:553-558)",
+        "an ADMIN session AND WHEN Device.hasLinksOrPrograms is called -> true is returned if the device is used in programs; otherwise, if it has links, each channel>0 is queried over XML-RPC and true is returned iff a link peer belongs to a different parent device (not st"
+      ],
+      "non_functional_requirements": [
+        "WHEN Device.hasLinksOrPrograms handles a device on an interface other than BidCos-RF, BidCos-Wired, HmIP-RF or HmIP-Wired THEN getIfaceURL leaves ifaceList unset and 'can't read ifaceList(URL)' is raised -> 200 internal error (haslinksorprograms.tcl:13-22, 95)",
+        "WHEN a channel in hasLinksOrPrograms has direction other than 1/2 THEN the loop breaks and further links of that channel are ignored (haslinksorprograms.tcl:116-124)",
+        "WHEN hasLinksOrPrograms iterates links THEN getDeviceDescription is requested once per link for the same channel inside the loop (haslinksorprograms.tcl:110-113)",
+        "WHEN the device id is unknown THEN the Device.hasPrograms script guards with 'if (device)' and returns 'false', while Device.listProgramIds calls device.Channels() without a null check (device/hasprograms.tcl:16; device/listprogramids.tcl:14-18); the outcome of that null dereference in ReGa is unverified",
+        "WHEN Channel.hasProgramIds finds no channel THEN the script prints nothing and result is null (channel/hasprogramids.tcl:14-25; jsonrpc.tcl:87-91)",
+        "WHEN Channel.getName gets a hidden channel (not visible) THEN it is excluded by EnumEnabledVisibleIDs() and '\"\"' is returned (channel/getname.tcl:23)",
+        "WHEN Channel.getValue / getChannelType id is not found THEN '\"\"' is returned without error (channel/getvalue.tcl:14-17)",
+        "WHEN the stale copy www/api/methods/device/hasprograms.tcl is compared THEN it lacks the 'break' after hasPrograms = 'true' at line 22 (functionally the same result, loop continues) (device/hasprograms.tcl:22)"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP016",
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP027"
+    },
+    {
+      "spec_id": "SP028",
+      "source": "src/webui/www/api/methods/device/startcomtest.tcl:12-28",
+      "contracts": [
+        "a GUEST session and device id AND WHEN Device.startComTest is called -> the current time 'YYYY-MM-DD HH:MM:SS' is returned as the test id and DevStartComTest() is triggered (device/startcomtest.tcl:12-25; methods.conf:574-579)",
+        "a GUEST session and channel id AND WHEN Channel.startComTest is called -> the same test id is returned and ChnStartComTest() is triggered (channel/startcomtest.tcl:12-24; methods.conf:769-774)",
+        "a started test AND WHEN Device.pollComTest(id,testId) is called and LastTestCompletedTime() >= testId -> that completion timestamp is returned as a JSON string; otherwise raw JSON false is returned (device/pollcomtest.tcl:13-36; methods.conf:581-586)"
+      ],
+      "non_functional_requirements": [
+        "WHEN testId is an arbitrary non-timestamp string THEN the ReGa >= comparison is evaluated on whatever types ReGa derives; no validation occurs (device/pollcomtest.tcl:15-19)",
+        "WHEN the clock of the CCU changes between start and poll THEN comparison may be wrong because the test id is wall-clock time with one-second resolution (device/startcomtest.tcl:17)",
+        "WHEN Device.startComTest or Channel.startComTest runs THEN the test id is written before DevStartComTest()/ChnStartComTest() is invoked, so the id is returned regardless of whether the test could be started (device/startcomtest.tcl:17-18; channel/startcomtest.tcl:16-17)",
+        "WHEN the doc comment of startComTest says 'Id des Kanals' for Device.startComTest THEN the argument is a device id (device/startcomtest.tcl:6)",
+        "WHEN comtest methods are called at GUEST level THEN guests can trigger RF transmissions (methods.conf:574-575, 769-770)"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP028"
+    },
+    {
+      "spec_id": "SP029",
+      "source": "src/webui/www/api/methods/event/subscribe.tcl:20-58",
+      "contracts": [
+        "a GUEST session AND WHEN Event.subscribe is called -> the session's queue file /tmp/event/<sid> is truncated, the subscriber list /tmp/event/subscriber.list gets <sid> -> {EVENT_COUNT 0}, event_fire 'init' is queued to subscribers and true is returned (s",
+        "queued events for the session AND WHEN Event.poll is called -> /tmp/event/<sid> is read, truncated and returned as [{type: <string>, data: <raw JSON>}] (poll.tcl:6-34; methods.conf:609-614)",
+        "a subscribed session AND WHEN Event.unsubscribe is called -> its queue file is deleted, its entry is removed from subscriber.list and true is returned (unsubscribe.tcl:13-27; methods.conf:602-607)"
+      ],
+      "non_functional_requirements": [
+        "WHEN Event.unsubscribe is called for a session not in subscriber.list THEN 'unset subscriberList($id)' raises inside catch, subscriber.list is not rewritten and false is returned (unsubscribe.tcl:17-23)",
+        "WHEN event data is emitted THEN data is inserted into the JSON verbatim (not escaped); hm_deldev embeds the unescaped device argument inside quotes, so a device name with a quote or backslash produces invalid JSON in Event.poll (poll.tcl:27; hm_deldev:17)",
+        "WHEN the module event.tcl is loaded and subscriber.list does not exist THEN /tmp/event is created and the list file is truncated/created (eq3/event.tcl:49-52)",
+        "WHEN event_fire is called by Event.subscribe THEN it is called with the lock held; with the always-1 lock_tryget this does not deadlock (subscribe.tcl:54; eq3/event.tcl:25)",
+        "WHEN Event.unsubscribe is called for a session that is not subscribed THEN false is returned and subscriber.list is not rewritten (unchanged)"
+      ],
+      "component": "event-push",
+      "dependencies": [
+        "SP008"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP029"
+    },
+    {
+      "spec_id": "SP030",
+      "source": "src/webui/www/api/methods/bidcosrf/setconfiguration-rf.tcl:15-69",
+      "contracts": [
+        "an ADMIN session AND WHEN BidCoS_RF.getConfigurationRF is called -> /etc/config/rfd.conf is parsed into sections and {interfaces:[{type,userName,serialNumber,encryptionKey,ipAddress}]} is returned for every section whose Type is not 'CCU2' (getconfiguration-rf.tcl:20-",
+        "an ADMIN session AND WHEN BidCoS_Wired.getConfigurationWired is called -> /etc/config/hs485d.conf is parsed likewise, with no Type filtering (getconfiguration-wired.tcl:20-119; methods.conf:1179-1184)",
+        "an ADMIN session and interfaces[] AND WHEN BidCoS_RF.setConfigurationRF is called -> rfd.conf is rewritten: header lines before the first '[Interface N]' (N in 1-9 digits) are kept and one '[Interface i]' section per element (Type, Name, Serial Number, Encryption Key, optional IP Addr"
+      ],
+      "non_functional_requirements": [
+        "WHEN setConfigurationRF searches for the header end THEN the pattern '\\[Interface [1-9]*\\]' does not match '[Interface 0]', so Interface 0 stays in the retained header; the wired variant matches '[0-9]*' and drops all interface sections (setconfiguration-rf.tcl:20; setconfiguration-wired.tcl:29)",
+        "WHEN getConfiguration-* parses a file THEN a line like 'x = [y]' matches the section regexp anywhere in the line and starts a new section; comment lines starting with '#' are skipped; an unreadable file yields interfaces:[] (getconfiguration-rf.tcl:36-48, 30-58)",
+        "WHEN getConfigurationRF/Wired respond THEN encryptionKey (LAN gateway access code) is returned in clear text (getconfiguration-rf.tcl:109)",
+        "WHEN BidCoS_RF.isKeySet runs THEN result is true exactly when `crypttool -v -t 0` exits non-zero, i.e. the boolean mirrors the failure of the verification command (iskeyset.tcl:7-12)",
+        "WHEN BidCoS_RF.validateKey runs THEN the key is passed as a command line argument of crypttool (exec list form, no shell), visible in the process list (validatekey.tcl:10)",
+        "WHEN createKeyFile computes index THEN a missing 'Current user key' / 'Previous user key' line in crypttool -g output yields index 0 and the corresponding Key line is not written (createkeyfile.tcl:36-56)",
+        "WHEN changeLanGatewayKey runs THEN the md5 package is not loaded (commented) and no hashing is applied to the key (changeLanGatewayKey.tcl:16, 23)",
+        "WHEN the wired config does not exist and EQ3_SERVICE_HS485D_PORT is defined by /etc/eq3services.ports.tcl THEN that port is used in the generated header, else 2000 (setconfiguration-wired.tcl:17-21, 36-44)",
+        "WHEN getConfigurationRF/Wired return encryptionKey in clear text THEN v1 keeps it (frozen, the classic and nextGen editors need the value); not logged to syslog (EG-16)"
+      ],
+      "component": "system-admin",
+      "dependencies": [
+        "SP001",
+        "SP005"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP030"
+    },
+    {
+      "spec_id": "SP031",
+      "source": "src/webui/www/api/methods/session/login.tcl:40-58",
+      "contracts": [
+        "valid username/password AND WHEN Session.login (LEVEL NONE, methods.conf:783-788) is called -> the script POSTs tbUsername/tbPassword via ::http::geturl -query to http://127.0.0.1/login.htm (login.tcl:15,45), extracts the session id with regexp 'sid=@([^@]*)@' from the Location header (login.tc",
+        "a valid session of at least GUEST level AND WHEN Session.renew (LEVEL GUEST, methods.conf:797-802) runs -> a loopback GET http://127.0.0.1/pages/index.htm?sid=@<sid>@ is issued and discarded (renew.tcl:15-17) and the response is true (renew.tcl:19)",
+        "params var and val AND WHEN Session.setSessionVar (LEVEL GUEST, ARGUMENTS {var val}, methods.conf:804-809) runs -> hmscript executes system.SetSessionVar(var,val) with all params injected as script variables and returns true (setsessionvar.tcl:11-13)",
+        "rate_limit=true (login_ip_limit 10, login_ip_window_seconds 60) and 10 Session.login calls (any outcome) from REMOTE_ADDR=192.0.2.10 within the last 60 s AND WHEN the 11th Session.login from REMOTE_ADDR=192.0.2.10 arrives within that 60 s -> JSON-RPC error 429 \"rate limit exceeded\" is returned (HTTP 200 on /api/homematic.cgi; HTTP 429 with header Retry-After of 1..60 seconds on /api/v2/rpc), login.htm is not contacted (0 ::http::geturl calls) and the credentials are not evaluated",
+        "the counter state of acceptance[10] (192.0.2.10 at 10 of 10) AND WHEN a Session.login arrives from REMOTE_ADDR=192.0.2.11 -> it is processed normally (501/503/sid as in v1) because the counter is per client IP (REMOTE_ADDR only; X-Forwarded-For is ignored) and the first 10 attempts of every IP in a 60 s window are never limited",
+        "192.0.2.10 reached 10 attempts at t=0 s AND WHEN a Session.login arrives from 192.0.2.10 at t=61 s -> the window has expired, the counter restarts at 1 and the request is processed normally (no 429)",
+        "the default configuration (rate_limit=false, strict_mode=false, request on /api/homematic.cgi) AND WHEN 11 or 100 Session.login calls arrive from REMOTE_ADDR=192.0.2.10 within 60 s -> none returns error 429, every response is exactly the unchanged v1 outcome (sid, 501 or 503), no counter file is created and the 133-method golden fixtures stay green (NFR-045)",
+        "rate_limit=false but strict_mode=true (or a POST on /api/v2/rpc) AND WHEN the 11th Session.login within 60 s arrives from REMOTE_ADDR=192.0.2.10 -> error 429 \"rate limit exceeded\" is returned exactly as in acceptance[10] (the limiter is always enforced in strict/v2 mode)"
+      ],
+      "non_functional_requirements": [
+        "WHEN Session.login is called with missing username or password THEN dispatcher returns 402 'missing argument (<name>)' (ARGUMENTS {username password}, homematic.cgi:127-130)",
+        "WHEN the loopback connection to 127.0.0.1 fails THEN ::http::geturl raises a Tcl error and the caller receives error 200 'internal error:' + errorInfo (login.tcl:45, homematic.cgi:155)",
+        "WHEN Session.login is called with a session id containing '@' characters in Location THEN the regexp [^@]* captures only up to the next '@' (login.tcl:54)",
+        "WHEN Session.renew is called for a valid session THEN the response is true regardless of whether the GET produced a refreshed session (renew.tcl:17-19)",
+        "WHEN Session.create (session/create.tcl) is requested THEN it stays unregistered and returns 401 \"method not found (Session.create)\"",
+        "WHEN a v2 client sends the sid in the header X-Session-Id and also params._session_id_ with a different value THEN the header value wins and a syslog line is written (header name locked, BD-05)",
+        "WHEN the per-IP login limiter runs THEN the client IP is taken from REMOTE_ADDR only (X-Forwarded-For and Forwarded are ignored), the counter lives in one file per IP under /tmp/webui-ratelimit/ (name login-<REMOTE_ADDR with characters outside [A-Za-z0-9._-] mapped to '_'>) holding the attempt timestamps of the last login_ip_window_seconds (60), and the file is replaced by write-to-temp-then-rename so a reader never sees a partial file; two concurrent requests may lose at most one increment (accepted, documented, fail-open by 1)",
+        "WHEN the limiter is active (rate_limit=true, strict_mode=true or /api/v2) and the counter file is unreadable or /tmp/webui-ratelimit/ cannot be created THEN the request is processed unthrottled and one syslog line 'rate limiter unavailable' with the correlation id is written (availability over throttling; the privilege and credential checks stay fail-closed)",
+        "WHEN rate_limit is false (default) and neither strict_mode nor /api/v2 applies THEN the limiter code path is skipped entirely: no /tmp/webui-ratelimit/ access, no 429, identical v1 behaviour (EG-17 brute-force mitigation is therefore active only when rate_limit is on or in strict/v2 mode)"
+      ],
+      "component": "security-session",
+      "dependencies": [
+        "SP007"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP031"
+    },
+    {
+      "spec_id": "SP032",
+      "source": "src/webui/www/api/methods/system/describe.tcl:16-40",
+      "contracts": [
+        "any caller (LEVEL NONE, methods.conf:1-6) AND WHEN system.describe runs -> it returns an object {name:'HomeMatic JSON API', id:'urn:www-homematic-com:homematic-jsonrpc-api', summary:'Zugriff auf HomeMatic Zentrale', help:'/api/homematic.cgi', procs:[{name,level,summary}...]}",
+        "any caller AND WHEN system.listMethods (LEVEL NONE, methods.conf:8-13) runs -> it returns an array of {name, level, info} for every registry entry, sorted lexicographically by name (listmethods.tcl:16-32)",
+        "name='CCU.getVersion' AND WHEN system.methodHelp (LEVEL NONE, ARGUMENTS {name}, methods.conf:15-20) runs -> it returns the INFO text as a JSON string (methodhelp.tcl:14,20)"
+      ],
+      "non_functional_requirements": [
+        "WHEN METHOD_LIST entries contain non-ASCII INFO text (ISO-8859-1 source) THEN json_toString passes the characters through and jsonrpc_response applies encoding convertto utf-8 (describe.tcl:32, jsonrpc.tcl:75)",
+        "WHEN system.methodHelp is called with an unknown name THEN error 500 \"unknown method (<name>)\" is unchanged"
+      ],
+      "component": "dispatcher",
+      "dependencies": [
+        "SP002"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP032"
+    },
+    {
+      "spec_id": "SP033",
+      "source": "src/webui/www/api/methods/user/getusername.tcl:12-30",
+      "contracts": [
+        "userID of an existing ReGa user AND WHEN User.getUserName (USER, methods.conf:1205-1210) runs -> hmscript returns 'NAME {<user.Name()>}' and the script responds with the literal text {\"UserName\" : \"<name>\"}.UserName (getusername.tcl:12-30); User.getUserFirstName does the same with user.UserFirstN",
+        "userID of an existing user AND WHEN User.hasUserPWD (USER, methods.conf:1212-1217) runs -> the response text is {\"UserPWD\" : true|false }.UserPWD depending on user.UserPwd() == \"\" (hasuserpwd.tcl:12-38)",
+        "id AND WHEN User.isNoExpert (USER) runs -> the raw output of user.UserEasyLinkMode() is returned unquoted, or the literal false when the object does not exist (isnoexpert.tcl:12-24)"
+      ],
+      "non_functional_requirements": [
+        "WHEN User.getUserName/getUserFirstName/hasUserPWD respond THEN the result text is a JavaScript expression with a trailing '.UserName'/'.UserPWD' member access, i.e. not valid JSON; the classic client eval()s responses (getusername.tcl:30, hasuserpwd.tcl:38, jsonrpc.js:66,90)",
+        "WHEN User.getLanguage (USER, methods.conf:1225-1229) runs THEN it resolves userID to user.UserFirstName() (not Name()) and reads /etc/config/userprofiles/<UserFirstName>.lang, returning the first line unquoted or '0' when the file cannot be opened (getlanguage.tcl:11-25), while User.setLanguage keys the file on the caller-supplied userName (setlanguage.tcl:14-15)",
+        "WHEN User.setLanguage receives a userName with path components THEN 'file tail' strips them so the file always lands in /etc/config/userprofiles (setlanguage.tcl:14-15); User.getLanguage builds its path from the ReGa first name without such a strip (getlanguage.tcl:17)",
+        "WHEN a language value is non-numeric (e.g. 'de') THEN User.getLanguage returns it as a bare token via jsonrpc_response [lindex $lang 0], which is not valid JSON (getlanguage.tcl:25)",
+        "WHEN methods.conf is read at HEAD 1651075b THEN User.getReGaVersion and User.setReGaVersion are not registered (upstream #193) and the v2 profile has no reGaVersion attribute",
+        "WHEN PUT /api/v2/profile carries a language not matching ^[a-z]{2}$ THEN HTTP 422 with error 403 \"invalid argument (language)\" (locked, BD-10/BD-11) [V2]",
+        "WHEN v1 User.getUserName/getUserFirstName/hasUserPWD/isNoExpert/getLanguage are called THEN the JS-expression/unquoted outputs of NFR-030 are preserved byte-for-byte (frozen; classic client eval()s them)"
+      ],
+      "component": "user-profile",
+      "dependencies": [
+        "SP006",
+        "SP025"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP033"
+    },
+    {
+      "spec_id": "SP034",
+      "source": "src/webui/www/api/methods/user/restartlighttpd.tcl:10-12",
+      "contracts": [
+        "an ADMIN session AND WHEN User.restartLighttpd (methods.conf:1266-1271) runs -> 'exec /usr/bin/monit restart lighttpd' is executed synchronously and the response is true (restartlighttpd.tcl:10-12)",
+        "an ADMIN session AND WHEN User.restartHmIPServer / stopHmIPServer / startHmIPServer run -> '/usr/bin/nohup /etc/init.d/S62HMServer restart|stop|start >/dev/null &' is started in the background and true is returned immediately (restarthmipserver.tcl:11-12, stophmipserver.tcl:10-11, starthmip",
+        "an ADMIN session AND WHEN CCU.restartReGa (methods.conf:1082-1087) or CCU.restartSSHDaemon (methods.conf:1075-1080) run -> 'monit restart ReGaHss' / 'monit restart sshd' is executed inside catch and the response result is null (restartReGa.tcl:10-12, restartsshdaemon.tcl:10-12)",
+        "an ADMIN session and /VERSION with PLATFORM=rpi4 AND WHEN RecoveryMode.enter (ADMIN, ARGUMENTS {_session_id_}) runs -> rega system.Save(), flag file /usr/local/.recoveryMode containing '1', background '/sbin/reboot -d 2', result true (recoverymode/enter.tcl:11-50)",
+        "PLATFORM undetermined AND WHEN RecoveryMode.enter runs -> error 500; PLATFORM oci|lxc -> error 501 'recovery mode is not supported on platform <p>'; Save/flag/reboot failure -> error 500 and the flag file is removed (recoverymode/enter.tcl:22-48)"
+      ],
+      "non_functional_requirements": [
+        "WHEN User.restartLighttpd restarts the web server that is serving the CGI request THEN the response may never reach the client; the call is not detached or backgrounded (restartlighttpd.tcl:10)",
+        "WHEN SafeMode.enter is called THEN the documented 'paasword' parameter is neither declared in ARGUMENTS nor read by the script (enter.tcl:6, methods.conf:977); the stale root copy www/api/methods/safemode/enter.tcl differs",
+        "WHEN User.deleteCertificate is called and the file does not exist THEN the response is still true (deletecertificate.tcl:10-12)",
+        "WHEN CCU.restartReGa/restartSSHDaemon fail THEN the failure is swallowed by catch and the result is null (restartReGa.tcl:10-12)"
+      ],
+      "component": "system-admin",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP034"
+    },
+    {
+      "spec_id": "SP035",
+      "source": "src/webui/www/api/methods/ccu/createfile.tcl:13-21",
+      "contracts": [
+        "an ADMIN session and file is one of the createFile allow-list /etc/config/userAckSecurityHint, /etc/config/firewallConfigured, /etc/config/fieldTestActive, /etc/config/legacyAPIMigrationAccepted AND WHEN CCU.createFile (LEVEL ADMIN, ARGUMENTS {_session_id_ file}) runs -> 'touch -- <path>' is executed with an argument list and the response is true",
+        "a GUEST (1), USER (2) or ADMIN (8) session and file is one of the existsFile exact allow-list (6 paths incl. /etc/config/legacyAPIMigrationAccepted) AND WHEN CCU.existsFile (LEVEL GUEST, unchanged from v1) runs -> the response is true if the file or directory exists, else false",
+        "a session of any level and file matches ^/etc/config/userprofiles/userAckInstallWizardId_[0-9]{1,10}$ or ^/etc/config/userprofiles/userAckInstallWizard_[^/\\x00]{1,200}$ AND WHEN CCU.existsFile runs -> true if the file exists else false; /etc/config/userprofiles/../shadow, userAckInstallWizard_a/b and userAckInstallWizardId_12x -> error 500 'path not allowed'",
+        "an unmodified classic UI session (any level) AND WHEN homematic.com.js, startpage.js, functions.js, securityHint.js, installWizard.js, webui.js, StorageSettingsDialog.ftl or DiagramControlListPage.ftl call CCU.existsFile with their flag path -> the result is identical to v1 (true/false), so classic and nextGen UIs coexist"
+      ],
+      "non_functional_requirements": [
+        "WHEN the target directory of an allow-listed path does not exist THEN CCU.createFile responds false (touch failure) and logs the error to syslog",
+        "WHEN CCU.createFile is requested for a path outside its allow-list THEN error 500 'path not allowed'; further existsFile/createFile paths or patterns require an allow-list config entry, never a request value (EG-3 resolved and corrected 2026-10-20) [TARGET]",
+        "WHEN a pattern-matched name part is empty, contains '/' or NUL, exceeds 200 characters (userAckInstallWizard_) or is not 1 to 10 digits (userAckInstallWizardId_) THEN CCU.existsFile answers error 500 'path not allowed' without any filesystem call [TARGET]"
+      ],
+      "component": "system-admin",
+      "dependencies": [
+        "SP003",
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP035"
+    },
+    {
+      "spec_id": "SP036",
+      "source": "src/webui/www/api/methods/ccu/setssh.tcl:11-21",
+      "contracts": [
+        "mode == 'true' AND WHEN CCU.setSSH (ADMIN, methods.conf:1028-1032) runs -> '/etc/config/sshEnabled' is created via touch, otherwise (any other value) removed via rm, both inside catch; then /bin/setfirewall.tcl is sourced to reload and apply the firewall; result null (setssh",
+        "the flag file exists AND WHEN CCU.getSSHState (ADMIN, methods.conf:1034-1038) runs -> result is 1 else 0 (getsshstate.tcl:10-12)",
+        "passwd='-nS3cret' AND WHEN CCU.setSSHPassword runs -> the password is passed to 'mkpasswd -m sha512 -s' on stdin (never on a command line, no echo, no shell pipeline), the resulting hash replaces the root: password field of /etc/config/shadow via Tcl fil"
+      ],
+      "non_functional_requirements": [
+        "WHEN mode is the boolean true from JSON THEN it is compared as the string 'true'; anything else (including 'TRUE', 1) disables SSH (setssh.tcl:13)"
+      ],
+      "component": "system-admin",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP036"
+    },
+    {
+      "spec_id": "SP037",
+      "source": "src/webui/www/api/methods/ccu/downloadFirmware.tcl:11-33",
+      "contracts": [
+        "/VERSION major version 3 AND WHEN CCU.downloadFirmware (ADMIN, ARGUMENTS {_session_id_}, methods.conf:1047-1052) runs -> serial is read from /var/board_serial, the URL https://ccu3-update.homematic.com/firmware/download?cmd=download&version=<v>&serial=<s>&lang=de&product=HM-CCU3 is built (downloadFirmware.tcl:11-15) and",
+        "major version 2 AND WHEN the method runs -> serial comes from /sys/module/plat_eq3ccu2/parameters/board_serial and https://update.homematic.com/... product=HM-CCU2 is used (downloadFirmware.tcl:16-18)",
+        "major version neither 2 nor 3 AND WHEN CCU.downloadFirmware runs -> exactly one response document 'false' is emitted (the script exits after the first jsonrpc_response), no wget is started and nothing is appended to /tmp/test"
+      ],
+      "non_functional_requirements": [
+        "WHEN /VERSION does not contain a VERSION= line THEN the grep|sed pipeline errors are only stored in the unchecked catch result and $version/$major carry the error message (downloadFirmware.tcl:11-12)",
+        "WHEN the request is served THEN lang=de and the product name are hard-coded (downloadFirmware.tcl:15,18)",
+        "WHEN a previous /tmp/fup.tgz exists THEN wget -O overwrites it; no size, checksum or signature check is performed in this method (downloadFirmware.tcl:24)",
+        "WHEN wget fails THEN the failure text is written to /tmp/dwnld.error (unchanged) and the HTTP response contains only false, never the wget stderr or URL with serial"
+      ],
+      "component": "system-admin",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP037"
+    },
+    {
+      "spec_id": "SP038",
+      "source": "src/webui/www/api/methods/ccu/setsecuritylevel.tcl:14-26",
+      "contracts": [
+        "level in {LOW, MEDIUM, HIGH} (case-sensitive) AND WHEN CCU.setSecurityLevel (ADMIN, methods.conf:987-992) runs -> /lib/libsecuritylevel.tcl is sourced, SEC_setsecuritylevel <level> is called and true/false is returned from its truth value (setsecuritylevel.tcl:14-26)",
+        "an ADMIN session AND WHEN CCU.getSecurityLevel (methods.conf:980-985) runs -> SEC_getsecuritylevel is returned as a JSON string (LOW|MEDIUM|HIGH per the script comment) (getsecuritylevel.tcl:13-17)",
+        "enabled == 'true' or 'false' AND WHEN CCU.setAuthEnabled (ADMIN, methods.conf:1130-1135) runs -> SEC_setAuthEnabled true|false is called and its outcome is mapped to true/false; any other value returns false (setauthenabled.tcl:13-32); CCU.getAuthEnabled returns integer 1 or 0 from SEC_getAuthEna"
+      ],
+      "non_functional_requirements": [
+        "WHEN CCU.getSNMPEnabled (ADMIN, methods.conf:1165-1170) runs THEN it reports 1 whenever /etc/config/snmp/snmpd-ccu3.conf exists, because the emptiness test compares the literal word 'data' (not $data) with '' (getsnmpenabled.tcl:16); the opened file handle is never closed (getsnmpenabled.tcl:14)",
+        "WHEN enabled is the string 'true'/'false' THEN setAuthEnabled and setHttpsRedirectEnabled compare strings exactly; the numeric 1/0 documented in their comments is not accepted (setauthenabled.tcl:17,23; sethttpsredirectenabled.tcl:16,22)",
+        "WHEN CCU.setSNMPEnabled receives non-boolean 'enabled' THEN 'if { $enable }' raises a Tcl error returned as 200 'internal error:' (setsnmpenabled.tcl:24)",
+        "WHEN usr/pass contain shell-meaningful characters THEN they are passed as exec arguments (not through a shell), after '--' (setsnmpenabled.tcl:25)",
+        "WHEN legacyName contains characters outside [!-.0-~] (e.g. '/' or space) THEN the legacy file is not deleted (setuserackinstallwizard.tcl:26)",
+        "WHEN CCU.getSNMPEnabled is evaluated THEN v1 keeps the as-is behaviour (1 whenever snmpd-ccu3.conf exists; defect not on the plan's fix list, EG-15)"
+      ],
+      "component": "system-admin",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP038"
+    },
+    {
+      "spec_id": "SP039",
+      "source": "src/webui/www/api/methods/ccu/getserial.tcl:11-27",
+      "contracts": [
+        "/var/ids contains 'SerialNumber=<x>' AND WHEN CCU.getSerial (ADMIN, methods.conf:994-999) runs -> <x> is returned as a JSON string (getserial.tcl:23-27); CCU.getAddress reads 'BidCos-Address' from /var/ids (getaddress.tcl:24); CCU.getHmIPAddress reads 'Adapter.1.Address' from /etc/config/hmip_addr",
+        "a readable key=value file AND WHEN a read_var-based getter runs -> the first line matching '^ *<key> *= *(.*)$' wins and its group 1 is returned, or '' when the key is absent (getserial.tcl:11-21)",
+        "service/alarm LED flags AND WHEN CCU.setInfoLedConfig (methods.conf:1158-1163, ARGUMENTS {_session_id_ serviceLedOn alarmLedOn}) runs -> /etc/config/hss_led_info.conf is overwritten with IgnoreServiceMessages=<true if serviceLedOn=='false'> and IgnoreAlarmMessages=<true if alarmLedOn=='false'> and true is returned (setinfoledconfig.tcl"
+      ],
+      "non_functional_requirements": [
+        "WHEN CCU.removeFieldTestActive is called and the file does not exist THEN rm prints an error, exec raises, catch captures it and the response is false (removeFieldTestActive.tcl:16-22)",
+        "WHEN serviceLedOn/alarmLedOn are given as anything other than the string 'false' THEN the LED is treated as on (setinfoledconfig.tcl:20-25)",
+        "WHEN getInfoLedConfig is documented THEN the comment says the values are strings (\"true\") but the code emits bare JSON booleans (getinfoledconfig.tcl:16,50)",
+        "WHEN hss_led_info.conf exists but a key is absent THEN read_var returns '' and the LED is reported on (getinfoledconfig.tcl:35-46)"
+      ],
+      "component": "system-admin",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP039"
+    },
+    {
+      "spec_id": "SP040",
+      "source": "src/webui/www/api/methods/sysvar/getall.tcl:34-109",
+      "contracts": [
+        "a USER session AND WHEN SysVar.getAll (USER, methods.conf:839-844) runs -> a ReGa script enumerates ID_SYSTEM_VARIABLES, maps ValueSubType to type ALARM|LOGIC|LIST|NUMBER|STRING|UNKNOWN (getall.tcl:44-48), and the Tcl side emits [{id,name,type,unit,value,channelId,[valueName",
+        "id of an existing system variable AND WHEN SysVar.get (USER, methods.conf:846-851) runs -> the same object is returned for that single variable looked up with ID_SYSTEM_VARIABLES.Get(id) (get.tcl:35,66-91)",
+        "id / name AND WHEN SysVar.getValue (id) or SysVar.getValueByName (name) runs -> the current value is returned as a JSON string (getvalue.tcl:13-21; getvaluebyname.tcl:13-21)"
+      ],
+      "non_functional_requirements": [
+        "WHEN SysVar.getAll runs THEN every property, including bool values isLogged/isVisible/isInternal, is spliced into the JSON unquoted straight from ReGa output ('true'/'false') while value and numeric properties are returned as JSON strings (getall.tcl:81-104)",
+        "WHEN a variable name or value contains unbalanced braces or Tcl list metacharacters THEN the 'foreach sv $svList' / 'array set' Tcl list parsing can fail or mis-split (getall.tcl:75-77)",
+        "WHEN type is STRING or UNKNOWN THEN no type-specific fields are emitted (getall.tcl:88-100)",
+        "WHEN the array _sv_ is reused across loop iterations without being unset THEN stale keys from previous variables remain (getall.tcl:77); type-specific fields are only appended for matching types, so exposure is limited",
+        "WHEN SysVar.getAll is called on v1 THEN the unpaginated full list and field types are unchanged (frozen)"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP040"
+    },
+    {
+      "spec_id": "SP041",
+      "source": "src/webui/www/api/methods/sysvar/createbool.tcl:14-58",
+      "contracts": [
+        "name matching ^[A-Za-z0-9_\\-\\.:]+$, init_val a Tcl boolean, internal an integer and chnID an integer AND WHEN SysVar.createBool (USER, methods.conf:865-869) runs -> a ReGa script creates an OT_VARDP (binary, istBool, ValueName0 'false', ValueName1 'true', State(init_val)), sets Internal if internal==1|'true', binds it to the channel when chnID != -1 and found, ap",
+        "name, minValue, maxValue, internal, chnID AND WHEN SysVar.createFloat (methods.conf:877-881) runs -> a float variable (ivtFloat, ValueMin/ValueMax, State 0) is created and returned as {name,id,value} (createfloat.tcl:15-59); SysVar.createEnum with valList matching ^[A-Za-z0-9_\\-;,]+$ creates an ivtIn",
+        "name and value AND WHEN SysVar.setBool / setFloat (USER) run -> the ReGa script calls sv.State(value) on ID_SYSTEM_VARIABLES.Get(name) and the response echoes args(value) when the script output is a Tcl-true value, else -1 (setbool.tcl:25-38; setfloat.tcl:14-27);"
+      ],
+      "non_functional_requirements": [
+        "WHEN a create method is called twice with the same name THEN no uniqueness check exists and a second OT_VARDP with the same name is created (createbool.tcl:32-53)",
+        "WHEN chnID is not -1 but dom.GetObject(chnID) returns nothing THEN the variable is created unbound without error (createbool.tcl:28-30,48-51)",
+        "WHEN internal is the string 'true' THEN hmscript_assertInteger rejects it, so only integer values are accepted although the script also tests == \"true\" (createbool.tcl:20-22,42)",
+        "WHEN setBool value is not numeric THEN the Tcl expression '$val >= 1' raises and error 200 is returned (setbool.tcl:16-18)",
+        "WHEN setFloat value is arbitrary text THEN it is neither validated nor quoted in the response, producing invalid JSON if the script output is truthy (setfloat.tcl:19,24)",
+        "WHEN deleteSysVarByName is given a name that resolves to a non-sysvar object THEN dom.GetObject(name) is name-based over all ReGa objects and Remove(sysVar.ID()) is applied to the system-variable collection; for a missing object the ReGa behaviour of sysVar.ID() on a null object is not verifiable from source (see evidence gaps) (deletesysvarbyname.tcl:15-18)"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP006",
+        "SP040"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP041"
+    },
+    {
+      "spec_id": "SP042",
+      "source": "src/webui/www/api/methods/program/getall.tcl:18-56",
+      "contracts": [
+        "a USER session AND WHEN Program.getAll (methods.conf:811-816) runs -> every object under ID_PROGRAMS is enumerated and returned as [{id,name,isActive,isInternal,lastExecuteTime}] with isActive/isInternal as unquoted ReGa booleans and lastExecuteTime as a string (getall.",
+        "id of an existing program AND WHEN Program.get (methods.conf:818-823) runs -> the same fields are returned for one program (get.tcl:18-38)",
+        "id AND WHEN Program.execute (methods.conf:825-830) runs -> program.ProgramExecute() is called and the response is true only if the ReGa output equals exactly 'true', otherwise false (execute.tcl:12-21)"
+      ],
+      "non_functional_requirements": [
+        "WHEN Program.get responds THEN the assembled JSON object has a trailing comma after lastExecuteTime ('...\"lastExecuteTime\":\"..\",}') and is therefore not strict JSON; the classic client parses with eval() (get.tcl:37-38; jsonrpc.js:66,90)",
+        "WHEN a program name contains Tcl list metacharacters THEN getAll's 'foreach program $programs' list parsing can mis-split records (getall.tcl:41-43)",
+        "WHEN Program.execute is called for a program the caller may not be allowed to run THEN there is no ownership/visibility check beyond USER level (execute.tcl:12-15)",
+        "WHEN Program.deleteProgramByName receives a name that does not match a program THEN the ReGa script dereferences a null object; the script's STDOUT is returned as-is, so the response is either 'true' or empty/null (deleteprogrambyname.tcl:14-18)",
+        "WHEN the program list is large THEN no pagination exists (getall.tcl:20-33)",
+        "WHEN Program.deleteProgramByName, Program.execute are called THEN USER level is kept (v1 frozen); tightening is a decision for EG-15"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP042"
+    },
+    {
+      "spec_id": "SP043",
+      "source": "src/webui/www/api/methods/room/getall.tcl:16-69",
+      "contracts": [
+        "a GUEST session AND WHEN Room.listAll (methods.conf:616-621) runs -> the ids of rooms in ID_ROOMS.EnumUsedIDs() are returned as an array of strings (room/listall.tcl:12-34); Subsection.listAll does the same for ID_FUNCTIONS (subsection/listall.tcl:15,22-34)",
+        "a GUEST session AND WHEN Room.getAll / Subsection.getAll run -> an array of {id,name,description,channelIds[]} is returned where description is EnumInfo() and channelIds are room.EnumUsedIDs() (room/getall.tcl:16-69; subsection/getall.tcl)",
+        "id of an existing room AND WHEN Room.get (methods.conf:630-635) runs -> {id,name,description,channelIds[]} is returned (room/get.tcl:17-60)"
+      ],
+      "non_functional_requirements": [
+        "WHEN addChannel is called with an unknown channelId THEN no validation is performed in Tcl; ReGa's Add() decides, and the response is true whenever the room exists (room/addchannel.tcl:14-15)",
+        "WHEN a room has channels of devices that are not fully configured THEN they are included in channelIds (room/get.tcl:13-14 comment)",
+        "WHEN Room.listAll runs THEN it uses hmscript_run (no params), Subsection.listAll uses 'hmscript $script args' which additionally injects all request params as ReGa variables (room/listall.tcl:22 vs subsection/listall.tcl:22)",
+        "WHEN room ids/names contain braces THEN Tcl list parsing of the 'ID {..} NAME {..} CHANNELS {..}' protocol may break (room/getall.tcl:47-49)",
+        "WHEN addChannel/removeChannel on /api/v2/rooms reference a channel id that does not exist THEN HTTP 404 and no ReGa mutation happens (v1 forwards unvalidated to ReGa, frozen) [V2]"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP006"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP043"
+    },
+    {
+      "spec_id": "SP044",
+      "source": "src/webui/www/api/methods/rega/runscript.tcl:14-16",
+      "contracts": [
+        "an ADMIN session and script text AND WHEN ReGa.runScript (methods.conf:476-481) runs -> the text is passed unchanged to rega_script via hmscript_run and the STDOUT is returned as a JSON string (runscript.tcl:14-16; hmscript.tcl:30-37)",
+        "an ADMIN session AND WHEN ReGa.getAllDatapoints (ARGUMENTS now {_session_id_}) runs on v1 -> the result keeps the line format '<id>--<type>--<name>[--<deviceName>][--<address>]' for HSSDP, DEVICE and CHANNEL objects but is produced by enumerating the object collections instead of 65,535 dom.G",
+        "GET /api/v2/model AND WHEN processed -> datapoints, devices, channels, rooms, functions, sysvars and programs are returned through the bulk read model with pagination, replacing client loops over ReGa.getAllDatapoints"
+      ],
+      "non_functional_requirements": [
+        "WHEN script output contains control characters other than \\b \\f \\n \\r \\t THEN json_toString does not escape them (json.tcl:203-215)",
+        "WHEN script output contains '/' THEN it is escaped as '\\/' (json.tcl:207)",
+        "WHEN ReGa.getAllDatapoints finishes THEN the array has a trailing empty-string element because the output ends with '\\n' (getalldatapoints.tcl:46-56)",
+        "WHEN ReGa script uses system.Exec (as system.saveObjectModel does at saveobjectmodel.tcl:14) THEN ReGa.runScript at ADMIN level is equivalent to shell execution as the ReGa process user",
+        "WHEN tclrega.so is not loaded (central=false CfgTool variant) THEN rega_script is undefined and hmscript_run catches the error and returns '' (homematic.cgi:37-39, hmscript.tcl:33-36)",
+        "WHEN ReGa.getAllDatapoints is called THEN the script executed contains no loop of 65,535 dom.GetObject calls (static check on the script text) [replaces the as-is 65,535-lookup behaviour] [TARGET]"
+      ],
+      "component": "rega-model",
+      "dependencies": [
+        "SP006",
+        "SP025"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP044"
+    },
+    {
+      "spec_id": "SP045",
+      "source": "src/webui/www/api/methods/system/getenergyprice.tcl:14-41",
+      "contracts": [
+        "/etc/config/energyPrice has exactly two lines AND WHEN system.getEnergyPrice (NONE, methods.conf:35-40) runs -> {\"Price\":<line1>,\"Currency\":<line2>} is returned with both values as JSON strings (getenergyprice.tcl:16-30)",
+        "the file has any other number of lines (new format: currency, price current, price gas, gas heating value, gas condition number) AND WHEN the method runs -> lines 0-4 are concatenated raw, comma-separated, inside braces, i.e. each line is expected to be a ready-made JSON member (getenergyprice.tcl:31-39)",
+        "a USER session AND WHEN system.getPositionData (methods.conf:28-33) runs -> ReGa returns Longitude and Latitude and the script appends the time zone read from TIMEZONE in /etc/config/time.conf (default 'CET/CEST'), yielding the text ['Longitude:..','Latitude:..','TimeZone:..'"
+      ],
+      "non_functional_requirements": [
+        "WHEN the energyPrice file is empty THEN data has zero lines, and the else branch emits '{,,,,}' which is not valid JSON (getenergyprice.tcl:27-40)",
+        "WHEN the tweak value is not numeric/boolean/JSON-quoted (e.g. a plain word) THEN it is placed unquoted in the response, producing invalid JSON; a missing key returns false although the header comment promises -1 (gettweak.tcl:9,30-34)",
+        "WHEN system.getPositionData responds THEN the text uses single-quoted strings in a JS array and is not valid JSON (getpositiondata.tcl:33,37-39)",
+        "WHEN hmscript fails in getPositionData THEN the response begins with ',' because posData is '' + \",'TimeZone:..']\" (getpositiondata.tcl:36-37)",
+        "WHEN the TIMEZONE read fails THEN the default 'CET/CEST' is used (getpositiondata.tcl:26-28); system.TimeZoneOffset() is intentionally not used (comment at getpositiondata.tcl:31-32)"
+      ],
+      "component": "user-profile",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP045"
+    },
+    {
+      "spec_id": "SP046",
+      "source": "src/webui/www/api/methods/webui/getcolors.tcl:14-45",
+      "contracts": [
+        "any caller AND WHEN WebUI.getColors (NONE, methods.conf:959-964) runs -> the system color.map under DOCUMENT_ROOT/webui is loaded, then (only when central is true) /etc/config/color.map overrides matching keys, and an object {<id>:<value>,...} of JSON strings is returned (",
+        "key, color and cpFile AND WHEN WebUI.setWebUIColors (USER, methods.conf:966-971) runs -> /etc/config/color.map is seeded by copying the system color.map when absent (setwebuicolor.tcl:22-24), then rewritten line by line, replacing any line whose first token equals key (split by space, or"
+      ],
+      "non_functional_requirements": [
+        "WHEN key does not exist in the map THEN no line is added and the response is still true (setwebuicolor.tcl:33-40,41)",
+        "WHEN cpFile is passed THEN it is read into a variable but never used (setwebuicolor.tcl:16); it is still required by ARGUMENTS (methods.conf:970)",
+        "WHEN color is not a '#rrggbb' string THEN it is not validated and is written as-is (setwebuicolor.tcl:35)",
+        "WHEN central is false (CfgTool variant) THEN getColors ignores the user override file (getcolors.tcl:32-34)",
+        "WHEN a colour value or key contains JSON-special characters THEN json_toString escapes them (getcolors.tcl:41)",
+        "WHEN the rewrite fails after the temporary file was created THEN the original /etc/config/color.map is unchanged and the temporary file is removed [TARGET]"
+      ],
+      "component": "user-profile",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP046"
+    },
+    {
+      "spec_id": "SP047",
+      "source": "src/webui/www/api/methods/firewall/getconfiguration.tcl:23-78",
+      "contracts": [
+        "an ADMIN session AND WHEN Firewall.getConfiguration (methods.conf:945-950) runs -> /lib/libfirewall.tcl loads /etc/config/firewall.conf and the result is {services:[{id,access,ports:[int]}],ips:[string],userports:[string],mode:string} (getconfiguration.tcl:23-78); service defaults a",
+        "services, ips, userports, mode AND WHEN Firewall.setConfiguration (ADMIN, methods.conf:952-957) runs -> the stored IPS and USER_PORTS are replaced, Firewall_setMode is applied, access of every known service listed in 'services' (matched by service.name) is replaced, the configuration is saved to /etc/co",
+        "Firewall.setConfiguration with mode='BOGUS' AND WHEN Firewall_setMode runs -> nothing is written to stdout (the text 'Firewall_setMode: Unsupported mode.' goes to syslog), the previous mode is kept, the remaining fields are applied and true is returned, so the HTTP response is"
+      ],
+      "non_functional_requirements": [
+        "WHEN getConfiguration emits services THEN the identifier key is 'id' (getconfiguration.tcl:38) but setConfiguration reads 'name' (setconfiguration.tcl:37); callers must translate",
+        "WHEN a services element names an unknown service THEN it is silently ignored (setconfiguration.tcl:40)",
+        "WHEN access is not one of full|restricted|none THEN it is stored unvalidated in firewall.conf (setconfiguration.tcl:38,42; libfirewall.tcl:215)",
+        "WHEN ips or userports contain arbitrary strings THEN they are written unvalidated as Tcl lists into firewall.conf ('IPs = ...', 'USERPORTS = ...') (libfirewall.tcl:199-207)",
+        "WHEN the services array order is returned THEN it follows Tcl 'array names' order, which is not stable (getconfiguration.tcl:32)",
+        "WHEN firewall.conf is absent THEN defaults apply (libfirewall.tcl:93-127)",
+        "WHEN Firewall_loadConfiguration migrates missing default ports THEN it rewrites firewall.conf as a side effect of a read-only getConfiguration call (libfirewall.tcl:141-149,174-176)",
+        "WHEN a service id in firewall.conf is unknown to the built-in table THEN '$Firewall_SERVICES($id)' raises on load (libfirewall.tcl:139)",
+        "WHEN firewall.conf is rewritten (Firewall_saveConfiguration) THEN it is written write-then-rename [TARGET]"
+      ],
+      "component": "system-admin",
+      "dependencies": [
+        "SP001"
+      ],
+      "behavioral_contract": "contracts/behavioral-contracts.json#SP047"
+    }
+  ],
+  "constraints": [
+    "POST /api/homematic.cgi JSON-RPC 1.1 request/response envelope, method names and parameter names of the 133 methods with in-repo clients (and, by default, all 179).",
+    "Four-level privilege model NONE/GUEST/USER/ADMIN (0/1/2/8) sourced from the ReGa session string \"<uid>;<upl>\"; sid format @...@ accepted by the legacy UI (tcl/eq3/session.tcl:77-79 requires 12 chars).",
+    "Session lifetime semantics (900 s timeout, renew via page hit).",
+    "Interface.* parameter interface resolved from InterfacesList.xml; XML-RPC fault to error code mapping 501-507/599.",
+    "Config-tool (non-central) mode keeps working for CfgTool until that feature is assessed; privilege bypass there must be made explicit (opt-in flag) rather than inferred from DOCUMENT_ROOT.",
+    "Method names, parameter names, _session_id_ in body, JSON-RPC 1.1 envelope and HTTP 200 + error.code stay the v1 default; stricter behaviour (real HTTP status codes, header-based sid) is opt-in via Accept/header or a v2 path.",
+    "No change to ports and protocols towards rfd/hs485d/ReGa.",
+    "Do not edit www/ directly; src/webui/www is the source of record.",
+    "The classic UI and the nextGen React UI coexist long-term: v1 stays frozen and in service; new capabilities are additive (v2).",
+    "Architecture (D002/D020): refactor in place; single deployable, ten internal components; no new store (D005); no new process unless the Phase 6 gate approves (optional-gateway).",
+    "Same-origin only (D023/D024): no CORS headers by default, no frontend->backend internal contract, no base_url_config.",
+    "Anti-corruption adapter per external system (D022); circuit breakers not adopted (D008).",
+    "Encodings: files patched downstream (tcl/eq3/rega.tcl) keep ISO-8859-1/CRLF; new or edited files are UTF-8.",
+    "Fixed server-side ReGa scripts only for new mutations; never client-supplied script text.",
+    "Privilege check precedes argument check and script sourcing; fail-closed on any ReGa failure.",
+    "CCU.existsFile stays GUEST with a 6-path exact allow-list plus 2 anchored per-user ack-file patterns (^/etc/config/userprofiles/userAckInstallWizardId_[0-9]{1,10}$ and ^/etc/config/userprofiles/userAckInstallWizard_[^/\\x00]{1,200}$); CCU.createFile is ADMIN with a 4-path exact allow-list (EG-3 resolved and corrected 2026-10-20; BD-16).",
+    "Session ids minted by this feature: /dev/urandom, maximum of the compatible 12-character format (~59.5 bits); 128-bit criterion relaxed (EG-17 resolved).",
+    "Backup CGIs stay at ADMIN + empty allow-list + fail-closed; they are NOT removed now (EG-1 resolved 2026-10-20: deprecation announced, removal in a later release; BD-17).",
+    "OpenCCU rootfs-patch compatibility (user decision C, 2026-10-20; NFR-056; BD-18): (1) a staged file whose v1 behaviour is unchanged is a verbatim copy of its legacy source (no header rewrite, CRLF and ISO-8859-1 kept); (2) files with intentional behaviour change are minimal edits preserving line endings, encoding and untouched context lines, shared helpers (admin_audit and similar) live in one eq3 library file, not pasted per script; (3) the 14 patch-touched files under www/api and www/tcl keep the 13 patches (0001, 0031, 0038, 0044, 0054, 0057, 0104, 0109, 0131, 0163, 0164, 0203, 0205) applying, except documented conflicts listed in COPY-PLAN.md as 'patch N must be regenerated at the next Base bump' (expected: downloadFirmware.tcl, user/*hmipserver.tcl exec hardening, methods.conf registry collisions); (4) a schema-harness patch-apply gate (env OPENCCU_PATCH_DIR, default ~/dev/OpenCCU/buildroot-external/package/openccu-base/rootfs-patches, skipped when absent) applies the patches in order to a composed staged tree and reports per-patch OK/FAIL; target 13/13 minus the documented conflicts. The staged methods.conf stays ISO-8859-1 with CRLF.",
+    "Locked blueprint values (BD-01..BD-14) are authoritative for tests and clients: contracts/integration-contracts.json -> locked_values.",
+    "Rate limiting is opt-in (flag rate_limit, default false): per-IP Session.login 10/60 s and per-sid 60/10 s are enforced only when rate_limit=true, strict_mode=true or on /api/v2; the default v1 behaviour stays identical for the classic UI (constraints.unchanged, NFR-045)."
+  ],
+  "success_criteria": [
+    "133 of 133 client-used methods keep name, parameter set and result shape under default configuration (golden fixtures green in GitHub Actions); the 47 remaining methods are each classified kept / deprecated-with-removal-path / removed in the schema registry with 0 unclassified.",
+    "api/backup binfile/textfile/tarfile/run-script.cgi require upl 8 plus an exact-match path allow-list (default empty) and stay fail-closed; they are NOT removed now (EG-1 resolved 2026-10-20: deprecation announced, removal in a later release); CCU.createFile requires ADMIN with allow-list (default 4); CCU.existsFile stays GUEST (classic UI compatibility) with an exact allow-list (default 6) plus 2 anchored per-user ack-file patterns; 0 request-controlled values reach exec without a validator, '--' guard or argument list (audit of the ~26 exec scripts: 26/26 reviewed).",
+    "Session.logout without a valid session returns 400/402 and does not call ClearSessionID; the unauthenticated surface equals the 8-method allow-list; the unauthenticated GET /api/homematic.cgi page lists 0 method names.",
+    "0 responses in the fixture suite contain errorInfo, 'while executing', '.tcl' or filesystem paths; every internal error carries a correlation id that also appears in the syslog capture.",
+    "Strict mode (Content-Type application/json + non-empty X-Requested-With) rejects 100% of non-conforming requests with 0 method scripts sourced; legacy session ids minted by this feature come from /dev/urandom (~59.5 bit maximum of the compatible 12-character sid format; 128-bit criterion relaxed per EG-17).",
+    "Event.subscribe uses eq3/checksid.hms (regression test: subscribe A, B, C leaves 3 subscribers); poll resets EVENT_COUNT (65th event delivered); at least one real datapoint-change producer (or the delivered long-poll endpoint GET /api/v2/events) exists with an integration test.",
+    "A machine-readable schema with exactly 179 method entries (params and results) is published at GET /api/v2/schema and drives central validation; POST /api/v2/batch executes a mixed batch of >= 2 methods with isolated failures.",
+    "POST /api/v2/programs, POST /api/v2/rooms and GET|PUT /api/v2/profile exist with ADMIN/USER gating verified by tests (403 for insufficient level, 401 without sid).",
+    "www/api no longer drifts: removed or CI byte-equality job reports 0 differing files (28 differ today).",
+    "CI runs the Tcl API tests on every PR; the dispatcher and each of the 133 used methods are invoked at least once (100% methods invoked).",
+    "OpenCCU patch compatibility (NFR-056): the schema-harness patch-apply gate reports 'legacy tree: 13 OK' and, for the composed staged tree, 13 OK minus the patches documented in COPY-PLAN.md as 'patch N must be regenerated at the next Base bump'; every staged method script outside the behaviour-change list is byte-identical to its legacy source; staged methods.conf is ISO-8859-1 with CRLF.",
+    "Security model equivalent or stronger: all 179 methods remain callable with unchanged names/params under default configuration except the documented deliberate changes (SP005, SP011/012, SP013, SP015, SP031, SP035); zero regression in the OpenCCU packaging build (patch set applies: git apply --check green)."
+  ],
+  "project_structure": {
+    "dispatcher": "src/webui/www/api",
+    "security-session": "src/webui/www/api/eq3",
+    "event-push": "src/webui/www/api/methods/event",
+    "interface-gateway": "src/webui/www/api/methods/interface",
+    "rega-model": "src/webui/www/api/methods/device",
+    "system-admin": "src/webui/www/api/methods/ccu",
+    "backup-cgis": "src/webui/www/api/backup",
+    "user-profile": "src/webui/www/api/methods/user",
+    "schema-harness": "src/webui/tests/api",
+    "optional-gateway": "src/webui/gateway"
+  },
+  "component_scope": {
+    "dispatcher": {
+      "path": "src/webui/www/api",
+      "scope": [
+        "src/webui/www/api/homematic.cgi",
+        "src/webui/www/api/methods.conf",
+        "src/webui/www/api/apiconfig.conf (new)",
+        "src/webui/www/api/eq3/{jsonrpc,json,common}.tcl",
+        "src/webui/www/api/methods/system",
+        "src/webui/www/api/methods/webui (schema/introspection routing only)",
+        "src/webui/www/api/v2 (new: rpc, batch, schema routes)"
+      ],
+      "specs": [
+        "SP001",
+        "SP002",
+        "SP004",
+        "SP005",
+        "SP013",
+        "SP032"
+      ]
+    },
+    "security-session": {
+      "path": "src/webui/www/api/eq3",
+      "scope": [
+        "src/webui/www/api/eq3/{hmscript.tcl,getupl.hms,checksid.hms}",
+        "src/webui/www/api/methods/session",
+        "src/webui/www/tcl/eq3/{session,rega}.tcl",
+        "src/webui/www/tcl/eq3_old/{session,user,common,once}.tcl (session and privilege aspects only)"
+      ],
+      "specs": [
+        "SP003",
+        "SP006",
+        "SP007",
+        "SP014",
+        "SP015",
+        "SP031"
+      ]
+    },
+    "event-push": {
+      "path": "src/webui/www/api/methods/event",
+      "scope": [
+        "src/webui/www/api/methods/event",
+        "src/webui/www/api/eq3/event.tcl",
+        "src/webui/www/api/v2/events (new)",
+        "src/webui/rega/bin/hm_deldev (producer caller)"
+      ],
+      "specs": [
+        "SP008",
+        "SP029"
+      ]
+    },
+    "interface-gateway": {
+      "path": "src/webui/www/api/methods/interface",
+      "scope": [
+        "src/webui/www/api/methods/interface",
+        "src/webui/www/api/eq3/ipc.tcl",
+        "src/webui/www/api/methods/bidcos"
+      ],
+      "specs": [
+        "SP009",
+        "SP016",
+        "SP017",
+        "SP018",
+        "SP019",
+        "SP020",
+        "SP021",
+        "SP022",
+        "SP023",
+        "SP024"
+      ]
+    },
+    "rega-model": {
+      "path": "src/webui/www/api/methods/device",
+      "scope": [
+        "src/webui/www/api/methods/{device,channel,sysvar,program,room,subsection,rega}",
+        "src/webui/www/api/v2/{model,programs,rooms,functions} (new)"
+      ],
+      "specs": [
+        "SP025",
+        "SP026",
+        "SP027",
+        "SP028",
+        "SP040",
+        "SP041",
+        "SP042",
+        "SP043",
+        "SP044"
+      ]
+    },
+    "system-admin": {
+      "path": "src/webui/www/api/methods/ccu",
+      "scope": [
+        "src/webui/www/api/methods/{ccu,bidcosrf,bidcoswired,safemode,firewall}",
+        "src/webui/www/api/methods/recoverymode/enter.tcl (new upstream at HEAD 1651075b; SP034)"
+      ],
+      "specs": [
+        "SP030",
+        "SP034",
+        "SP035",
+        "SP036",
+        "SP037",
+        "SP038",
+        "SP039",
+        "SP047"
+      ]
+    },
+    "backup-cgis": {
+      "path": "src/webui/www/api/backup",
+      "scope": [
+        "src/webui/www/api/backup/*.cgi",
+        "src/webui/www/api/backup/common.tcl"
+      ],
+      "specs": [
+        "SP010",
+        "SP011",
+        "SP012"
+      ]
+    },
+    "user-profile": {
+      "path": "src/webui/www/api/methods/user",
+      "scope": [
+        "src/webui/www/api/methods/{user,system,webui}",
+        "src/webui/www/api/v2/profile (new)"
+      ],
+      "specs": [
+        "SP033",
+        "SP045",
+        "SP046"
+      ]
+    },
+    "schema-harness": {
+      "path": "src/webui/tests/api",
+      "scope": [
+        "src/webui/tests/api (new: tcltest suites, golden fixtures, mocks)",
+        "src/webui/www/api/schema (new: method schema data files, 179 entries)",
+        ".github/workflows/ci.yml (contract-test job and www/api equality job)",
+        "www/api (stale root copy: removed, or CI byte-equality)"
+      ],
+      "specs": []
+    },
+    "optional-gateway": {
+      "path": "src/webui/gateway",
+      "scope": [
+        "src/webui/gateway (new, only if the Phase 6 gate approves)"
+      ],
+      "specs": []
+    }
+  },
+  "locked_values_ref": "contracts/integration-contracts.json#locked_values",
+  "gated_prerequisites": [
+    {
+      "id": "EG-8",
+      "status": "open, blocks one task",
+      "gap": "ReGa session key format unproven (10-char inner id vs @+10+@ 12 chars)",
+      "blocks": "the sid-shape validator task (validator literal ^@?[A-Za-z0-9]{10}@?$ used by SP003, SP007, SP008)",
+      "affects_specs": [
+        "SP003",
+        "SP007",
+        "SP008"
+      ],
+      "prerequisite": "runtime trace of real ReGa session ids on a CCU; a contract test pins the @ wrapping per entry point",
+      "interim_until_resolved": "sid is escaped by the unified escape routine before interpolation (escaping half of NFR-005); the strict shape check is implemented behind the config flag sid_shape_strict (default false, BD-08) but is not released to production until the trace confirms it (a too strict validator locks out real sessions)",
+      "non_blocking_for": "all other tasks, including fail-closed privilege checks"
+    },
+    {
+      "id": "EG-2",
+      "status": "open, blocks one task",
+      "gap": "mechanism that produces datapoint-change events is undefined (ReGaHss and rfd/hs485d callbacks are closed source)",
+      "blocks": "the Phase 5 datapoint.changed producer task (SP029 acceptance for the datapoint.changed payload)",
+      "affects_specs": [
+        "SP008",
+        "SP029"
+      ],
+      "prerequisite": "prototype on a live CCU (candidate: Interface.init callback registration, EG-24)",
+      "interim_until_resolved": "queue fixes (lock, overflow reset, checksid path) and the v2 long-poll endpoint ship with the existing producers (init, delete); payload keys {address, datapoint, value} are locked (BD-12) but untested against a real producer",
+      "non_blocking_for": "Event.subscribe/poll/unsubscribe v1, long-poll transport"
+    },
+    {
+      "id": "EG-6",
+      "status": "open, blocks one task group",
+      "gap": "ReGa mutation semantics for program (active flag, rename, create/delete) and room/function (create, rename, membership) are undocumented",
+      "blocks": "v2 editing endpoints POST /api/v2/programs, /api/v2/rooms, /api/v2/functions (SP042, SP043 v2 mutations; IC010, IC011)",
+      "affects_specs": [
+        "SP042",
+        "SP043"
+      ],
+      "prerequisite": "prototype each operation against a live ReGa with fixed scripts; operation set and levels (USER for program active flag, ADMIN for membership) are provisional until then",
+      "interim_until_resolved": "start read-only: v1 methods and all v2 read endpoints (model, schema, batch) are unaffected and ship first",
+      "non_blocking_for": "all read endpoints and all v1 behaviour"
+    },
+    {
+      "id": "EG-20",
+      "status": "open, blocks completeness of one deliverable",
+      "gap": "the list of the 133 client-used methods with argument shapes is not part of analysis.json (only Event.* usage confirmed per method)",
+      "blocks": "completeness of the golden-fixture suite and the kept/deprecated/removed classification of the 47 unused methods (Phase 0 exit criterion)",
+      "affects_specs": [
+        "SP001",
+        "SP002",
+        "SP032"
+      ],
+      "prerequisite": "client-call inventory from www_source, rega/esp pages and the OpenCCU patches (grep of \"Method.name\" literals with argument names)",
+      "interim_until_resolved": "fixtures are written for every method in the 179-entry registry using the registry ARGUMENTS as the argument shape; classification of the 47 stays \"unclassified\" in the schema registry until the inventory exists",
+      "non_blocking_for": "implementation of any hardening task (fixtures are added per method as the inventory arrives)"
+    },
+    {
+      "id": "EG-1",
+      "status": "resolved by user decision 2026-10-20: safe default kept (ADMIN + empty allow-list + fail-closed), CGIs not removed now, deprecation announced, removal in a later release; T110 deferred by decision, T109 caller check done as research evidence (executor ticks)",
+      "gap": "backup CGIs: removal versus restriction depended on the external lighttpd mapping and OpenCCU patch callers. Evidence (research): lighttpd (OpenCCU buildroot-external/overlay/base/etc/lighttpd) maps .cgi to tclsh, /api/ is not proxied away and nothing denies /api/backup/, so the CGIs are reachable; no callers found in OpenCCU-Base or OpenCCU (rfd-config appears only as a comment); third-party tools unknown",
+      "blocks": "nothing; the removal branch of the backup-cgis task is deferred by decision",
+      "affects_specs": [
+        "SP010",
+        "SP011",
+        "SP012"
+      ],
+      "prerequisite": "caller check across lighttpd configuration, the OpenCCU patch repository, rfd-config and add-ons",
+      "interim_until_resolved": "resolved: the default safe state ADMIN (upl 8) + empty exact-match path allow-list + fail-closed session check is the delivered state; removal (404) is a later-release item",
+      "non_blocking_for": "every other task; the default state already satisfies the success criterion"
+    }
+  ],
+  "resolved_or_locked_gaps": [
+    {
+      "id": "EG-3",
+      "status": "resolved",
+      "note": "corrected 2026-10-20 (earlier caller search incomplete): existsFile GUEST with 6-path exact allow-list plus 2 anchored per-user ack-file patterns, createFile ADMIN with 4-path exact allow-list (callers verified in src/webui/www_source and opt/HMServer/pages); residual: out-of-repo callers unknown"
+    },
+    {
+      "id": "EG-17",
+      "status": "resolved",
+      "note": "sid ~59.5 bits max of the compatible 12-char format; 128-bit criterion relaxed; per-sid/per-IP rate limiting (BD-09) is OPT-IN (rate_limit, default false): the brute-force mitigation is active only when rate_limit=true or in strict/v2 mode"
+    },
+    {
+      "id": "EG-4",
+      "status": "locked",
+      "note": "download_timeout_seconds=300 (BD-09)"
+    },
+    {
+      "id": "EG-5",
+      "status": "locked",
+      "note": "v2 profile attributes, language key UserFirstName (BD-11; reGaVersion attribute dropped by the re-baseline); residual: confirm key against OpenCCU-patch callers"
+    },
+    {
+      "id": "EG-10",
+      "status": "locked",
+      "note": "event_lock_stale_seconds=10 (BD-09)"
+    },
+    {
+      "id": "EG-12",
+      "status": "locked",
+      "note": "v2 status mapping, headers, error codes, flag names, correlation id, validators (BD-01..BD-08, BD-10)"
+    },
+    {
+      "id": "EG-13",
+      "status": "locked",
+      "note": "batch 20, per-sid 60/10 s (opt-in rate_limit flag, default off for v1; always on for /api/v2), model limit 100/500, long-poll 25/55 s (BD-09, BD-12, BD-13)"
+    }
+  ],
+  "open_non_blocking_gaps": [
+    "EG-7",
+    "EG-9",
+    "EG-11",
+    "EG-14",
+    "EG-15",
+    "EG-16",
+    "EG-18",
+    "EG-19",
+    "EG-21",
+    "EG-22",
+    "EG-23",
+    "EG-24",
+    "EG-25",
+    "EG-26"
+  ],
+  "artifacts": {
+    "behavioral_contracts": "contracts/behavioral-contracts.json",
+    "integration_contracts": "contracts/integration-contracts.json",
+    "flow_model": "flow-model.md",
+    "research": "research.md",
+    "data_model": "data-model.md"
+  }
+}

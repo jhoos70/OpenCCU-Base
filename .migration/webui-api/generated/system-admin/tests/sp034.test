@@ -1,0 +1,100 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP034 - service restarts and certificate control (SafeMode.enter has its own test file,
+# safemode-enter.test): contracts/behavioral-contracts.json#SP034
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:dispatcher,security-session,system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc audit {r method} {
+  set n 0
+  foreach s [dict get $r syslog] {
+    if {[regexp "cid=\[0-9a-f\]{16} method=$method uid=1000" $s]} { incr n }
+  }
+  return $n
+}
+set S {_session_id_ AbCdEf1234}
+set USER {{AbCdEf1234 2 1000 User}}
+set SESS {{AbCdEf1234 8 1000 Admin}}
+
+test sp034-0 {the staged method scripts of SP034 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {user/restartlighttpd ccu/restartReGa ccu/restartsshdaemon user/deletecertificate user/existscertificate user/restarthmipserver user/starthmipserver user/stophmipserver} {
+    set p [file join $gen system-admin methods {*}[split $f /]].tcl
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp034-1 {User.restartLighttpd (ADMIN): /usr/bin/monit restart lighttpd runs synchronously, answer true} -body {
+  set r [call User.restartLighttpd $S -sessions $SESS]
+  list [result $r] [dict get $r exec_calls]
+} -result [list true [list {/usr/bin/monit restart lighttpd}]]
+
+test sp034-2 {User.restartHmIPServer / stopHmIPServer / startHmIPServer: nohup S62HMServer <verb> in the background, true} -body {
+  set out {}
+  foreach {m verb} {User.restartHmIPServer restart User.stopHmIPServer stop User.startHmIPServer start} {
+    set r [call $m $S -sessions $SESS]
+    lappend out [result $r] [lindex [dict get $r exec_calls] 0]
+  }
+  set out
+} -result [list true {/usr/bin/nohup /etc/init.d/S62HMServer restart >/dev/null &} true {/usr/bin/nohup /etc/init.d/S62HMServer stop >/dev/null &} true {/usr/bin/nohup /etc/init.d/S62HMServer start >/dev/null &}]
+
+test sp034-3 {CCU.restartReGa / CCU.restartSSHDaemon: 'monit restart <svc>' inside catch, the result is null} -body {
+  set a [call CCU.restartReGa $S -sessions $SESS]
+  set b [call CCU.restartSSHDaemon $S -sessions $SESS]
+  set c [call CCU.restartReGa $S -sessions $SESS -execfail {{{*monit*} failed}}]
+  list [result $a] [result $b] [result $c] [lindex [dict get $a exec_calls] 0] [lindex [dict get $b exec_calls] 0]
+} -result [list null null null {/usr/bin/monit restart ReGaHss} {/usr/bin/monit restart sshd}]
+
+test sp034-4 {User.existsCertificate / deleteCertificate (ADMIN): true/false by /etc/config/server.pem; delete always answers true} -body {
+  set fs [mock::fs::create]
+  set a [call User.existsCertificate $S -sessions $SESS -fs $fs]
+  mock::fs::write $fs etc/config/server.pem CERT
+  set b [call User.existsCertificate $S -sessions $SESS -fs $fs]
+  set c [call User.deleteCertificate $S -sessions $SESS -fs $fs]
+  set gone [expr {![file exists [file join $fs etc config server.pem]]}]
+  set d [call User.deleteCertificate $S -sessions $SESS -fs $fs]
+  mock::fs::destroy $fs
+  list [result $a] [result $b] [result $c] $gone [result $d]
+} -result {false true true 1 true}
+
+test sp034-5 {a failing monit makes User.restartLighttpd the v1 internal error 200 (uncaught exec)} -body {
+  lindex [err [call User.restartLighttpd $S -sessions $SESS -execfail {{{*monit*} failed}}]] 0
+} -result 200
+
+test sp034-6 {ADMIN only: a USER session is denied (400) and nothing is executed} -body {
+  set codes {}; set n 0
+  foreach m {User.restartLighttpd User.restartHmIPServer User.stopHmIPServer User.startHmIPServer CCU.restartReGa CCU.restartSSHDaemon User.deleteCertificate User.existsCertificate} {
+    set r [call $m $S -sessions $USER]
+    lappend codes [lindex [err $r] 0]
+    incr n [llength [dict get $r exec_calls]]
+  }
+  list [lsort -unique $codes] $n
+} -result {400 0}
+
+test sp034-7 {[TARGET] every state changing method writes one syslog line with the correlation id, the method name and the user id; the command line is fixed (no request data)} -body {
+  set out {}
+  foreach m {User.restartLighttpd User.restartHmIPServer User.stopHmIPServer User.startHmIPServer CCU.restartReGa CCU.restartSSHDaemon User.deleteCertificate} {
+    set r [call $m [concat $S {extra INJECT;rm}] -sessions $SESS]
+    set injected 0
+    foreach c [dict get $r exec_calls] { if {[string match *INJECT* $c]} { incr injected } }
+    lappend out [list $m [audit $r $m] $injected]
+  }
+  set out
+} -result [lmap m {User.restartLighttpd User.restartHmIPServer User.stopHmIPServer User.startHmIPServer CCU.restartReGa CCU.restartSSHDaemon User.deleteCertificate} {list $m 1 0}]
+
+cleanupTests

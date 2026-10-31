@@ -1,0 +1,82 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF016 Firewall.setConfiguration (flow-model.md#cf016): ADMIN call -> libfirewall (load) -> IPs,
+# user ports, mode (validated first: 403 'invalid argument (mode)', v2 HTTP 422) -> per service
+# name/access (full|restricted|none) -> save (write-then-rename) + configure -> true. The file is
+# unchanged after any validation failure.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,system-admin
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::ADMIN {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc libfw {} {
+  set fd [open [file join $::mock::repo src webui scripts libfirewall.tcl] r]
+  fconfigure $fd -translation binary -encoding iso8859-1
+  set c [read $fd]; close $fd
+  return $c
+}
+proc setreq {services ips userports mode} {
+  return "\{\"method\":\"Firewall.setConfiguration\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"services\":$services,\"ips\":$ips,\"userports\":$userports,\"mode\":\"$mode\"\},\"id\":1\}"
+}
+set SVC {[{"name":"SNMP","access":"full"},{"name":"REGA","access":"restricted"},{"name":"NOSUCH","access":"full"}]}
+
+test cf016-1 {steps 2-7: IPs, user ports, mode and the access of the known services are stored in firewall.conf, the firewall is configured, true; an unknown service is ignored} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq $SVC {["10.0.0.1","10.0.0.0/8"]} {["8080"]} MOST_OPEN] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  set conf [mock::fs::read $fs etc/config/firewall.conf]
+  mock::fs::destroy $fs
+  set ipt 0
+  foreach c [dict get $r exec_calls] { if {[string match *iptables* $c]} { incr ipt } }
+  list [result $r] [regexp {MODE = MOST_OPEN} $conf] [regexp {Id = SNMP\nPorts = 161\nAccess = full} $conf] [regexp NOSUCH $conf] [expr {$ipt > 0}]
+} -result {true 1 1 0 1}
+
+test cf016-2 {step 4 (target): an invalid mode is 403 'invalid argument (mode)' (v2 HTTP 422); the target contract keeps the call a single valid document (the library text goes to the syslog)} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq {[]} {["1.1.1.1"]} {[]} BOGUS] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  mock::fs::destroy $fs
+  # one valid JSON-RPC document (the library text goes to the syslog)
+  list [regexp -all {"version": ?"1.1"} [dict get $r body]]
+} -result 1
+
+test cf016-3 {step 5 error: an element without 'name' fails (internal error 200) and nothing is saved} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq {[{"access":"full"}]} {["1.1.1.1"]} {[]} RESTRICTIVE] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  set saved [file exists [file join $fs etc config firewall.conf]]
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $saved
+} -result {200 0}
+
+test cf016-4 {error path: a non-ADMIN session is denied (400) and firewall.conf stays untouched} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/firewall.conf "MODE = RESTRICTIVE\n"
+  set r [callraw [setreq $SVC {["1.1.1.1"]} {[]} MOST_OPEN] -fs $fs -sessions {{AbCdEf1234 2 1 U}} -files [list lib/libfirewall.tcl [libfw]]]
+  set same [expr {[mock::fs::read $fs etc/config/firewall.conf] eq "MODE = RESTRICTIVE\n"}]
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $same
+} -result {400 1}
+
+test cf016-5 {v2: the same call on /api/v2/rpc answers HTTP 200 with the same document shape} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq {[]} {["1.1.1.1"]} {[]} RESTRICTIVE] -fs $fs -files [list lib/libfirewall.tcl [libfw]] \
+    -setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}]
+  mock::fs::destroy $fs
+  list [status $r] [regexp {"result": true} [dict get $r body]]
+} -result {200 1}
+
+cleanupTests

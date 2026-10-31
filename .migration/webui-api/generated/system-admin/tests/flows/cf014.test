@@ -1,0 +1,61 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF014 Firmware download (flow-model.md#cf014): ADMIN call -> version/major from /VERSION -> serial
+# -> HTTPS URL (CCU3 / CCU2) -> wget -q --https-only into a temp file (timeout 300 s) -> atomic
+# rename to /tmp/fup.tgz -> true; failures write /tmp/dwnld.error and answer false once.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,system-admin
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::ADMIN {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set WGET_OK {{*wget*} {} {set fd [open [lindex $cmd end-1] w]; puts -nonewline $fd FIRMWARE; close $fd}}
+set V3 [list VERSION "VERSION=3.75.6.20240316\n" var/board_serial "OEQ1234567\n"]
+
+test cf014-1 {steps 2-6 (major 3): the CCU3 URL with version and serial, wget -q --https-only into a temp file, atomic rename to /tmp/fup.tgz, true} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files $V3 -exec [list $WGET_OK]]
+  set cmd [lindex [dict get $r exec_calls] 0]
+  set fw [expr {[file exists [file join $fs tmp fup.tgz]] ? [mock::fs::read $fs tmp/fup.tgz] : "MISSING"}]
+  mock::fs::destroy $fs
+  list [result $r] [string match {*wget -q --https-only -O*} $cmd] [string match *ccu3-update.homematic.com*version=3.75.6.20240316*serial=OEQ1234567* $cmd] $fw
+} -result {true 1 1 FIRMWARE}
+
+test cf014-2 {step 4: another major version answers false exactly once and does not download} -body {
+  set r [call CCU.downloadFirmware $S -files [list VERSION "VERSION=9.1.1\n"] -exec [list $WGET_OK]]
+  list [regexp -all {"result": false} [dict get $r body]] [regexp -all {"version"} [dict get $r body]] [llength [dict get $r exec_calls]]
+} -result {1 1 0}
+
+test cf014-3 {step 6 error: wget exits with an error - false, the error text goes to /tmp/dwnld.error, no /tmp/fup.tgz} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files $V3 -execfail {{*wget* network-down}}]
+  set out [list [string trim [dict get [list r [result $r]] r]] [file exists [file join $fs tmp fup.tgz]] [file exists [file join $fs tmp dwnld.error]]]
+  mock::fs::destroy $fs
+  set out
+} -result {false 0 1}
+
+test cf014-4 {step 5: a serial with shell metacharacters (/var/board_serial) is not downloaded with - the answer is false and nothing is executed} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=3.75.6\n" var/board_serial "X; reboot\n"] -exec [list $WGET_OK]]
+  mock::fs::destroy $fs
+  list [llength [dict get $r exec_calls]] [result $r]
+} -result {0 false}
+
+test cf014-5 {error path: a non-ADMIN session is denied (400) and no download starts} -body {
+  set r [call CCU.downloadFirmware $S -sessions {{AbCdEf1234 2 1 U}} -files $V3 -exec [list $WGET_OK]]
+  list [lindex [err $r] 0] [llength [dict get $r exec_calls]]
+} -result {400 0}
+
+cleanupTests

@@ -1,0 +1,95 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP015 - the unauthenticated surface: contracts/behavioral-contracts.json#SP015.
+# The staged eq3/allowlist.tcl provides the explicit 8-method allow-list, the registry CI check and
+# the HTML escaping used by the dispatcher's pages (the reduced GET page and the corrected
+# registry belong to the dispatcher).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint registryFixed [file exists [file join $gen dispatcher methods.conf]]
+
+set NINE {system.describe system.listMethods system.methodHelp system.getEnergyPrice Interface.isPresent ReGa.isPresent Session.login WebUI.getColors}
+
+proc drv {script} { return [golden::tcl "source \[file join \$env(DOCUMENT_ROOT) api/eq3/allowlist.tcl\]\n$script" -candidate only:security-session] }
+
+test sp015-0 {the staged allow-list library exists and is complete Tcl} -body {
+  set p [file join $gen security-session eq3 allowlist.tcl]
+  if {![file exists $p]} { return missing }
+  set fd [open $p r]; set c [read $fd]; close $fd
+  info complete $c
+} -result 1
+
+test sp015-1 {unauthenticated_allow_list_check: true for exactly the 8 allow-listed methods (BD-15: User.getReGaVersion is gone)} -body {
+  set r [drv {
+    foreach m {system.describe system.listMethods system.methodHelp system.getEnergyPrice Interface.isPresent ReGa.isPresent Session.login WebUI.getColors} { lappend res [unauthenticated_allow_list_check $m] }
+    puts $res
+    puts [unauthenticated_allow_list_check User.getReGaVersion]
+  }]
+  split [string trim [dict get $r stdout]] \n
+} -result {{1 1 1 1 1 1 1 1} 0}
+
+test sp015-2 {every other method is not allow-listed - Session.logout was removed from the list} -body {
+  set r [drv {
+    foreach m {Session.logout Session.renew CCU.getSerial system.getPositionData Interface.listInterfaces Session.create {} system.describe2 session.login} { lappend res [unauthenticated_allow_list_check $m] }
+    puts $res
+  }]
+  string trim [dict get $r stdout]
+} -result {0 0 0 0 0 0 0 0 0}
+
+test sp015-3 {the allow-list matches exactly (no prefix, no case folding, no whitespace)} -body {
+  set r [drv {
+    puts [list [unauthenticated_allow_list_check "Session.login "] [unauthenticated_allow_list_check "Session.login2"] [unauthenticated_allow_list_check "SESSION.LOGIN"] [unauthenticated_allow_list_check "Session.login\n"]]
+  }]
+  string trim [dict get $r stdout]
+} -result {0 0 0 0}
+
+test sp015-4 {registry CI check: allowlist::registry_violations lists every LEVEL NONE entry outside the allow-list} -body {
+  set r [drv {
+    set reg {}
+    foreach m {system.describe Session.login Session.logout Foo.bar} { dict set reg $m [list LEVEL NONE] }
+    dict set reg CCU.getSerial [list LEVEL ADMIN]
+    puts [allowlist::registry_violations $reg]
+  }]
+  string trim [dict get $r stdout]
+} -result {Foo.bar Session.logout}
+
+test sp015-5 {registry CI check on the v1 registry finds exactly Session.logout (the 10th LEVEL NONE entry)} -body {
+  set viol [exec tclsh8.6 << "
+    source [file join $gen schema-harness tests helpers mocks.tcl]
+    source [file join $gen schema-harness tests helpers golden.tcl]
+    source [file join $gen security-session eq3 allowlist.tcl]
+    puts \[allowlist::registry_violations \[golden::registry\]\]
+  "]
+  string trim $viol
+} -result {Session.logout}
+
+test sp015-6 {[TARGET] the corrected registry has no LEVEL NONE entry outside the allow-list} -constraints registryFixed -body {
+  string trim [exec tclsh8.6 << "
+    source [file join $gen security-session eq3 allowlist.tcl]
+    set fd \[open [file join $gen dispatcher methods.conf] r\]
+    fconfigure \$fd -encoding iso8859-1
+    set c \[read \$fd\]; close \$fd
+    set reg {}
+    foreach {n b} \$c { dict set reg \$n \$b }
+    puts \[allowlist::registry_violations \$reg\]
+  "]
+} -result {}
+
+test sp015-7 {[TARGET] html_escape: '<' and '&' become &lt; and &amp; (the ampersand is escaped first, no double escaping)} -body {
+  set r [drv {
+    puts [allowlist::html_escape "<script>&"]
+    puts [allowlist::html_escape "a&lt;b"]
+    puts [allowlist::html_escape plain]
+  }]
+  split [string trim [dict get $r stdout]] \n
+} -result {{&lt;script>&amp;} {a&amp;lt;b} plain}
+
+test sp015-8 {the allow-list itself is exposed read-only as allowlist::methods in the documented order} -body {
+  set r [drv { puts [allowlist::methods] }]
+  string trim [dict get $r stdout]
+} -result [join $NINE " "]
+
+cleanupTests

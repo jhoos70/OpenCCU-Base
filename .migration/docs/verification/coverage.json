@@ -1,0 +1,11 @@
+{
+  "total_files": 4779,
+  "covered_files": 4779,
+  "uncovered_files": [],
+  "coverage_percent": 100.0,
+  "threshold": 95.0,
+  "passed": true,
+  "uncovered_by_dir": {},
+  "file_index_entries": 19,
+  "doc_references": 800
+}

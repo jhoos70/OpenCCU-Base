@@ -1,0 +1,28 @@
+#!/bin/tclsh
+
+#**
+#* This script is executed when a device is deleted (staged SP008).
+#*
+#* The device name is handed to the event queue as a JSON string (event_fire_string), so a name
+#* with a double quote or a backslash still yields valid JSON in Event.poll.
+#**
+
+if { [catch {
+
+  load tclrega.so
+  load tclrpc.so
+
+  source /www/api/eq3/common.tcl
+  source /www/api/eq3/event.tcl
+
+  set device [lindex $argv 0]
+
+  event_fire_string delete $device
+
+  exec -- logger -t hm_deldev -p debug "event fired (delete $argv)"
+
+}] } {
+
+  exec -- logger -t hm_deldev -p debug "error (device: $argv)"
+
+}

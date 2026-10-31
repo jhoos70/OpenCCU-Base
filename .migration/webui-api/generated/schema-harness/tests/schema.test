@@ -1,0 +1,99 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# The method schema data (schema/methods.json, SP032 acceptance[7], [8], BD-10, BD-15): one entry per
+# registry method (179, including RecoveryMode.enter, without the removed ReGa-version methods) with
+# params and result; the required parameters equal the corrected ARGUMENTS list; the locked
+# patterns are enforced centrally with error 403 "invalid argument (<name>)".
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $here helpers mocks.tcl]
+source [file join $here helpers golden.tcl]
+source [file join $gen dispatcher eq3 json.tcl]
+
+set SCHEMA [file join $gen schema-harness schema methods.json]
+proc readfile {p} {
+  set fd [open $p r]; fconfigure $fd -encoding utf-8; set c [read $fd]; close $fd
+  return $c
+}
+proc registry {} {
+  # the staged registry keeps the ISO-8859-1 encoding of the legacy file (NFR-056)
+  set fd [open [file join $::gen dispatcher methods.conf] r]
+  fconfigure $fd -translation binary -encoding iso8859-1
+  set c [read $fd]; close $fd
+  array set reg $c
+  return [array get reg]
+}
+# (json_parse needs seconds for the file: parsed once)
+proc schema {} {
+  if {![info exists ::SCHEMA_DOC]} {
+    array set doc [json_parse [readfile $::SCHEMA]]
+    set ::SCHEMA_DOC [array get doc]
+  }
+  return $::SCHEMA_DOC
+}
+
+test schema-1 {the schema data file exists, is valid JSON and has a version} -body {
+  set c [readfile $::SCHEMA]
+  array set doc [schema]
+  list [json_isValid $c] [expr {$doc(version) ne ""}]
+} -result {1 1}
+
+test schema-2 {exactly 179 entries, the names are the registry names; no ReGa-version methods, one RecoveryMode.enter} -body {
+  array set doc [schema]
+  set names {}
+  foreach m $doc(methods) { array unset e; array set e $m; lappend names $e(name) }
+  array set reg [registry]
+  list [llength $names] [expr {[lsort $names] eq [lsort [array names reg]]}] \
+    [lsearch -exact $names User.getReGaVersion] [lsearch -exact $names User.setReGaVersion] [llength [lsearch -all -exact $names RecoveryMode.enter]]
+} -result {179 1 -1 -1 1}
+
+test schema-3 {every entry has level/info/params/result; level and info equal the registry; required equals the ARGUMENTS list} -body {
+  array set doc [schema]
+  array set reg [registry]
+  set bad {}
+  foreach m $doc(methods) {
+    array unset e; array set e $m
+    foreach k {name level info params result} { if {![info exists e($k)]} { lappend bad $e(name):$k } }
+    array unset r; array set r $reg($e(name))
+    if {$e(level) ne $r(LEVEL)} { lappend bad $e(name):level }
+    if {$e(info) ne $r(INFO)} { lappend bad $e(name):info }
+    array unset p; array set p $e(params)
+    if {$p(type) ne "object"} { lappend bad $e(name):type }
+    # (the registry writes a few ARGUMENTS lists with double blanks: compared as lists)
+    if {[list {*}$p(required)] ne [list {*}$r(ARGUMENTS)]} { lappend bad $e(name):required }
+  }
+  set bad
+} -result {}
+
+test schema-4 {the locked patterns of BD-10 are in the schema: dataId, testId, serial, serialNumber, lgwserial} -body {
+  array set doc [schema]
+  set found {}
+  foreach m $doc(methods) {
+    array unset e; array set e $m
+    array unset p; array set p $e(params)
+    array unset props; array set props $p(properties)
+    foreach a {dataId testId serial serialNumber lgwserial} {
+      if {[info exists props($a)]} { array unset x; array set x $props($a); if {[info exists x(pattern)]} { dict set found $a $x(pattern) } }
+    }
+  }
+  lsort [dict keys $found]
+} -result {dataId lgwserial serial serialNumber testId}
+
+test schema-5 {validation rejects bad input with 403 "invalid argument (<name>)" before the script runs: dataId, testId, lgwserial, a control character} -body {
+  set out {}
+  foreach {m ps} {
+    Interface.getMetadata {"objectId":"1","dataId":"a b"}
+    Device.pollComTest {"id":"1","testId":"yesterday"}
+    BidCoS.changeLanGatewayKey {"lgwclass":"RF","lgwserial":"../x","lgwip":"1.2.3.4","newkey":"a","curkey":"b"}
+    Device.get {"id":"1\u0001"}
+  } {
+    set body "\{\"method\":\"$m\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",$ps\},\"id\":1\}"
+    set resp [golden::call_raw $body [golden::prepare [list -candidate only:dispatcher,security-session,schema-harness -sessions {{AbCdEf1234 8 1000 Admin}}]]]
+    regexp {"code": (\d+),\s*"message": "([^"]*)"} [dict get $resp body] -> c msg
+    lappend out "$c $msg"
+  }
+  set out
+} -result {{403 invalid argument (dataId)} {403 invalid argument (testId)} {403 invalid argument (lgwserial)} {403 invalid argument (id)}}
+
+cleanupTests

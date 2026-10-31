@@ -1,0 +1,108 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP047 - Firewall.getConfiguration / Firewall.setConfiguration through the real /lib/libfirewall.tcl
+# (src/webui/scripts/libfirewall.tcl): contracts/behavioral-contracts.json#SP047
+# The [V2] acceptance (HTTP 422 for an invalid mode/access) belongs to the central schema validation.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:system-admin {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc libfw {} {
+  set fd [open [file join $::mock::repo src webui scripts libfirewall.tcl] r]
+  fconfigure $fd -translation binary -encoding iso8859-1
+  set c [read $fd]; close $fd
+  return $c
+}
+proc setreq {services ips userports mode} {
+  return "\{\"method\":\"Firewall.setConfiguration\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"services\":$services,\"ips\":$ips,\"userports\":$userports,\"mode\":\"$mode\"\},\"id\":1\}"
+}
+set S {_session_id_ AbCdEf1234}
+set USER {{AbCdEf1234 2 1000 User}}
+set SVC {[{"name":"SNMP","access":"full"},{"name":"REGA","access":"restricted"},{"name":"NOSUCH","access":"full"}]}
+
+test sp047-0 {the staged method scripts of SP047 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {getconfiguration setconfiguration} {
+    set p [file join $gen system-admin methods firewall $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp047-1 {Firewall.getConfiguration (ADMIN): defaults without firewall.conf - four services with access none, default IPs, RESTRICTIVE} -body {
+  set r [call Firewall.getConfiguration $S -files [list lib/libfirewall.tcl [libfw]]]
+  set j [result $r]
+  set ids {}
+  foreach {- id} [regexp -all -inline {"id": "([A-Z]+)"} $j] { lappend ids $id }
+  list [lsort $ids] [regexp -all {"access": "none"} $j] [regexp {"ips": \["192.168.0.1","192.168.0.0\\/16","fc00::\\/7"\]} $j] [regexp {"userports": \[\]} $j] [regexp {"mode":"RESTRICTIVE"} $j]
+} -result {{NEOSERVER REGA SNMP XMLRPC} 4 1 1 1}
+
+test sp047-2 {Firewall.setConfiguration (ADMIN): IPs, user ports, mode and the access of the known services are stored in firewall.conf, the firewall is configured, true} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq $SVC {["10.0.0.1","10.0.0.0/8"]} {["8080","9090"]} MOST_OPEN] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  set conf [mock::fs::read $fs etc/config/firewall.conf]
+  mock::fs::destroy $fs
+  set ipt 0
+  foreach c [dict get $r exec_calls] { if {[string match *iptables* $c]} { incr ipt } }
+  list [result $r] [regexp {MODE = MOST_OPEN} $conf] [regexp {IPs = 10.0.0.1 10.0.0.0/8} $conf] [regexp {USERPORTS = 8080 9090} $conf] \
+    [regexp {Id = SNMP\nPorts = 161\nAccess = full} $conf] [regexp {Id = REGA\nPorts = [0-9 ]+\nAccess = restricted} $conf] [expr {$ipt > 0}] [regexp NOSUCH $conf]
+} -result {true 1 1 1 1 1 1 0}
+
+test sp047-3 {a services element without 'name' is the v1 internal error 200 and nothing is saved} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq {[{"access":"full"}]} {["1.1.1.1"]} {[]} RESTRICTIVE] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  set saved [file exists [file join $fs etc config firewall.conf]]
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $saved
+} -result {200 0}
+
+test sp047-4 {[TARGET] mode BOGUS: stdout is one valid JSON-RPC document (the lib text goes to the syslog), the previous mode is kept, the remaining fields are applied, true} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/firewall.conf "MODE = MOST_OPEN\n\nIPs = 1.1.1.1\n\n"
+  set r [callraw [setreq $SVC {["10.9.9.9"]} {[]} BOGUS] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  set conf [mock::fs::read $fs etc/config/firewall.conf]
+  mock::fs::destroy $fs
+  set out [dict get $r stdout]
+  set logged 0
+  foreach s [dict get $r syslog] { if {[string match *Unsupported?mode* $s]} { incr logged } }
+  list [result $r] [string match "CONTENT-TYPE*" $out] [string match *Unsupported* $out] [regexp {MODE = MOST_OPEN} $conf] [regexp {IPs = 10.9.9.9} $conf] $logged
+} -result {true 1 0 1 1 1}
+
+test sp047-5 {[TARGET] firewall.conf is saved write-then-rename: no temp file stays; an unwritable /etc/config is error 200 and the previous file stays byte-identical} -constraints unixNotRoot -body {
+  set fs [mock::fs::create]
+  set old "MODE = MOST_OPEN\n\nIPs = 1.1.1.1\n\n"
+  mock::fs::write $fs etc/config/firewall.conf $old
+  mock::fs::write $fs etc/config/InterfacesList.xml "<interfaces/>"
+  set ok [callraw [setreq $SVC {["2.2.2.2"]} {[]} RESTRICTIVE] -fs $fs -files [list lib/libfirewall.tcl [libfw]] -interfaces 0]
+  set files [lsort [lmap f [glob -nocomplain -directory [file join $fs etc config] *] {file tail $f}]]
+  mock::fs::write $fs etc/config/firewall.conf $old
+  file attributes [file join $fs etc config] -permissions 0555
+  set bad [callraw [setreq $SVC {["3.3.3.3"]} {[]} RESTRICTIVE] -fs $fs -files [list lib/libfirewall.tcl [libfw]] -interfaces 0]
+  file attributes [file join $fs etc config] -permissions 0755
+  set same [expr {[mock::fs::read $fs etc/config/firewall.conf] eq $old}]
+  mock::fs::destroy $fs
+  list [result $ok] $files [lindex [err $bad] 0] $same
+} -result {true {InterfacesList.xml firewall.conf} 200 1}
+
+test sp047-6 {ADMIN only: a USER session is denied (400) for both methods, nothing runs} -body {
+  set a [call Firewall.getConfiguration $S -sessions $USER -files [list lib/libfirewall.tcl [libfw]]]
+  set b [callraw [setreq $SVC {[]} {[]} RESTRICTIVE] -sessions $USER -files [list lib/libfirewall.tcl [libfw]]]
+  list [lindex [err $a] 0] [lindex [err $b] 0] [llength [dict get $b exec_calls]]
+} -result {400 400 0}
+
+cleanupTests

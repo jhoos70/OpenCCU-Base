@@ -1,0 +1,171 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP005 - the single JSON serializer and the error mapping (eq3/json.tcl, eq3/jsonrpc.tcl,
+# eq3/syslog.tcl): contracts/behavioral-contracts.json#SP005
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc errmsg {out} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} $out -> c m]} { return [list $c $m] }
+  return none
+}
+
+test sp005-0 {the staged serializer, error mapper and logger exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {json.tcl jsonrpc.tcl syslog.tcl} {
+    set p [file join $gen dispatcher eq3 $f]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp005-1 {json_toString escapes quote, backslash, slash, \b \f \n \r \t as v1 and every other control character as \uXXXX} -body {
+  set r [drv {
+    puts [json_toString "a\"b\\c/d\be\ff\ng\rh\ti"]
+    puts [json_toString "x\u0001y\u0000z\u001fw\u0007"]
+    puts [json_toString "plain ä \u007f"]
+  }]
+  lines $r
+} -result [list {"a\"b\\c\/d\be\ff\ng\rh\ti"} {"x\u0001y\u0000z\u001fw\u0007"} "\"plain ä \u007f\""]
+
+test sp005-2 {the v1 response layout is kept: header, one line {id,version,result,error}, empty result is null} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":3}}
+    jsonrpc_response {[1,2]}
+    jsonrpc_response {  }
+  }]
+  set out [dict get $r stdout]
+  set expect "CONTENT-TYPE: application/json; charset=utf-8\n\n\{\"id\": 3,\"version\": \"1.1\",\"result\": \[1,2\],\"error\": null\}"
+  list [expr {[string first $expect $out] == 0}] [string match "*\"result\": null,\"error\": null\}" $out]
+} -result {1 1}
+
+test sp005-3 {the v1 error layout is kept: header, multi-line object, error name JSONRPCError, raw integer code, message JSON-quoted, then exit} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":5}}
+    jsonrpc_error 401 "method not found (x)"
+    puts NOTREACHED
+  }]
+  set out [dict get $r stdout]
+  list [string match "CONTENT-TYPE: application/json; charset=utf-8\n\n\{\n  \"id\": 5,\n  \"version\": \"1.1\",\n  \"result\": null,\n  \"error\": \{\n    \"name\": \"JSONRPCError\",\n    \"code\": 401,\n    \"message\": \"method not found (x)\"\n  \}\n\}\n" $out] [string match *NOTREACHED* $out]
+} -result {1 0}
+
+test sp005-4 {[TARGET] control characters in a result or message never make the document invalid: they are escaped as \u0001} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_response "\{\"s\":\"a\u0001b\"\}"
+  }]
+  set out [dict get $r stdout]
+  list [expr {[string first {"a\u0001b"} $out] >= 0}] [regexp {[\x00-\x08\x0b\x0c\x0e-\x1f]} [lindex [split $out \n] end]]
+} -result {1 0}
+
+test sp005-5 {[TARGET] an internal error (code 200) never carries errorInfo, Tcl stack text or paths: message 'internal error (ref: <cid>)', the full text and the same id go to the syslog} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"Device.listAll","params":{},"id":1}}
+    jsonrpc_error 200 "internal error:\ncan't read \"x\": no such variable\n    while executing\n\"set y \$x\"\n    (file \"/www/api/methods/device/listall.tcl\" line 7)"
+  }]
+  set out [dict get $r stdout]
+  lassign [errmsg $out] code msg
+  set sys [lindex [dict get $r syslog] end]
+  regexp {\(ref: ([0-9a-f]{16})\)} $msg -> cid
+  list $code [regexp {^internal error \(ref: [0-9a-f]{16}\)$} $msg] [string match *while?executing* $out] [string match *.tcl* $out] \
+    [expr {[info exists cid] && [string match "*cid=$cid method=Device.listAll uid=- code=200 errorInfo=*while executing*" $sys]}] [string match *\n* [lindex $sys end]]
+} -result {200 1 0 0 1 0}
+
+test sp005-6 {[TARGET] the correlation id is stable within one request (api_cid) and has the locked format} -body {
+  set r [drv {
+    puts [api_cid]
+    puts [api_cid]
+  }]
+  lassign [lines $r] a b
+  list [expr {$a eq $b}] [regexp {^[0-9a-f]{16}$} $a]
+} -result {1 1}
+
+test sp005-7 {NFR6 [TARGET]: a non-integer error code is coerced to 200 and the programming error is logged (no raw token in the code position)} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_error abc "boom"
+  }]
+  lassign [errmsg [dict get $r stdout]] code msg
+  list $code [regexp {^internal error \(ref: [0-9a-f]{16}\)$} $msg] [expr {[llength [dict get $r syslog]] >= 1}]
+} -result {200 1 1}
+
+test sp005-8 {[V2] HTTP status mapping (BD-04): 100/102/103 -> 400, 400 -> 403 (401 without a valid sid), 401 -> 404, 402/403 -> 422, 200/500 -> 500, 501-507/599/601-604 -> 502, 429 -> 429} -body {
+  set r [drv {
+    foreach c {100 102 103 400 401 402 403 200 500 501 507 599 601 604 429 413} { lappend res $c=[jsonrpc_httpStatus $c ""] }
+    puts $res
+    set API_AUTH_STATE nosid
+    puts [jsonrpc_httpStatus 400 ""]
+    puts [jsonrpc_httpStatus 500 "path not allowed"]
+    puts [jsonrpc_httpStatus 500 "name already exists (x)"]
+  }]
+  lines $r
+} -result [list {100=400 102=400 103=400 400=403 401=404 402=422 403=422 200=500 500=500 501=502 507=502 599=502 601=502 604=502 429=429 413=413} 401 403 409]
+
+test sp005-9 {[V2] on /api/v2 an error is written with the HTTP status of the mapping, the JSON-RPC envelope is still in the body, internal errors carry X-Correlation-Id} -body {
+  set r [drv {
+    set API_V2 1
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_error 402 "missing argument (a)"
+  }]
+  set out [dict get $r stdout]
+  set r2 [drv {
+    set API_V2 1
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_error 200 "internal error: boom"
+  }]
+  list [string match "Status: 422*" $out] [lindex [errmsg $out] 0] [regexp {X-Correlation-Id: [0-9a-f]{16}} [dict get $r2 stdout]] [string match "Status: 500*" [dict get $r2 stdout]]
+} -result {1 402 1 1}
+
+test sp005-10 {[V2] a result that is not valid JSON is answered as HTTP 500 with error 200 and a correlation id instead of the invalid document} -body {
+  set r [drv {
+    set API_V2 1
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_response "\{broken"
+  }]
+  set out [dict get $r stdout]
+  list [string match "Status: 500*" $out] [lindex [errmsg $out] 0] [string match *broken* $out]
+} -result {1 200 0}
+
+test sp005-11 {v1 keeps the pass-through: an invalid JSON result is emitted unvalidated; twice called, two documents are emitted} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    jsonrpc_response "\{broken"
+    jsonrpc_response true
+  }]
+  set out [dict get $r stdout]
+  list [string match "*\"result\": \{broken,*" $out] [regexp -all {"version": "1.1"} $out]
+} -result {1 2}
+
+test sp005-12 {the parser decodes \uXXXX with hex validation: a crafted escape can never run code} -body {
+  set r [drv {
+    proc zz {} { puts INJECTED; return 0 }
+    catch { json_parse {{"a":"\u[zz]x"}} } m
+    puts "m=$m"
+    puts [json_parse {{"a":"äA"}}]
+  }]
+  set out [dict get $r stdout]
+  list [string match *INJECTED* $out] [string match {*m=invaild escape code*} $out] [string match "*a äA*" $out]
+} -result {0 1 1}
+
+test sp005-13 {json_isValid accepts any JSON value and rejects trailing text and broken documents} -body {
+  set r [drv {
+    set ob [format %c 123]; set cb [format %c 125]
+    foreach t [list "${ob}\"a\":\[1,2,${ob}\"b\":null${cb}\]${cb}" {[1,2]} {"s"} 12 true null "${ob}broken" "${ob}\"a\":1${cb} x" {} {[1,]}] { lappend res [json_isValid $t] }
+    puts $res
+  }]
+  lines $r
+} -result [list "1 1 1 1 1 1 0 0 0 0"]
+
+cleanupTests

@@ -1,0 +1,90 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF005 Classic UI per-page authorization (eq3_old/session.tcl; flow-model.md#cf005): a page sources
+# the library (read_sessions loads /var/SESSIONS.dat), the mode is detected (sid = ReGa mirrored,
+# icsessionid = file session), session_requestisvalid decides; failures render the stub page and
+# return a negative code. Only the minting of new ids changed (/dev/urandom, fail closed).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  file copy -force ../tcl/extern/cgi.tcl ../tcl/cgi.tcl
+  cd ../tcl/eq3_old
+  proc rega_script {script} { return [list sd $::ISE_SD linkmode false] }
+  set ISE_SD ""
+}
+proc drv {script args} {
+  return [golden::tcl "$::PRE\n$script" -candidate only:security-session \
+    -setenv {QUERY_STRING {} HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi} {*}$args]
+}
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+set Q {HTTP_HOST ccu SCRIPT_NAME /pages/x.cgi}
+set FILES {
+  var/SESSIONS.dat "SID;UID;LastActivity;RedirectURL\n@Live000001@;4;1699999900;\n<.\n"
+  etc/config/USERS.dat "UID;Name;Password;UPL;EQ3\n4;adm;secret;8;1\n<.\n"
+}
+
+test cf005-1 {steps 1-3 (file session): read_sessions loads SESSIONS.dat, the valid session returns its uid, the timeout is reset and SESSIONS.dat is rewritten} -body {
+  set r [drv {
+    source session.tcl
+    puts "mode=$sidname"
+    puts "RC=[session_requestisvalid 8]"
+    set fd [open /var/SESSIONS.dat r]; puts [read $fd]; close $fd
+  } -files $FILES -now 1700000000 -setenv [list QUERY_STRING icsessionid=@Live000001@ {*}$Q]]
+  set out [dict get $r stdout]
+  list [regexp {mode=icsessionid} $out] [regexp {RC=4} $out] [regexp {@Live000001@;4;1700000000;} $out]
+} -result {1 1 1}
+
+test cf005-2 {step 2 (ISE mode): a sid parameter selects the ReGa-mirrored mode; the ReGa session string is mirrored into SESSIONS.dat} -body {
+  set r [drv {
+    source session.tcl
+    set ISE_SD "17;2;user;First;Last;"
+    puts "mode=$sidname"
+    puts "RC=[session_requestisvalid 2]"
+    puts [array names sessions_uid]
+  } -setenv [list QUERY_STRING sid=@AbCdEf1234@ {*}$Q]]
+  set out [dict get $r stdout]
+  list [regexp {mode=sid} $out] [regexp {RC=17} $out] [regexp {@AbCdEf1234@} $out]
+} -result {1 1 1}
+
+test cf005-3 {step 5 (failure): no sid -3 with the Unauthorized stub, unknown session -2 with the reloadPage stub, too low a level -4} -body {
+  set a [drv {source session.tcl; puts "RC=[session_requestisvalid 0]"}]
+  set b [drv {source session.tcl; puts "RC=[session_requestisvalid 0]"} -setenv [list QUERY_STRING icsessionid=@Nope000000@ {*}$Q]]
+  set c [drv {source session.tcl; puts "RC=[session_requestisvalid 9]"} -files $FILES -now 1700000000 -setenv [list QUERY_STRING icsessionid=@Live000001@ {*}$Q]]
+  list [regexp {Unauthorized.*RC=-3} [string map [list \n { }] [dict get $a stdout]]] [regexp {reloadPage.*RC=-2} [string map [list \n { }] [dict get $b stdout]]] [regexp {RC=-4} [dict get $c stdout]]
+} -result {1 1 1}
+
+test cf005-4 {step 4: new file-session ids come from /dev/urandom - 10 symbols of the 62-character alphabet in '@'-wrapped form} -body {
+  set r [drv {
+    source session.tcl
+    puts [session_generatesession 5]
+  }]
+  regexp {^@[A-Za-z0-9]{10}@$} [lindex [lines $r] end]
+} -result 1
+
+test cf005-5 {error path: /dev/urandom unreadable - session creation fails closed (-1), no session is created and no id is derived from a time-seeded generator} -body {
+  set r [drv {
+    rename ::open ::__t_open
+    proc ::open {path args} {
+      if {$path eq "/dev/urandom"} { error "permission denied" }
+      return [uplevel 1 [list ::__t_open $path {*}$args]]
+    }
+    source session.tcl
+    puts [session_generatesession 5]
+    puts [array size sessions_uid]
+  }]
+  lines $r
+} -result {-1 0}
+
+test cf005-6 {the classic UI stays unchanged: 900 s timeout, 10 sessions, SESSIONS.dat format, no cookie or header output} -body {
+  set r [drv {
+    source session.tcl
+    puts "$session_timeout $MAX_SESSIONS $sid_length"
+  }]
+  lines $r
+} -result {{900 10 10}}
+
+cleanupTests

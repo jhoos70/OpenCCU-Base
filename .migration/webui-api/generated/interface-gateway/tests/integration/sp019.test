@@ -1,0 +1,87 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP019 NFR and integration coverage (spec.json#SP019 non_functional_requirements[0..8]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:interface-gateway {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ0123456:1}
+set URL xmlrpc_bin://127.0.0.1:2001
+
+test sp019-nfr1 {NFR1: a set element lacking name (or type) is a v1 internal error 200} -body {
+  set codes {}
+  foreach el {{"type":"double","value":"1"} {"name":"L","value":"1"}} {
+    set j "\{\"method\":\"Interface.putParamset\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"interface\":\"BidCos-RF\",\"address\":\"A:1\",\"paramsetKey\":\"VALUES\",\"set\":\[\{$el\}\]\},\"id\":1\}"
+    lappend codes [lindex [err [callraw $j -sessions $USER -xmlrpc {{putParamset 1}}]] 0]
+  }
+  set codes
+} -result {200 200}
+
+test sp019-nfr2 {NFR2: an unknown type token is passed through unvalidated (validation is the central schema's job)} -body {
+  set r [call Interface.setValue [concat $S {valueKey L type weird value 1}] -sessions $GUEST -xmlrpc {{setValue 1}}]
+  list [result $r] [lindex [lindex [dict get $r xmlrpc_calls] 0] 4]
+} -result {true {weird 1}}
+
+test sp019-nfr3 {NFR3: setValue is reachable at GUEST level, putParamset is not} -body {
+  set a [call Interface.setValue [concat $S {valueKey L type int value 1}] -sessions $GUEST -xmlrpc {{setValue 1}}]
+  set b [callraw {{"method":"Interface.putParamset","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF","address":"A:1","paramsetKey":"V","set":[]},"id":1}} -sessions $GUEST]
+  list [result $a] [lindex [err $b] 0]
+} -result {true 400}
+
+test sp019-nfr4 {NFR4: searchDaliDevices has no checkXmlRpcStatus: a non-empty XML-RPC return value is logged and the script exits without a body} -body {
+  set fs [mock::fs::create]
+  set r [call Interface.searchDaliDevices [concat $S {valueKey SEARCH type bool value true}] -fs $fs -sessions $GUEST -xmlrpc {{setValue unexpected-return}}]
+  set log [expr {[file exists [file join $fs tmp searchDali.log]] ? [mock::fs::read $fs tmp/searchDali.log] : ""}]
+  mock::fs::destroy $fs
+  list [string trim [dict get $r body]] [string match {*setValue errorMessage: unexpected-return*} $log]
+} -result {{} 1}
+
+test sp019-nfr4b {NFR4/8: repeated failures append (the log grows by one line each)} -body {
+  set fs [mock::fs::create]
+  for {set i 0} {$i < 2} {incr i} {
+    call Interface.searchDaliDevices [concat $S {valueKey SEARCH type bool value true}] -fs $fs -sessions $GUEST -fault {{setValue 1 boom}}
+  }
+  set n [llength [split [string trim [mock::fs::read $fs tmp/searchDali.log]] \n]]
+  mock::fs::destroy $fs
+  set n
+} -result 2
+
+test sp019-nfr5 {NFR5: searchDaliDevices with an empty errorMessage returns true and writes no log} -body {
+  set fs [mock::fs::create]
+  set r [call Interface.searchDaliDevices [concat $S {valueKey SEARCH type bool value true}] -fs $fs -sessions $GUEST -xmlrpc {{setValue {}}}]
+  set has [file exists [file join $fs tmp searchDali.log]]
+  mock::fs::destroy $fs
+  list [result $r] $has
+} -result {true 0}
+
+test sp019-nfr6 {NFR6: refCounter is forwarded as an int token (a non-numeric value is rejected by tclrpc, not locally)} -body {
+  set r [call Interface.reportValueUsage [concat $S {valueId V refCounter abc}] -xmlrpc {{reportValueUsage 1}}]
+  lindex [lindex [dict get $r xmlrpc_calls] 0] 4
+} -result {int abc}
+
+test sp019-nfr7 {NFR7: putThermParamset sends every element once PARTY_TEMPERATURE appears anywhere in the set} -body {
+  set j {{"method":"Interface.putThermParamset","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF","address":"A:1","set":[{"name":"A","type":"int","value":"1"},{"name":"B","type":"int","value":"2"},{"name":"PARTY_TEMPERATURE","type":"double","value":"9.0"}]},"id":1}}
+  set r [callraw $j -sessions $USER -xmlrpc {{putParamset 1}}]
+  lindex [lindex [dict get $r xmlrpc_calls] 0] 4
+} -result {struct {{A {int 1}} {B {int 2}} {PARTY_TEMPERATURE {double 9.0}}}}
+
+test sp019-golden {golden re-run: the write methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.putParamset Interface.putThermParamset Interface.setValue Interface.determineParameter Interface.reportValueUsage Interface.searchDaliDevices}
+} -result {}
+
+cleanupTests

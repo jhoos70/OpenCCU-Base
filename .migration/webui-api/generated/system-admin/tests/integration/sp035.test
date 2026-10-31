@@ -1,0 +1,46 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP035 NFR and integration coverage (spec.json#SP035 non_functional_requirements[0..1]),
+# boundary and error cases, golden re-run (the seeded fixtures use an allow-listed flag path).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+
+test sp035-nfr0 {NFR0: a missing target directory (touch prints an error) makes createFile false and logs to the syslog} -body {
+  set r [call CCU.createFile {_session_id_ AbCdEf1234 file /etc/config/firewallConfigured} -sessions $ADMIN -execfail {{{touch*} {No such file or directory}}}]
+  list [result $r] [expr {[llength [dict get $r syslog]] >= 1}]
+} -result {false 1}
+
+test sp035-nfr1 {NFR1: createFile outside its own list is 500 even for a path that existsFile allows} -body {
+  list [err [call CCU.createFile {_session_id_ AbCdEf1234 file /etc/config/showDiagramDatapoints} -sessions $ADMIN]] \
+       [result [call CCU.existsFile {_session_id_ AbCdEf1234 file /etc/config/fieldTestActive} -sessions $GUEST]]
+} -result {{500 {path not allowed}} false}
+
+test sp035-err1 {the error never reveals whether a non-listed file exists (same answer for existing and missing files)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/passwd root
+  set a [call CCU.existsFile {_session_id_ AbCdEf1234 file /etc/passwd} -sessions $GUEST -fs $fs]
+  set b [call CCU.existsFile {_session_id_ AbCdEf1234 file /etc/nonexistent} -sessions $GUEST -fs $fs]
+  mock::fs::destroy $fs
+  list [err $a] [err $b]
+} -result [list {500 {path not allowed}} {500 {path not allowed}}]
+
+test sp035-golden {golden re-run: createFile/existsFile with an allow-listed flag path replay byte-identical} -body {
+  golden::compare_all -candidate only:system-admin -only {CCU.createFile CCU.existsFile}
+} -result {}
+
+cleanupTests

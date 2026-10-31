@@ -1,0 +1,62 @@
+# webui-api contract tests and www/api equality check (staged; copy to .github/workflows/ when reviewed)
+# yamllint disable rule:truthy
+---
+name: WebUI API Contract Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'src/webui/www/api/**'
+      - 'www/api/**'
+      - '.github/workflows/webui-api-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webui-api-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-test:
+    name: Contract tests (tclsh + mocks, x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tclsh and tcltest
+        run: sudo apt-get update && sudo apt-get install -y tcl8.6
+      - name: Run component test suites
+        run: |
+          set -e
+          for c in schema-harness dispatcher security-session event-push interface-gateway \
+                   rega-model system-admin backup-cgis user-profile optional-gateway; do
+            d=.migration/webui-api/generated/$c
+            [ -d "$d/tests" ] || continue
+            echo "::group::$c"
+            (cd "$d" && tclsh8.6 tests/all.tcl)
+            echo "::endgroup::"
+          done
+      - name: Syntax check (info complete)
+        run: |
+          set -e
+          for d in .migration/webui-api/generated/*/; do
+            find "$d" \( -name '*.tcl' -o -name '*.cgi' \) | while read -r f; do
+              echo "set c [read [open {$f}]]; if {![info complete \$c]} {puts {incomplete: $f}; exit 1}" | tclsh8.6
+            done
+          done
+
+  www-api-equality:
+    name: www/api equals src/webui/www/api (or is removed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tclsh
+        run: sudo apt-get update && sudo apt-get install -y tcl8.6
+      - name: Drift check
+        run: tclsh8.6 .migration/webui-api/generated/schema-harness/tests/helpers/drift.tcl

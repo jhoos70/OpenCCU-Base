@@ -1,0 +1,90 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP040 - SysVar read operations (SysVar.getAll, get, getValue, getValueByName): v1 behaviour
+# frozen. contracts/behavioral-contracts.json#SP040 (the v2 model section is SP044/T176)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234}
+# one system variable as the ReGa script prints it
+proc svlist {id type args} {
+  set d [dict create ID $id NAME var$id TYPE $type UNIT {} VALUE 1 LOGGED true VISIBLE true INTERNAL false CHANNEL_ID 65535 VALUE_MIN 0 VALUE_MAX 100 VALUE_LIST {} VALUE_NAME_0 {} VALUE_NAME_1 {}]
+  foreach {k v} $args { dict set d $k $v }
+  set l {}
+  dict for {k v} $d { lappend l $k $v }
+  return $l
+}
+
+test sp040-0 {the staged method scripts of SP040 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {getall get getvalue getvaluebyname} {
+    set p [file join $gen rega-model methods sysvar $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp040-1 {acceptance[0],NFR0: SysVar.getAll emits the type-specific fields (LOGIC: valueName0/1, LIST: valueList, NUMBER: minValue/maxValue) and unquoted booleans} -body {
+  set l [list [svlist 1 LOGIC VALUE_NAME_0 aus VALUE_NAME_1 ein] [svlist 2 LIST VALUE_LIST {a;b;c}] [svlist 3 NUMBER UNIT % VALUE_MIN 5 VALUE_MAX 50 LOGGED false]]
+  set j [result [call SysVar.getAll $S -sessions $USER -rega [list [list {*svList.EnumIDs()*} $l]]]]
+  list [regexp {"id":"1","name":"var1","type":"LOGIC","unit":"","value":"1","channelId":"65535","valueName0":"aus","valueName1":"ein","isLogged":true,"isVisible":true,"isInternal":false\}} $j] \
+    [regexp {"type":"LIST","unit":"","value":"1","channelId":"65535","valueList":"a;b;c","isLogged"} $j] \
+    [regexp {"type":"NUMBER","unit":"%","value":"1","channelId":"65535","minValue":"5","maxValue":"50","isLogged":false} $j]
+} -result {1 1 1}
+
+test sp040-2 {NFR2: STRING and UNKNOWN variables carry no type-specific fields} -body {
+  set l [list [svlist 4 STRING VALUE hello] [svlist 5 UNKNOWN]]
+  set j [result [call SysVar.getAll $S -sessions $USER -rega [list [list {*svList.EnumIDs()*} $l]]]]
+  list [regexp {valueName|valueList|minValue|maxValue} $j] [regexp {"type":"STRING","unit":"","value":"hello","channelId":"65535","isLogged"} $j] [regexp {"type":"UNKNOWN"} $j]
+} -result {0 1 1}
+
+test sp040-3 {acceptance[0]: no system variables (or a failing ReGa script) give []} -body {
+  list [result [call SysVar.getAll $S -sessions $USER]] [result [call SysVar.getAll $S -sessions $USER -regafail {*svList.EnumIDs()*}]]
+} -result {{[]} {[]}}
+
+test sp040-4 {acceptance[1]: SysVar.get returns the same object for one variable} -body {
+  set j [result [call SysVar.get {_session_id_ AbCdEf1234 id 7} -sessions $USER -rega [list [list {*.Get(id)*} [svlist 7 NUMBER VALUE_MIN 1 VALUE_MAX 9]]]]]
+  regexp {^\{"id":"7","name":"var7","type":"NUMBER","unit":"","value":"1","channelId":"65535","minValue":"1","maxValue":"9","isLogged":true,"isVisible":true,"isInternal":false\}$} $j
+} -result 1
+
+test sp040-5 {acceptance[3]: SysVar.get for an unknown id is internal error 200 (frozen)} -body {
+  lindex [err [call SysVar.get {_session_id_ AbCdEf1234 id 99} -sessions $USER]] 0
+} -result 200
+
+test sp040-6 {acceptance[2],[4]: getValue / getValueByName answer the value as a JSON string, "" for an unknown variable} -body {
+  list [result [call SysVar.getValue {_session_id_ AbCdEf1234 id 7} -sessions $USER -rega {{*.Get(id)* 21.5}}]] \
+    [result [call SysVar.getValueByName {_session_id_ AbCdEf1234 name Temp} -sessions $USER -rega {{*.Get(name)* on}}]] \
+    [result [call SysVar.getValue {_session_id_ AbCdEf1234 id 99} -sessions $USER]] \
+    [result [call SysVar.getValueByName {_session_id_ AbCdEf1234 name Nope} -sessions $USER]]
+} -result {{"21.5"} {"on"} {""} {""}}
+
+test sp040-7 {NFR1 (frozen v1): a variable name with unbalanced braces breaks the Tcl list parsing - internal error 200} -body {
+  set bad "ID 1 NAME \{broken TYPE LOGIC"
+  lindex [err [call SysVar.getAll $S -sessions $USER -rega [list [list {*svList.EnumIDs()*} [list $bad]]]]] 0
+} -result 200
+
+test sp040-8 {privilege: SysVar.getAll / get / getValue need USER - a GUEST session is denied (400) before the script runs} -body {
+  set out {}
+  foreach m {SysVar.getAll SysVar.get SysVar.getValue SysVar.getValueByName} {
+    set r [golden::call $m {_session_id_ AbCdEf1234 id 1 name x} -candidate only:dispatcher,security-session,rega-model -sessions {{AbCdEf1234 1 1000 Guest}}]
+    lappend out [lindex [err $r] 0]
+  }
+  set out
+} -result {400 400 400 400}
+
+cleanupTests

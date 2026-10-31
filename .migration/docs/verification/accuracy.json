@@ -1,0 +1,24 @@
+{
+  "claims_total": 1140,
+  "claims_checked": 50,
+  "verified": 48,
+  "failed": 2,
+  "accuracy_percent": 96.0,
+  "threshold": 95.0,
+  "passed": true,
+  "verdict": "pass",
+  "failed_claims": [
+    {
+      "type": "file_exists",
+      "value": "../www/config/easymodes/js/ic_functions.js",
+      "source_doc": "modules/webui-shell-build.md",
+      "line": 75
+    },
+    {
+      "type": "file_exists",
+      "value": "old/lock_{open,closed}.png",
+      "source_doc": "modules/webui-design-docs.md",
+      "line": 77
+    }
+  ]
+}

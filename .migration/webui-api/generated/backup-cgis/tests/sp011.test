@@ -1,0 +1,110 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP011 - binfile/textfile/tarfile/version.cgi (branch B of the EG-1 decision: default ADMIN +
+# empty exact-match path allow-list, fail-closed session check): contracts/behavioral-contracts.json#SP011
+# The allow-list is read from api/apiconfig.conf (array set API_CONFIG {path_allow_list.backup_files {...}}).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc cgi {rel args} { return [golden::cgi $rel -candidate only:backup-cgis {*}$args] }
+proc lines {s} { return [split $s \n] }
+set ADMIN {{@AbCdEf1234@ 8 1000 Admin}}
+set USER {{@AbCdEf1234@ 2 1000 User}}
+set GUEST {{@AbCdEf1234@ 1 1000 Guest}}
+set Q "sid=%40AbCdEf1234%40"
+
+proc setconf {entries} {
+  set f [file join [golden::root only:backup-cgis] api apiconfig.conf]
+  set fd [open $f w]
+  puts $fd "array set API_CONFIG \{path_allow_list.backup_files [list $entries]\}"
+  close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root only:backup-cgis] api apiconfig.conf] }
+proc tokens {r} { return [lindex [lines [dict get $r stdout]] end] }
+proc status {r} { return [lindex [lines [dict get $r stdout]] 0] }
+
+test sp011-0 {the staged files of SP011 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {binfile.cgi textfile.cgi tarfile.cgi version.cgi} {
+    set p [file join $gen backup-cgis backup $f]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp011-1 {version.cgi: /VERSION (re-baseline BD-15, was /boot/VERSION) as text/plain without a newline and without a session; '' if missing} -body {
+  set a [cgi backup/version.cgi -files [list VERSION "3.75.6.20240316"]]
+  set b [cgi backup/version.cgi]
+  list [dict get $a stdout] [dict get $b stdout]
+} -result [list "Content-Type: text/plain\n\n3.75.6.20240316" "Content-Type: text/plain\n\n"]
+
+test sp011-2 {[TARGET] binfile/textfile (ADMIN session, exact allow-list entry): content streamed with the right content type} -setup {
+  setconf {/etc/config/rfd.conf /etc/config/test.bin}
+} -body {
+  set files [list etc/config/rfd.conf "line1\nline2\n" etc/config/test.bin "\x01\x02\xff"]
+  set a [cgi backup/binfile.cgi -query "$Q&file=%2Fetc%2Fconfig%2Ftest.bin" -sessions $ADMIN -files $files]
+  set b [cgi backup/textfile.cgi -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files $files]
+  list [lindex [lines [dict get $a stdout]] 0] [string match "*\x01\x02\xff" [dict get $a stdout]] \
+       [dict get $b stdout]
+} -cleanup { clearconf } -result [list "Content-Type: application/octet-stream" 1 "Content-Type: text/plain\n\nline1\nline2\n"]
+
+test sp011-3 {[TARGET] tarfile (ADMIN, allow-listed path): tar runs as an argument list 'tar c -- <path>' and is streamed as application/x-tar} -setup {
+  setconf {/etc/config}
+} -body {
+  set r [cgi backup/tarfile.cgi -query "$Q&file=%2Fetc%2Fconfig" -sessions $ADMIN -exec {{{tar c -- /etc/config} TARBYTES}}]
+  list [dict get $r stdout] [dict get $r exec_calls]
+} -cleanup { clearconf } -result [list "Content-Type: application/x-tar\n\nTARBYTES" [list {tar c -- /etc/config}]]
+
+test sp011-4 {[TARGET] a session below ADMIN (GUEST 1, USER 2) is answered 400 INVALID_SESSION and no file is opened} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set out {}
+  foreach {cgifile sess} [list binfile.cgi $USER textfile.cgi $GUEST tarfile.cgi $USER] {
+    set r [cgi backup/$cgifile -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $sess -files [list etc/config/rfd.conf SECRETCONTENT] -exec {{{tar*} TARBYTES}}]
+    lappend out [list [status $r] [tokens $r] [string match *SECRETCONTENT* [dict get $r stdout]] [llength [dict get $r exec_calls]]]
+  }
+  set out
+} -cleanup { clearconf } -result [lrepeat 3 [list "HTTP/1.0 400 Bad Request" INVALID_SESSION 0 0]]
+
+test sp011-5 {[TARGET] a path that is not an exact allow-list entry is PATH_NOT_ALLOWED before any open/exec (no normalisation, glob or prefix match)} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set out {}
+  foreach f {/etc/shadow ../etc/config/rfd.conf /etc/config/rfd.conf/.. /etc/config/rfd.conf/ /etc/config/* /etc/config /etc/config/rfd.conf%00} {
+    foreach cgifile {binfile.cgi textfile.cgi tarfile.cgi} {
+      set r [cgi backup/$cgifile -query "$Q&file=[string map {/ %2F} $f]" -sessions $ADMIN -files [list etc/shadow SHADOW etc/config/rfd.conf RFD] -exec {{{tar*} TARBYTES}}]
+      lappend out [list [tokens $r] [expr {[string match *SHADOW* [dict get $r stdout]] || [string match *RFD* [dict get $r stdout]]}] [llength [dict get $r exec_calls]]]
+    }
+  }
+  lsort -unique $out
+} -cleanup { clearconf } -result [list [list PATH_NOT_ALLOWED 0 0]]
+
+test sp011-6 {[TARGET] the allow-list is EMPTY by default: every path is denied} -body {
+  clearconf
+  set r [cgi backup/binfile.cgi -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+  list [status $r] [tokens $r]
+} -result [list "HTTP/1.0 400 Bad Request" PATH_NOT_ALLOWED]
+
+test sp011-7 {[TARGET] an absent or empty file parameter is PATH_NOT_ALLOWED, not a raw 'open {}' error} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set a [cgi backup/binfile.cgi -query "$Q" -sessions $ADMIN]
+  set b [cgi backup/textfile.cgi -query "$Q&file=" -sessions $ADMIN]
+  list [tokens $a] [tokens $b]
+} -cleanup { clearconf } -result {PATH_NOT_ALLOWED PATH_NOT_ALLOWED}
+
+test sp011-8 {[TARGET] fail-closed session check: an unknown sid and a failing ReGa (session_isValid not 'true') are INVALID_SESSION} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set a [cgi backup/binfile.cgi -query "sid=%40Unknown0000%40&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+  set b [cgi backup/binfile.cgi -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -regafail {*GetSessionVarStr*} -files [list etc/config/rfd.conf RFD]]
+  set c [cgi backup/binfile.cgi -query "file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+  list [tokens $a] [tokens $b] [tokens $c] [string match *RFD* [dict get $b stdout]]
+} -cleanup { clearconf } -result {INVALID_SESSION INVALID_SESSION INVALID_SESSION 0}
+
+cleanupTests

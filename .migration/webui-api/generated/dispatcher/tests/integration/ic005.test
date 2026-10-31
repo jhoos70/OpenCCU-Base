@@ -1,0 +1,52 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC005 dispatcher -> rega-model: the executor sources methods/<device|channel|sysvar|program|room|
+# subsection|rega>/<script>.tcl with the DECLARED arguments only; a failing script is error 200
+# 'internal error (ref: <cid>)'.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test ic005-1 {one method of every rega-model namespace is sourced through the executor (not 401, privilege passed)} -body {
+  set out {}
+  foreach {m p} {
+    Device.listAll {} Channel.getName {address X} SysVar.getAll {} Program.getAll {} Room.listAll {} Subsection.listAll {} ReGa.isPresent {}
+  } {
+    set r [call $m [concat {_session_id_ AbCdEf1234} $p]]
+    lappend out [expr {[lindex [err $r] 0] ni {401 400 402}}]
+  }
+  set out
+} -result {1 1 1 1 1 1 1}
+
+test ic005-2 {declared ARGUMENTS only: an undeclared parameter does not reach the script} -body {
+  set r [call Room.get {_session_id_ AbCdEf1234 id 1 junk 5}]
+  set s [lindex [dict get $r rega_calls] end]
+  list [string match {*var id = "1";*} $s] [string match *junk* $s]
+} -result {1 0}
+
+test ic005-3 {error 200: a script that fails is 'internal error (ref: <cid>)' with the full text in the syslog under the same id, no internals in the answer} -body {
+  # Program.get of an unknown id raises inside the script (v1 behaviour)
+  set r [call Program.get {_session_id_ AbCdEf1234 id 99}]
+  lassign [err $r] code msg
+  regexp {\(ref: ([0-9a-f]{16})\)} $msg -> cid
+  set logged 0
+  foreach s [dict get $r syslog] { if {[string match "*cid=$cid *code=200*" $s]} { incr logged } }
+  list $code [string match *errorInfo* [dict get $r body]] [string match *.tcl* [dict get $r body]] $logged
+} -result {200 0 0 1}
+
+test ic005-4 {a missing declared argument is 402 before the script is sourced} -body {
+  set r [call Room.get {_session_id_ AbCdEf1234}]
+  list [err $r] [llength [dict get $r rega_calls]]
+} -result [list {402 {missing argument (id)}} 1]
+
+cleanupTests

@@ -1,0 +1,76 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF004 Backup CGI lifecycle (api/backup/*.cgi; flow-model.md#cf004): the CGI sources common.tcl,
+# startup parses the query, main validates the sid with session_isValid (only the literal true),
+# requires upl 8 and an exact allow-listed path (default empty), then streams / executes; errors
+# are put_error (HTTP/1.0 400 + text/plain + token).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:backup-cgis,security-session
+proc cgi {rel args} { return [golden::cgi $rel -candidate $::CAND {*}$args] }
+proc lines {s} { return [split $s \n] }
+proc setconf {entries} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]
+  puts $fd "array set API_CONFIG \{path_allow_list.backup_files [list $entries]\}"
+  close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc tokens {r} { return [lindex [lines [dict get $r stdout]] end] }
+set ADMIN {{@AbCdEf1234@ 8 1000 Admin}}
+set USER {{@AbCdEf1234@ 2 1000 User}}
+set Q "sid=%40AbCdEf1234%40"
+
+test cf004-1 {steps 1-5: a valid ADMIN session and an exact allow-listed path stream the file (text/plain)} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set r [cgi backup/textfile.cgi -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+  list [dict get $r stdout]
+} -cleanup { clearconf } -result [list "Content-Type: text/plain\n\nRFD"]
+
+test cf004-2 {step 4 default: the path allow-list is empty - every path is PATH_NOT_ALLOWED before any open (no existence oracle)} -body {
+  set r [cgi backup/textfile.cgi -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+  list [lindex [lines [dict get $r stdout]] 0] [tokens $r] [string match *RFD* [dict get $r stdout]]
+} -result [list "HTTP/1.0 400 Bad Request" PATH_NOT_ALLOWED 0]
+
+test cf004-3 {step 3 error: an invalid or missing session is INVALID_SESSION (400) and no data is read} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set out {}
+  foreach q [list "sid=%40Nope0000000%40&file=%2Fetc%2Fconfig%2Frfd.conf" "file=%2Fetc%2Fconfig%2Frfd.conf"] {
+    set r [cgi backup/textfile.cgi -query $q -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+    lappend out [tokens $r] [string match *RFD* [dict get $r stdout]]
+  }
+  set out
+} -cleanup { clearconf } -result {INVALID_SESSION 0 INVALID_SESSION 0}
+
+test cf004-4 {step 4: a session below ADMIN is INVALID_SESSION} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set r [cgi backup/textfile.cgi -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $USER -files [list etc/config/rfd.conf RFD]]
+  tokens $r
+} -cleanup { clearconf } -result INVALID_SESSION
+
+test cf004-5 {step 5: tarfile runs tar as an argument list with the allow-listed path after '--'} -setup {
+  setconf {/etc/config}
+} -body {
+  set r [cgi backup/tarfile.cgi -query "$Q&file=%2Fetc%2Fconfig" -sessions $ADMIN -exec {{{tar c -- /etc/config} TARBYTES}}]
+  list [dict get $r exec_calls] [dict get $r stdout]
+} -cleanup { clearconf } -result [list [list {tar c -- /etc/config}] "Content-Type: application/x-tar\n\nTARBYTES"]
+
+test cf004-6 {error path: session_isValid failing inside (ReGa down) is treated as invalid - fail closed} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set r [cgi backup/textfile.cgi -query "$Q&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -regafail {*GetSessionVarStr*} -files [list etc/config/rfd.conf RFD]]
+  list [tokens $r] [string match *RFD* [dict get $r stdout]]
+} -cleanup { clearconf } -result {INVALID_SESSION 0}
+
+test cf004-7 {step 3: version.cgi needs no session (minimal unauthenticated endpoint)} -body {
+  dict get [cgi backup/version.cgi -sessions {} -files [list VERSION 3.75.6]] stdout
+} -result "Content-Type: text/plain\n\n3.75.6"
+
+cleanupTests

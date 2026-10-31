@@ -1,0 +1,196 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP001 - the dispatcher pipeline (homematic.cgi): contracts/behavioral-contracts.json#SP001
+# Pipeline order: strict-mode check, parse, per-sid limiter (own tests: sp001-ratelimit-*.test),
+# lookup, privilege check, argument check, script sourcing. NFR and the golden re-run are in
+# integration/sp001.test.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc post {json args} {
+  return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::SESS {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc getupls {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *StrValueByIndex* $c]} { incr n } }
+  return $n
+}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+
+test sp001-0 {the staged dispatcher files exist} -body {
+  set out {}
+  foreach f {homematic.cgi eq3/executor.tcl eq3/sidlimit.tcl v2/rpc.tcl v2/router.tcl v2/auth.tcl} {
+    lappend out [file exists [file join $gen dispatcher {*}[split $f /]]]
+  }
+  set out
+} -result {1 1 1 1 1 1}
+
+test sp001-1 {acceptance[0]: parse, lookup, privilege check, argument check and script run for a GUEST method with a sufficient session} -body {
+  set r [post {{"method":"Device.listAll","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF"},"id":7}}]
+  list [status $r] [string match {CONTENT-TYPE: application/json; charset=utf-8*} [dict get $r headers]] \
+    [string trim [dict get $r body]] [getupls $r]
+} -result [list 200 1 {{"id": 7,"version": "1.1","result": [],"error": null}} 1]
+
+test sp001-2 {acceptance[1]: an unknown method is answered with 401 "method not found (<name>)" and nothing is sourced} -body {
+  set r [post {{"method":"No.such","params":{},"id":1}}]
+  list [err $r] [status $r] [llength [dict get $r rega_calls]]
+} -result {{401 {method not found (No.such)}} 200 0}
+
+test sp001-3 {acceptance[2]: the FIRST missing argument in ARGUMENTS order is reported with 402} -body {
+  set a [post {{"method":"Session.setSessionVar","params":{"_session_id_":"AbCdEf1234"},"id":1}}]
+  set b [post {{"method":"Session.setSessionVar","params":{"_session_id_":"AbCdEf1234","var":"a"},"id":1}}]
+  list [err $a] [err $b]
+} -result {{402 {missing argument (var)}} {402 {missing argument (val)}}}
+
+test sp001-4 {acceptance[3] [TARGET]: a Tcl error (odd-length params) is answered as error 200 with a correlation id, no internals, and the full text in the syslog under the same id} -body {
+  set r [post {{"method":"system.listMethods","params":[1],"id":1}}]
+  lassign [err $r] code msg
+  regexp {\(ref: ([0-9a-f]{16})\)} $msg -> cid
+  set leak 0
+  foreach bad {errorInfo {while executing} .tcl /www/ {list must have an even}} { if {[string first $bad [dict get $r body]] >= 0} { incr leak } }
+  set logged 0
+  foreach s [dict get $r syslog] { if {[string match "*cid=$cid *code=200*errorInfo=*" $s]} { incr logged } }
+  list $code $leak $logged
+} -result {200 0 1}
+
+test sp001-5 {acceptance[3] [TARGET]: a missing CONTENT_LENGTH is error 200 (not an uncaught Tcl error)} -body {
+  set root [golden::root $::CAND]
+  set fs [mock::fs::create]
+  set cenv [mock::cgi_env::build POST -body {{"method":"x","params":{},"id":1}} -contenttype application/json -nolength 1]
+  set res [mock::run_cgi [file join $root api homematic.cgi] $cenv -docroot $root -alias /www/ -fsroot $fs]
+  mock::fs::destroy $fs
+  list [dict get $res status] [regexp {"code": 200,\s*"message": "internal error \(ref: [0-9a-f]{16}\)"} [dict get $res stdout]]
+} -result {0 1}
+
+test sp001-6 {acceptance[4] [TARGET]: a non-NONE method without _session_id_ is 402 before any privilege lookup} -body {
+  set r [post {{"method":"Session.setSessionVar","params":{"var":"a","val":"b"},"id":1}}]
+  list [err $r] [llength [dict get $r rega_calls]]
+} -result {{402 {missing argument (_session_id_)}} 0}
+
+test sp001-7 {acceptance[5] [TARGET]: strict mode - text/plain or a missing X-Requested-With is rejected before parsing (code 405, HTTP 200 on v1), application/json plus the header proceeds} -setup {
+  setconf {array set API_CONFIG {strict_mode true}}
+} -body {
+  set body {{"method":"Device.listAll","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF"},"id":1}}
+  set a [post $body -contenttype text/plain -header {X-Requested-With XMLHttpRequest}]
+  set b [post $body -contenttype application/json]
+  set c [post $body -contenttype {application/json; charset=utf-8} -header {X-Requested-With XMLHttpRequest}]
+  list [lindex [err $a] 0] [status $a] [llength [dict get $a rega_calls]] [lindex [err $b] 0] [llength [dict get $b rega_calls]] [err $c] [string trim [dict get $c body]]
+} -cleanup { clearconf } -result [list 405 200 0 405 0 none {{"id": 1,"version": "1.1","result": [],"error": null}}]
+
+test sp001-8 {acceptance[6]: default mode accepts application/x-www-form-urlencoded with a valid JSON body} -body {
+  set r [post {{"method":"Device.listAll","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF"},"id":1}} -contenttype application/x-www-form-urlencoded]
+  string trim [dict get $r body]
+} -result {{"id": 1,"version": "1.1","result": [],"error": null}}
+
+test sp001-9 {acceptance[7] [V2]: POST /api/v2/rpc takes the sid from X-Session-Id, params need no _session_id_, success is HTTP 200 with the v1 result shape} -body {
+  set r [post {{"method":"Device.listAll","params":{"interface":"BidCos-RF"},"id":3}} {*}$::V2]
+  list [status $r] [string trim [dict get $r body]] [getupls $r] [regexp {X-Correlation-Id: [0-9a-f]{16}} [dict get $r headers]]
+} -result [list 200 {{"id": 3,"version": "1.1","result": [],"error": null}} 1 1]
+
+test sp001-10 {acceptance[8] [V2]: /api/v2/rpc with text/plain is HTTP 415, without X-Requested-With HTTP 403; nothing is sourced} -body {
+  set body {{"method":"Device.listAll","params":{"interface":"BidCos-RF"},"id":3}}
+  set a [post $body -contenttype text/plain -setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}]
+  set b [post $body -setenv {REQUEST_URI /api/v2/rpc} -header {X-Session-Id AbCdEf1234}]
+  list [status $a] [status $b] [llength [dict get $a rega_calls]] [llength [dict get $b rega_calls]]
+} -result {415 403 0 0}
+
+test sp001-11 {acceptance[9] [V2]: /api/v2/batch returns the responses in request order; a failing element does not abort the others} -body {
+  set body {[{"id":1,"method":"Device.listAll","params":{"interface":"BidCos-RF"}},{"id":2,"method":"No.such","params":{}},{"id":"x","method":"Interface.isPresent","params":{"interface":"BidCos-RF"}}]}
+  set r [post $body -setenv {REQUEST_URI /api/v2/batch} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}]
+  set b [string trim [dict get $r body]]
+  list [status $r] [string index $b 0] [regexp -all {"version": ?"1.1"} $b] \
+    [regexp {"id": ?1,.*"id": ?2,.*"id": ?"x"} [string map [list \n { }] $b]] [regexp {"code": ?401} $b]
+} -result [list 200 \[ 3 1 1]
+
+test sp001-12 {acceptance[10] [V2]: a batch over the limit (21 elements) is HTTP 413 and nothing is executed} -body {
+  set els {}
+  for {set i 0} {$i < 21} {incr i} { lappend els "\{\"id\":$i,\"method\":\"Device.listAll\",\"params\":\{\"interface\":\"BidCos-RF\"\}\}" }
+  set r [post "\[[join $els ,]\]" -setenv {REQUEST_URI /api/v2/batch} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}]
+  list [status $r] [lindex [err $r] 0] [llength [dict get $r rega_calls]]
+} -result {413 403 0}
+
+test sp001-13 {acceptance[10] [V2]: exactly 20 elements are executed} -body {
+  set els {}
+  for {set i 0} {$i < 20} {incr i} { lappend els "\{\"id\":$i,\"method\":\"Interface.isPresent\",\"params\":\{\"interface\":\"BidCos-RF\"\}\}" }
+  set r [post "\[[join $els ,]\]" -setenv {REQUEST_URI /api/v2/batch} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}]
+  list [status $r] [regexp -all {"version": ?"1.1"} [dict get $r body]]
+} -result {200 20}
+
+test sp001-14 {acceptance[11] [V2]: PUT, OPTIONS and HEAD on /api/v2/rpc and /api/v2/batch are 405 with Allow: POST, on /api/v2/schema Allow: GET} -body {
+  set out {}
+  foreach {uri m} {/api/v2/rpc PUT /api/v2/rpc OPTIONS /api/v2/batch HEAD /api/v2/schema PUT /api/v2/schema OPTIONS} {
+    set r [post {} -method $m -setenv [list REQUEST_URI $uri]]
+    regexp {Allow: (\w+)} [dict get $r headers] -> allow
+    lappend out [status $r]/$allow
+  }
+  set out
+} -result {405/POST 405/POST 405/POST 405/GET 405/GET}
+
+test sp001-15 {acceptance[12] [TARGET]: no Access-Control-* header on v1 or v2 responses, success or error} -body {
+  set n 0
+  foreach {args} [list {} $::V2] {
+    foreach body {{{"method":"Interface.isPresent","params":{"interface":"BidCos-RF"},"id":1}} {{"method":"No.such","params":{},"id":1}}} {
+      set r [post $body {*}$args]
+      incr n [regexp -nocase {access-control} [dict get $r headers]]
+    }
+  }
+  set n
+} -result 0
+
+test sp001-16 {acceptance[17]: with the default configuration 61 requests with the same sid are all processed (no 429, no counter file)} -body {
+  set fs [mock::fs::create]
+  set codes {}
+  for {set i 0} {$i < 61} {incr i} {
+    set r [post {{"method":"Interface.isPresent","params":{"interface":"BidCos-RF","_session_id_":"AbCdEf1234"},"id":1}} -fs $fs]
+    lappend codes [lindex [err $r] 0]
+  }
+  set exists [file exists [file join $fs tmp webui-ratelimit]]
+  mock::fs::destroy $fs
+  list [lsort -unique $codes] $exists
+} -result {none 0}
+
+test sp001-17 {SP015 acceptance[1] [TARGET]: GET returns the reduced HTML page - the envelope description and the error-code table, no method names, INFO or ARGUMENTS} -body {
+  set r [post {} -method GET -contenttype {}]
+  set b [dict get $r body]
+  list [string match {CONTENT-TYPE: text/html*} [dict get $r headers]] [string match *Fehlercodes* $b] [string match *Device.listAll* $b] \
+    [string match *Administrator* $b] [regexp {<td>400</td>} $b]
+} -result {1 1 0 0 1}
+
+test sp001-18 {acceptance[0] of SP013: central is true and the privilege check is enforced; config_tool_mode true skips the lookup and writes one syslog line} -body {
+  # an ADMIN method with a GUEST session: denied in the default (central) mode, allowed in config-tool mode
+  set body {{"method":"CCU.getSerial","params":{"_session_id_":"GuestSid001"},"id":1}}
+  set a [post $body -sessions {{GuestSid001 1 1001 Guest}}]
+  setconf {array set API_CONFIG {config_tool_mode true}}
+  set b [post $body -sessions {{GuestSid001 1 1001 Guest}}]
+  clearconf
+  list [lindex [err $a] 0] [getupls $a] [expr {[lindex [err $b] 0] ne "400"}] [getupls $b] [string match *privilege* [lindex [dict get $b syslog] 0]]
+} -result {400 1 1 0 1}
+
+test sp001-19 {acceptance[3] of SP013: with DOCUMENT_ROOT unset the CGI answers error 200 with a correlation id} -body {
+  set root [golden::root $::CAND]
+  set fs [mock::fs::create]
+  set cenv [mock::cgi_env::build POST -body {{"method":"x","params":{},"id":1}} -contenttype application/json]
+  set res [mock::run_cgi [file join $root api homematic.cgi] $cenv -fsroot $fs -cwd [file join $root api]]
+  mock::fs::destroy $fs
+  list [regexp {"code": 200,\s*"message": "internal error \(ref: [0-9a-f]{16}\)"} [dict get $res stdout]]
+} -result 1
+
+cleanupTests

@@ -1,0 +1,81 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP010 NFR and integration coverage (spec.json#SP010 non_functional_requirements[0..7]),
+# boundary and error cases. The backup CGIs are not part of the JSON-RPC registry, so the
+# "golden re-run" compares the legacy and the staged login.cgi success response byte for byte.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc cgi {rel args} { return [golden::cgi $rel -candidate only:backup-cgis {*}$args] }
+proc drv {script args} { return [golden::tcl $script -candidate only:backup-cgis {*}$args] }
+set LOGIN302 {{{HTTP/1.1 302 Found} {Location http://127.0.0.1/index.htm?sid=@AbCdEf1234@}}}
+set PRE {
+  cd backup
+  source common.tcl
+}
+set FLUSH {catch {::__backup_puts -nonewline $::BACKUP_OUT}}
+
+test sp010-nfr0 {NFR0: 'sid=' (empty value) does not match '([^=]+)=(.+)' - the key is absent} -body {
+  set r [drv "$PRE
+    parseQueryString
+    puts \[expr {\[info exists _query_args_(sid)\]}\]
+    $FLUSH" -setenv {QUERY_STRING sid=}]
+  string trim [dict get $r stdout]
+} -result 0
+
+test sp010-nfr1 {NFR1: login credentials are read from the query string only - a POST body is not parsed} -body {
+  set r [cgi backup/login.cgi -method POST -body "username=Admin&password=secret" -http {{{HTTP/1.1 200 OK} {}}}]
+  list [lindex [split [dict get $r stdout] \n] end] [dict get $r http_calls]
+} -result [list INVALID_CREDENTIALS [list {http://127.0.0.1/login.htm -query tbUsername=&tbPassword=}]]
+
+test sp010-nfr2 {NFR2: empty credentials proceed to session_login and fail as INVALID_CREDENTIALS, never MISSING_ARGUMENT} -body {
+  set r [cgi backup/login.cgi -http {{{HTTP/1.1 200 OK} {}}}]
+  list [lindex [split [dict get $r stdout] \n] end] [string match *MISSING_ARGUMENT* [dict get $r stdout]]
+} -result {INVALID_CREDENTIALS 0}
+
+test sp010-nfr3 {NFR3: login returns the inner id without the '@' wrappers} -body {
+  set r [cgi backup/login.cgi -query "username=A&password=B" -http $LOGIN302]
+  list [lindex [split [dict get $r stdout] \n] end] [string match *@* [dict get $r stdout]]
+} -result {AbCdEf1234 0}
+
+test sp010-nfr4 {NFR4: decodeUrl maps + to a space, %XX per byte and doubles backslashes first} -body {
+  set r [drv "$PRE
+    puts \[list \[decodeUrl a+b\] \[decodeUrl %41%42\] \[decodeUrl {a%5Cb}\]\]
+    $FLUSH"]
+  string trim [dict get $r stdout]
+} -result {{a b} AB {a\b}}
+
+test sp010-nfr5 {NFR5: the CGIs 'source common.tcl' relative to the working directory - another directory fails} -body {
+  set root [golden::root only:backup-cgis]
+  set cenv [mock::cgi_env::build GET -query ""]
+  set r [mock::run_cgi [file join $root api backup login.cgi] $cenv -docroot $root -alias /www/ -cwd $root]
+  expr {[dict get $r status] != 0 && [string match *common.tcl* [dict get $r stderr]]}
+} -result 1
+
+test sp010-nfr6 {NFR6: common.tcl loads the bridges and sources the session and rega libraries with absolute paths} -body {
+  set fd [open [file join $gen backup-cgis backup common.tcl] r]; set c [read $fd]; close $fd
+  list [regexp {load tclrega.so} $c] [regexp {load tclrpc.so} $c] [regexp {source /www/tcl/eq3/session.tcl} $c] [regexp {source /www/tcl/eq3/rega.tcl} $c]
+} -result {1 1 1 1}
+
+test sp010-nfr7 {NFR7 [TARGET]: output is buffered, a successful request is flushed in one piece} -body {
+  set r [cgi backup/login.cgi -query "username=A&password=B" -http $LOGIN302]
+  dict get $r stdout
+} -result "Content-Type: text/plain\n\nAbCdEf1234"
+
+test sp010-golden {the staged login.cgi success response is byte identical to the v1 response} -body {
+  set a [golden::cgi backup/login.cgi -candidate legacy -query "username=A&password=B" -http $LOGIN302]
+  set b [cgi backup/login.cgi -query "username=A&password=B" -http $LOGIN302]
+  golden::diff [dict get $a stdout] [dict get $b stdout]
+} -result {}
+
+test sp010-err1 {an error text with a path or Tcl detail is never returned (fixed tokens only)} -body {
+  set r [drv "$PRE
+    proc main {} { error {couldn't open \"/etc/secret\": no such file or directory} }
+    startup"]
+  list [dict get $r stdout] [string match */etc/* [dict get $r stdout]]
+} -result [list "HTTP/1.0 400 Bad Request\nContent-Type: text/plain\n\nINTERNAL_ERROR" 0]
+
+cleanupTests

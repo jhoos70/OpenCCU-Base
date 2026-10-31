@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "format": "json",
+  "feature": "webui-api",
+  "generated_at": "2026-10-13T20:50:42.838Z",
+  "spec_dir": ".migration/webui-api/implementation",
+  "sources": {
+    "behavior": "analysis.json.user_stories[]",
+    "architecture": "target-architecture.md",
+    "codebase": "analysis.json.user_stories[].source + requirements",
+    "plan_role": "supplemental migration intent, constraints, systems, success criteria",
+    "docs": [
+      ".migration/docs/modules/webui-api.md",
+      ".migration/docs/contracts.md",
+      ".migration/docs/data-model.md",
+      ".migration/docs/overview.md",
+      ".migration/docs/cross-cutting/api-contracts.md",
+      ".migration/docs/cross-cutting/data-flow.md",
+      ".migration/docs/cross-cutting/dependencies.md",
+      ".migration/docs/cross-cutting/infrastructure.md",
+      ".migration/docs/cross-cutting/integration-seams.md",
+      ".migration/docs/cross-cutting/security.md",
+      ".migration/docs/cross-cutting/technical-debt.md",
+      ".migration/docs/cross-cutting/testing.md",
+      ".migration/docs/modules/.github.md",
+      ".migration/docs/modules/bin.md",
+      ".migration/docs/modules/build-tools.md",
+      ".migration/docs/modules/cmake.md",
+      ".migration/docs/modules/etc.md",
+      ".migration/docs/modules/firmware.md",
+      ".migration/docs/modules/licenses.md",
+      ".migration/docs/modules/opt.md",
+      ".migration/docs/modules/root.md",
+      ".migration/docs/modules/src.md",
+      ".migration/docs/modules/tests.md",
+      ".migration/docs/modules/usr.md",
+      ".migration/docs/modules/webui-config-pages.md",
+      ".migration/docs/modules/webui-design-docs.md",
+      ".migration/docs/modules/webui-easymodes.md",
+      ".migration/docs/modules/webui-rega-pages.md",
+      ".migration/docs/modules/webui-shell-build.md",
+      ".migration/docs/modules/www.md",
+      ".migration/docs/overview/dependency-graph.md",
+      ".migration/docs/overview/entry-points.md",
+      ".migration/docs/overview/folder-structure.md",
+      ".migration/docs/overview/stack-inventory.md",
+      ".migration/docs/overview/tech-stack.md"
+    ]
+  },
+  "rules": [
+    {
+      "id": "OM-SDD-001",
+      "name": "Evidence-first specification",
+      "severity": "blocker",
+      "phases": [
+        "specify",
+        "plan",
+        "tasks",
+        "analyze",
+        "implement"
+      ],
+      "requires": [
+        "Functional behavior comes from analysis.json.user_stories[] (requirements, source); control_flows[] are supplementary evidence",
+        "Technical decisions come from target-architecture.md",
+        "Plan data is supplemental and never overrides user_stories or architecture evidence",
+        "Unknowns are recorded as evidence gaps instead of assumptions"
+      ]
+    },
+    {
+      "id": "OM-SDD-002",
+      "name": "Target architecture is authoritative",
+      "severity": "blocker",
+      "phases": [
+        "specify",
+        "plan",
+        "tasks",
+        "analyze",
+        "implement"
+      ],
+      "requires": [
+        "Every user story (by spec_id) is referenced by target-architecture.md",
+        "SDD plan and tasks reference target-architecture.md",
+        "No new target stack, component model, integration strategy, or data architecture is introduced after /architect"
+      ]
+    },
+    {
+      "id": "OM-SDD-003",
+      "name": "Requirements are mandatory",
+      "severity": "blocker",
+      "phases": [
+        "specify",
+        "tasks",
+        "analyze",
+        "implement"
+      ],
+      "requires": [
+        "Every user story has requirements",
+        "Every user story has edge_cases",
+        "Spec and tasks preserve spec_id, contract, and source traceability"
+      ]
+    },
+    {
+      "id": "OM-SDD-004",
+      "name": "Control flows are first-class requirements",
+      "severity": "blocker",
+      "phases": [
+        "specify",
+        "plan",
+        "tasks",
+        "analyze",
+        "implement"
+      ],
+      "requires": [
+        "Affected control flows from analysis.json are rendered in spec.json",
+        "Affected control flows receive flow/integration test tasks",
+        "Flow tests map to related specifications where available"
+      ]
+    },
+    {
+      "id": "OM-SDD-005",
+      "name": "Spec/NFR/contracts traceability",
+      "severity": "blocker",
+      "phases": [
+        "specify",
+        "plan",
+        "tasks",
+        "analyze"
+      ],
+      "requires": [
+        "Every user story preserves its explicit spec_id in spec.json",
+        "Every requirement appears in spec.json",
+        "NFRs are derived from target architecture, integration contracts, plan constraints, success criteria, or migration docs",
+        "Contracts/ contains integration and behavioral contract artifacts"
+      ]
+    },
+    {
+      "id": "OM-SDD-006",
+      "name": "Staged code generation only",
+      "severity": "blocker",
+      "phases": [
+        "tasks",
+        "analyze",
+        "implement"
+      ],
+      "requires": [
+        "Generated code paths stay under an output_dir declared in .migration/<feature>/config.json (or one of components[]'s output_dirs for multi-artifact features)",
+        "The code-generation contract records output path(s), templates, and verification commands for every component"
+      ]
+    },
+    {
+      "id": "OM-SDD-007",
+      "name": "Test-first implementation",
+      "severity": "blocker",
+      "phases": [
+        "tasks",
+        "implement"
+      ],
+      "requires": [
+        "Every user-story slice has a failing test task before implementation",
+        "RED observations are recorded before related source writes",
+        "Verification evidence is recorded before completion"
+      ]
+    },
+    {
+      "id": "OM-SDD-008",
+      "name": "Migration docs are supporting evidence",
+      "severity": "warning",
+      "phases": [
+        "specify",
+        "plan",
+        "tasks"
+      ],
+      "requires": [
+        ".migration/docs/ is consulted when present",
+        "Docs can strengthen contracts but cannot override analysis.json or target-architecture.md"
+      ]
+    }
+  ]
+}

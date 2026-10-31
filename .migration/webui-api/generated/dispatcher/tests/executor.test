@@ -1,0 +1,126 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# The method executor (eq3/executor.tcl, IC004-IC007, IC016): lookup in the registry, privilege
+# and argument checks, sourcing of the method script named by methods.conf SCRIPT_FILE (METHOD_FILE
+# is read by interface/dispatch.tcl), mapping of script errors to the documented error codes.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set SESS {{AbCdEf1234 8 1000 Admin} {GuestSid001 1 1001 Guest}}
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/registry.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/hmscript.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/privilege.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/executor.tcl]
+  registry_load methods.conf
+  array set USER_LEVEL {NONE 0 GUEST 1 USER 2 ADMIN 8 0 NONE 1 GUEST 2 USER 8 ADMIN}
+  set central true
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate $::CAND -sessions $::SESS {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r stdout] -> c m]} { return [list $c $m] }
+  return none
+}
+proc post {json args} {
+  return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::SESS {*}$args]]]
+}
+
+test exec-1 {executor_lookup returns the registry entry of an exact method name} -body {
+  lines [drv {
+    jsonrpc_parse {{"method":"Device.listAll","params":{},"id":1}}
+    array set m [executor_lookup Device.listAll]
+    puts "$m(LEVEL) $m(SCRIPT_FILE) $m(ARGUMENTS)"
+  }]
+} -result {{GUEST device/listall.tcl _session_id_}}
+
+test exec-2 {an unknown method is 401 "method not found (<name>)"; the match is case-sensitive; a path-like name never selects a file} -body {
+  set out {}
+  foreach m {No.such device.listAll ../../etc/passwd Device.listAll\u0000x} {
+    set r [drv "
+      jsonrpc_parse {{\"method\":\"x\",\"params\":{},\"id\":1}}
+      executor_lookup [list $m]
+    "]
+    lappend out [lindex [err $r] 0]
+  }
+  set out
+} -result {401 401 401 401}
+
+test exec-3 {executor_checkArguments reports the FIRST missing name of ARGUMENTS} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    array set method [executor_lookup Session.setSessionVar]
+    array set args {_session_id_ s}
+    executor_checkArguments method args
+  }]
+  err $r
+} -result {402 {missing argument (var)}}
+
+test exec-4 {executor_checkArguments accepts a request that carries every declared argument (extra params are allowed, v1 compatibility)} -body {
+  lines [drv {
+    jsonrpc_parse {{"method":"x","params":{},"id":1}}
+    array set method [executor_lookup Session.setSessionVar]
+    array set args {_session_id_ s var a val b extra e}
+    executor_checkArguments method args
+    puts ok
+  }]
+} -result ok
+
+test exec-5 {executor_source runs the script of SCRIPT_FILE at global scope: variables method and args are visible to it} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"system.listMethods","params":{},"id":1}}
+    array set method [executor_lookup system.listMethods]
+    array set args $JSONRPC(PARAMS)
+    executor_source method
+  }]
+  string match {*"name": "Device.listAll"*} [dict get $r stdout]
+} -result 1
+
+test exec-6 {a missing script file is error 200 with a correlation id, the path is not disclosed} -body {
+  set r [drv {
+    jsonrpc_parse {{"method":"Interface.isPresent","params":{},"id":1}}
+    array set method {LEVEL NONE SCRIPT_FILE nowhere/missing.tcl ARGUMENTS {}}
+    array set args {}
+    if {[catch {executor_source method} m opts]} { jsonrpc_error 200 "internal error:\n[dict get $opts -errorinfo]" }
+  }]
+  lassign [err $r] code msg
+  list $code [regexp {^internal error \(ref: [0-9a-f]{16}\)$} $msg] [string match *missing.tcl* [dict get $r stdout]]
+} -result {200 1 0}
+
+test exec-7 {the error code mapping of the pipeline: privilege 400, unknown 401, argument 402 (end to end)} -body {
+  set a [post {{"method":"CCU.getSerial","params":{"_session_id_":"GuestSid001"},"id":1}}]
+  set b [post {{"method":"No.such","params":{},"id":1}}]
+  set c [post {{"method":"Session.setSessionVar","params":{"_session_id_":"AbCdEf1234"},"id":1}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0] [lindex [err $c] 0]
+} -result {400 401 402}
+
+test exec-8 {the privilege check precedes the argument check} -body {
+  set a [post {{"method":"CCU.setSecurityLevel","params":{"_session_id_":"GuestSid001"},"id":1}}]
+  lindex [err $a] 0
+} -result 400
+
+test exec-9 {IC004/IC005/IC006/IC007/IC016: one method per provider component is sourced through the executor (no 401 and no internal error)} -body {
+  set out {}
+  foreach {m params} {
+    Interface.listInterfaces {}
+    SysVar.getAll {}
+    CCU.getSerial {}
+    User.getUserName {}
+    Session.logout {}
+  } {
+    set ps {"_session_id_":"AbCdEf1234","userID":"1000"}
+    set r [post "\{\"method\":\"$m\",\"params\":\{$ps\},\"id\":1\}" -files {var/ids "SerialNumber=ABC123\n"}]
+    # dispatched = the pipeline reached the script (not 401 unknown, 400 denied, 402 missing argument)
+    lappend out [expr {[lindex [err $r] 0] ni {401 400 402}}]
+  }
+  set out
+} -result {1 1 1 1 1}
+
+cleanupTests

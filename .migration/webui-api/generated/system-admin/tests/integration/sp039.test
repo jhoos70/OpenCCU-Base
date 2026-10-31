@@ -1,0 +1,54 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP039 NFR and integration coverage (spec.json#SP039 non_functional_requirements[0..3]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR"
+}
+set S {_session_id_ AbCdEf1234}
+
+test sp039-nfr0 {NFR0: removeFieldTestActive on a missing file - rm prints an error, the answer is false} -body {
+  result [call CCU.removeFieldTestActive $S -execfail {{{rm*} {rm: cannot remove: No such file}}}]
+} -result false
+
+test sp039-nfr1 {NFR1: anything other than the exact string 'false' leaves the LED on} -body {
+  set fs [mock::fs::create]
+  set out {}
+  foreach v {False 0 off {} true} {
+    call CCU.setInfoLedConfig [list _session_id_ AbCdEf1234 serviceLedOn $v alarmLedOn $v] -fs $fs
+    lappend out [lindex [split [mock::fs::read $fs etc/config/hss_led_info.conf] \n] 0]
+  }
+  mock::fs::destroy $fs
+  lsort -unique $out
+} -result IgnoreServiceMessages=false
+
+test sp039-nfr2 {NFR2: getInfoLedConfig emits bare JSON booleans (not strings)} -body {
+  set j [result [call CCU.getInfoLedConfig $S]]
+  list [regexp {"serviceLedOn":true} $j] [regexp {"serviceLedOn":"} $j]
+} -result {1 0}
+
+test sp039-nfr3 {NFR3: an existing config file with an absent key reports that LED on} -body {
+  result [call CCU.getInfoLedConfig $S -files [list etc/config/hss_led_info.conf "Other=1\n"]]
+} -result {{"serviceLedOn":true,"alarmLedOn":true}}
+
+test sp039-err1 {the written LED file has exactly the two v1 lines} -body {
+  set fs [mock::fs::create]
+  call CCU.setInfoLedConfig {_session_id_ AbCdEf1234 serviceLedOn false alarmLedOn true} -fs $fs
+  set c [mock::fs::read $fs etc/config/hss_led_info.conf]
+  mock::fs::destroy $fs
+  set c
+} -result "IgnoreServiceMessages=true\nIgnoreAlarmMessages=false\n"
+
+test sp039-golden {golden re-run: the identity/flag methods replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:system-admin -only {CCU.getSerial CCU.getAddress CCU.getHmIPAddress CCU.getVersion CCU.getHeatingGroupList CCU.getInfoLedConfig CCU.setInfoLedConfig CCU.hideStickyUnreach CCU.getStickyUnreachState CCU.removeFieldTestActive}
+} -result {}
+
+cleanupTests

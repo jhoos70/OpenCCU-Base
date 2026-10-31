@@ -1,0 +1,86 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP009 NFR and integration coverage (spec.json#SP009 non_functional_requirements[0..5]),
+# boundary/error cases and golden re-run of Interface.listInterfaces.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+testConstraint dispatcherStaged [file exists [file join $gen dispatcher homematic.cgi]]
+
+set XML "<interfaces>\n<ipc><name>BidCos-RF</name><url>xmlrpc_bin://127.0.0.1:2001</url><info>BidCos-RF</info></ipc>\n</interfaces>"
+set DRIVER {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/ipc.tcl]
+  array set I [ipc_getInterfaces]
+  foreach n [lsort [array names I]] { puts "$n=$I($n)" }
+}
+proc ipc {args} { return [golden::tcl $::DRIVER -candidate only:interface-gateway {*}$args] }
+proc newfs {files} {
+  set fs [mock::fs::create]
+  dict for {rel c} $files { mock::fs::write $fs $rel $c }
+  return $fs
+}
+
+test sp009-nfr0 {NFR0: InterfacesList.xml missing -> empty list, re-read on every request (no cache)} -setup {
+  set fs [newfs {}]
+} -body {
+  set a [ipc -fs $fs -interfaces 0]
+  set b [ipc -fs $fs -interfaces 0]
+  list [string trim [dict get $a body]] [string trim [dict get $b body]] [llength [dict get $a syslog]] [llength [dict get $b syslog]] [file exists [file join $fs var tmp api_ipc.cache]]
+} -cleanup { mock::fs::destroy $fs } -result {{} {} 1 1 0}
+
+test sp009-nfr1 {NFR1: an <ipc> node at offset 0 is skipped} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml "<ipc><name>X</name><url>u:1</url><info>i</info></ipc>"]]
+} -body {
+  string trim [dict get [ipc -fs $fs] body]
+} -cleanup { mock::fs::destroy $fs } -result {}
+
+test sp009-nfr2 {NFR2: tags with attributes are matched by the greedy regexes (no XML parser)} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml "<l>\n<ipc a=\"1\"><name x=\"y\">Z</name><url k=\"v\">xmlrpc://h:99</url><info q=\"1\">Zi</info></ipc>\n</l>"]]
+} -body {
+  string trim [dict get [ipc -fs $fs] body]
+} -cleanup { mock::fs::destroy $fs } -result {Z=PORT 99 URL xmlrpc://h:99 INFO Zi}
+
+test sp009-nfr3 {NFR3: /var/tmp not writable -> file_save does nothing, XML parsed on every request, no error} -constraints unixNotRoot -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml $XML]]
+  file attributes [file join $fs var tmp] -permissions 0555
+} -body {
+  set a [ipc -fs $fs]
+  set b [ipc -fs $fs]
+  list [string trim [dict get $a body]] [string trim [dict get $b body]] [llength [glob -nocomplain -directory [file join $fs var tmp] *]]
+} -cleanup { file attributes [file join $fs var tmp] -permissions 0755; mock::fs::destroy $fs } -result {{BidCos-RF=PORT 2001 URL xmlrpc_bin://127.0.0.1:2001 INFO BidCos-RF} {BidCos-RF=PORT 2001 URL xmlrpc_bin://127.0.0.1:2001 INFO BidCos-RF} 0}
+
+test sp009-nfr4 {NFR4: INTERFACE_LIST is consumed only by listinterfaces.tcl, interface/dispatch.tcl and device/haslinksorprograms.tcl} -body {
+  set root [golden::root only:interface-gateway]
+  set hits {}
+  foreach f [split [exec find [file join $root api methods] -name *.tcl -type f] \n] {
+    set fd [open $f r]; fconfigure $fd -encoding iso8859-1; set c [read $fd]; close $fd
+    if {[string match *INTERFACE_LIST* $c]} { lappend hits [string range $f [expr {[string length $root] + 5}] end] }
+  }
+  lsort $hits
+} -result {methods/device/haslinksorprograms.tcl methods/interface/dispatch.tcl methods/interface/listinterfaces.tcl}
+
+test sp009-nfr5 {NFR5 [TARGET]: ipc_getInterfaces is not executed for a method that does not use INTERFACE_LIST (lazy resolution, staged dispatcher)} -constraints dispatcherStaged -body {
+  set fs [newfs [list etc/config/InterfacesList.xml $XML]]
+  set r [golden::call system.listMethods {} -candidate staged -fs $fs]
+  set seen [file exists [file join $fs var tmp api_ipc.cache]]
+  mock::fs::destroy $fs
+  set seen
+} -result 0
+
+test sp009-golden {golden fixture re-run: Interface.listInterfaces and Device.hasLinksOrPrograms replay byte-identical through the staged tree (v1 frozen)} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.listInterfaces Interface.isPresent}
+} -result {}
+
+test sp009-err1 {error case: an unreadable/garbage InterfacesList.xml yields an empty list, never a Tcl error} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml "<ipc><name>no end tag"]]
+} -body {
+  set r [ipc -fs $fs]
+  list [dict get $r status] [string trim [dict get $r body]]
+} -cleanup { mock::fs::destroy $fs } -result {0 {}}
+
+cleanupTests

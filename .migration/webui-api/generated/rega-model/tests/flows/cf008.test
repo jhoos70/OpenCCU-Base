@@ -1,0 +1,83 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF008 ReGa-script methods (hmscript parameter injection; flow-model.md#cf008): the method builds
+# a fixed script -> hmscript injects ONLY declared arguments as 'var <name> = "<escaped>";' -> a
+# control character is rejected (403) -> rega_script (STDOUT, '' on failure) -> the method parses
+# the output -> JSON. v2: one bulk script per model section; SysVar.create* refuse existing names.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model,schema-harness
+set SESS {{AbCdEf1234 2 1000 User}}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc methodscripts {r} {
+  set out {}
+  foreach c [dict get $r rega_calls] { if {![string match *StrValueByIndex* $c]} { lappend out $c } }
+  return $out
+}
+
+test cf008-1 {steps 1-4: privilege lookup first, then exactly one method script with the declared arguments injected before the fixed text} -body {
+  set r [call SysVar.getValueByName {_session_id_ AbCdEf1234 name Temp} -rega {{*.Get(name)* 21.5}}]
+  set s [lindex [methodscripts $r] 0]
+  list [llength [methodscripts $r]] [string match {var name = "Temp";*} $s] [string match {*sv.Value()*} $s] [result $r]
+} -result {1 1 1 {"21.5"}}
+
+test cf008-2 {step 2: quotes, backslashes, LF, CR and TAB of a value are escaped exactly once; the identifier of a variable is sanitised} -body {
+  set r [call SysVar.getValueByName [list _session_id_ AbCdEf1234 name "a\"b\\c\nd\re\tf"]]
+  string match {var name = "a\\"b\\\\c\\nd\\re\\tf";*} [lindex [methodscripts $r] 0]
+} -result 1
+
+test cf008-3 {step 3: only declared ARGUMENTS become variables; a control character U+0000-U+001F (except TAB, LF, CR) is 403 and no method script runs} -body {
+  set a [call SysVar.getValueByName {_session_id_ AbCdEf1234 name T extra 1}]
+  set body "\{\"method\":\"SysVar.getValueByName\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"name\":\"a\\u0001\"\},\"id\":1\}"
+  set b [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::SESS]]]
+  list [string match *extra* [lindex [methodscripts $a] 0]] [err $b] [llength [methodscripts $b]]
+} -result {0 {403 {invalid argument (name)}} 0}
+
+test cf008-4 {step 4/5: an empty STDOUT (script failure) is mapped per method: "" (getValue), [] (getAll)} -body {
+  list [result [call SysVar.getValueByName {_session_id_ AbCdEf1234 name T} -regafail {*.Get(name)*}]] \
+    [result [call SysVar.getAll {_session_id_ AbCdEf1234} -regafail {*svList.EnumIDs()*}]]
+} -result {{""} {[]}}
+
+test cf008-5 {step 6: GET /api/v2/model runs ONE bulk script for the devices of a page, not one per device} -body {
+  set recs {}
+  for {set i 1} {$i <= 30} {incr i} { lappend recs [list ID $i NAME d$i ADDRESS A$i INTERFACE I DEVICE_TYPE T READY_CONFIG true GROUP_ONLY false CHANNELS {}] }
+  set r [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/model} -query sections=devices \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::SESS -rega [list [list {*Devices().EnumIDs()*Channels()*} $recs]]]]]
+  list [status $r] [llength [methodscripts $r]]
+} -result {200 1}
+
+test cf008-6 {error path: a v2 SysVar.create* with an existing name is HTTP 409 'name already exists (<name>)' and nothing is created} -body {
+  set r [call SysVar.createBool {name Presence internal 0 chnID -1 init_val true} -rega {{*Write("exists")* exists}} {*}$V2]
+  set created 0
+  foreach c [dict get $r rega_calls] { if {[string match *CreateObject* $c]} { incr created } }
+  list [status $r] [err $r] $created
+} -result {409 {500 {name already exists (Presence)}} 0}
+
+test cf008-7 {error path: v2 mutation routes (programs, rooms, functions) are not delivered yet (EG-6): HTTP 404 route not found} -body {
+  set out {}
+  foreach p {programs rooms functions} {
+    set r [golden::call_raw {{"id":"1"}} [golden::prepare [list -candidate $::CAND -method POST -contenttype application/json -setenv [list REQUEST_URI /api/v2/$p] \
+      -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions {{AbCdEf1234 8 1 A}}]]]
+    lappend out [status $r]
+  }
+  set out
+} -result {404 404 404}
+
+cleanupTests

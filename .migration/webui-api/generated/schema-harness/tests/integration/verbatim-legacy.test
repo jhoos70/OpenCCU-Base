@@ -1,0 +1,106 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# NFR-056, BD-18 (T253d): the OpenCCU packaging patches stay downstream, so a staged file with a
+# legacy counterpart is either byte-identical to the legacy source (unchanged v1 behaviour) or a
+# minimal edit of it that keeps the legacy line endings and encoding (intentional behaviour
+# change, enumerated in legacymap::behaviour_change_list).
+set here [file dirname [file normalize [info script]]]
+set tests [file dirname $here]
+source [file join $tests helpers legacymap.tcl]
+
+proc slurp {f} {
+  set fd [open $f rb]
+  set c [read $fd]
+  close $fd
+  return $c
+}
+proc valid_utf8 {bin} { return [expr {[encoding convertto utf-8 [encoding convertfrom utf-8 $bin]] eq $bin}] }
+proc count_bare_lf {bin} { return [llength [regexp -all -inline {(?:^|[^\r])\n} $bin]] }
+
+test verbatim-1 {the verbatim set (staged files with a legacy counterpart outside the behaviour-change list) has 129 files} -body {
+  expr {[llength [legacymap::verbatim_files]] / 2}
+} -result 129
+
+test verbatim-2 {the behaviour-change list has 79 entries, each exists staged and has a legacy counterpart} -body {
+  set n 0; set bad {}
+  foreach {comp rel} [legacymap::behaviour_change_files] {
+    incr n
+    if {![file exists [legacymap::staged_path $comp $rel]]} { lappend bad "missing-staged $comp/$rel" }
+    if {![file exists [legacymap::legacy_path $comp $rel]]} { lappend bad "no-legacy $comp/$rel" }
+  }
+  list $n $bad
+} -result {79 {}}
+
+test verbatim-3 {every file NOT in the behaviour-change list is byte-identical to its legacy source} -body {
+  set diff {}
+  foreach {comp rel} [legacymap::verbatim_files] {
+    if {[slurp [legacymap::staged_path $comp $rel]] ne [slurp [legacymap::legacy_path $comp $rel]]} { lappend diff $comp/$rel }
+  }
+  if {[llength $diff]} { puts [join [lrange $diff 0 9] "\n"] }
+  return "verbatim: [llength $diff] differing files"
+} -result {verbatim: 0 differing files}
+
+test verbatim-4 {every behaviour-change file keeps the legacy line ending style and the legacy single-byte encoding} -body {
+  set bad {}
+  foreach {comp rel} [legacymap::behaviour_change_files] {
+    if {$comp eq "dispatcher" && $rel eq "methods.conf"} continue
+    set s [slurp [legacymap::staged_path $comp $rel]]
+    set l [slurp [legacymap::legacy_path $comp $rel]]
+    if {[string first "\r\n" $l] >= 0} {
+      if {[count_bare_lf $s] > [count_bare_lf $l]} { lappend bad "lf $comp/$rel" }
+    } elseif {[string first "\r" $s] >= 0} {
+      lappend bad "cr $comp/$rel"
+    }
+    if {![valid_utf8 $l] && [regexp {[\xC2\xC3][\x80-\xBF]} $s]} { lappend bad "utf8 $comp/$rel" }
+  }
+  if {[llength $bad]} { puts [join [lrange $bad 0 9] "\n"] }
+  list [llength $bad]
+} -result 0
+
+test verbatim-5 {methods.conf keeps the legacy encoding and line endings; only the seven intentional entries differ from the legacy blocks} -body {
+  set s [slurp [legacymap::staged_path dispatcher methods.conf]]
+  set l [slurp [legacymap::legacy_path dispatcher methods.conf]]
+  set res {}
+  # same number of UTF-8 style byte pairs as the legacy file (none added by a re-encoding)
+  lappend res [expr {[llength [regexp -all -inline {[\xC2\xC3][\x80-\xBF]} $s]] == [llength [regexp -all -inline {[\xC2\xC3][\x80-\xBF]} $l]]}]
+  lappend res [expr {[count_bare_lf $s] > 0 ? "lf" : "crlf"}] [expr {[count_bare_lf $l] > 0 ? "lf" : "crlf"}]
+  # entry blocks: name {...} separated by a closing brace at line start
+  proc blocks {bin} {
+    set d [dict create]
+    set name ""; set body ""
+    foreach line [split $bin "\n"] {
+      if {$name eq "" && [regexp {^(\S+) \{\r?$} $line -> n]} { set name $n; set body ""; continue }
+      if {$name ne "" && [string trimright $line "\r"] eq "\}"} { dict set d $name $body; set name ""; continue }
+      if {$name ne ""} { append body $line "\n" }
+    }
+    return $d
+  }
+  set bs [blocks $s]; set bl [blocks $l]
+  set differ {}
+  dict for {k v} $bl {
+    if {![dict exists $bs $k] || [dict get $bs $k] ne $v} { lappend differ $k }
+  }
+  lappend res [lsort $differ] [expr {[dict size $bs] == [dict size $bl]}]
+  set res
+} -result {1 lf lf {CCU.createFile Channel.setMode Channel.setName Interface.setTeam ReGa.getAllDatapoints Session.logout Session.setSessionVar} 1}
+
+test verbatim-6 {no staged system-admin script defines the proc admin_audit} -body {
+  set bad {}
+  foreach {comp rel} [legacymap::staged_files] {
+    if {$comp ne "system-admin"} continue
+    if {[string first "proc admin_audit" [slurp [legacymap::staged_path $comp $rel]]] >= 0} { lappend bad $rel }
+  }
+  set bad
+} -result {}
+
+test verbatim-7 {staged files without a legacy counterpart are neither verbatim nor in the behaviour-change list} -body {
+  set n 0; set bad {}
+  foreach {comp rel} [legacymap::new_files] {
+    incr n
+    if {[file exists [legacymap::legacy_path $comp $rel]]} { lappend bad $comp/$rel }
+  }
+  list [expr {$n > 0}] $bad
+} -result {1 {}}
+
+cleanupTests

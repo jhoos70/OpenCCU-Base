@@ -1,0 +1,175 @@
+{
+  "schema_version": "2.0",
+  "feature_name": "www",
+  "migration_goal": {
+    "goal": "Make `src/webui` the single source of truth and remove the committed, drifted `www/` tree without changing the shipped rootfs.",
+    "description": "The staged web root produced by `webui-assets` must remain byte-identical before and after the change (modulo already-merged source changes), the sibling OpenCCU build must keep passing, and nobody should be able to edit a stale copy again. This unblocks the nextGen UI work, which would otherwise be developed against Bootstrap-less, stale files in `www/`."
+  },
+  "source_stack": {
+    "languages": [
+      "Tcl (CGI, ISO-8859-1)",
+      "HomeMatic Script (ReGa pages)",
+      "JavaScript (webui.js bundle)",
+      "CSS (style.css bundle)"
+    ],
+    "frameworks": [
+      "Tcl cgi.tcl",
+      "Prototype/jQuery/knockout/jqPlot in the copy"
+    ],
+    "infrastructure": [
+      "CMake 3.20+ presets",
+      "Makefile wrapper",
+      "GitHub Actions (4 platforms)",
+      "Buildroot sibling pinning by SHA"
+    ]
+  },
+  "target_stack": {
+    "languages": [
+      "Unchanged (no code is rewritten by this feature)"
+    ],
+    "frameworks": [
+      "Unchanged",
+      "Bootstrap 5 stays in src/webui/www/webui only"
+    ],
+    "infrastructure": [
+      "Unchanged",
+      "make deploy no longer writes ./www",
+      "add a CI guard step"
+    ]
+  },
+  "scope": {
+    "mode": "targeted",
+    "include": [
+      "www/ (all 4,051 tracked entries, including www/config, www/webui/webui.js, www/webui/style.css, www/config/devdescr/DEVDB.tcl, www/rega, 24 symlinks)",
+      "Makefile target deploy-% (lines 25-33)",
+      "README.md:30 repository layout text",
+      "CI guard (new step in .github/workflows/ci.yml) and a short note in cmake/README.md / src/webui docs"
+    ],
+    "exclude": [
+      "src/webui/** content changes (owned by webui-shell-build, webui-config-pages, webui-api, webui-rega-pages, webui-easymodes)",
+      "Any fix of the findings reproduced in both trees (default credentials, exec from request, errorInfo leak, hard-coded key)",
+      "Sibling repo changes other than bumping its OPENCCU_BASE_VERSION pin after the cutover",
+      "bin/, lib/, etc/, opt/, usr/, firmware/ (also deployed-artifact directories, assessed in their own features)"
+    ],
+    "critical_components": [
+      "src/webui/CMakeLists.txt (webui-assets) and src/webui/www_source/CMakeLists.txt: the only producers of the shipped web root",
+      "/home/standard/dev/OpenCCU/.../rootfs-patches/stage_validation_rootfs.sh: the sibling's consumer of this repo",
+      ".github/workflows/ci.yml:161-212 staged-output checks"
+    ],
+    "boundaries": [
+      "No change to the staged rootfs content or layout.",
+      "No change to src/webui/www_source/webui.js line structure (sibling patch contract); src/webui/www/tcl/eq3/rega.tcl is staged unchanged (the sibling normalizes its CRLF itself).",
+      "History is not rewritten; the deletion is an ordinary commit and a tag preserves the last state."
+    ]
+  },
+  "constraints": {
+    "unchanged": [
+      "The staged and installed web root layout: /www/config, /www/api, /www/rega, /www/webui, /www/pda, /www/tools, /www/upnp, /www/ise, /www/tcl, /www/error, and the top-level symlinks created at src/webui/CMakeLists.txt:9-31",
+      "webui.js generation order and line structure, style.css, DEVDB.tcl generation and utf82ansi.py re-encoding (sibling patches depend on them)",
+      "Staged www/tcl/eq3/rega.tcl byte-identical before and after cutover",
+      "st_values.cgi and st_values.js staged into www/config by devicetypes-assets (third producer of the web root)",
+      "URL surface: /api/homematic.cgi JSON-RPC, /config/*.cgi, /rega/*, /pda/*, /webui/*, /ise/*",
+      "Port contract hs485d 32000 / rfd 32001 / ReGa 8183, 1998 (not touched, but must not regress)"
+    ],
+    "integration": {
+      "systems": [
+        "OpenCCU Buildroot package openccu-base (consumer by SHA)",
+        "ReGaHss (closed source) serving /rega and evaluating <% %> pages from the installed /www/rega",
+        "CCU runtime paths /opt/hm/www (target of the committed absolute symlinks), /etc/config/addons/www, /var/EULA.*"
+      ]
+    }
+  },
+  "risks": [
+    {
+      "description": "An undiscovered consumer of the committed www/ (third-party packagers, scripts, forks building from the repo tree, docs pointing at raw GitHub paths) breaks on deletion",
+      "severity": "high",
+      "mitigation": "Phase 0 external-consumer check (GitHub code search, ask OpenCCU maintainers), tag www-snapshot-3.89.2-pre-removal, announce in release notes, keep the rollback variant (git revert or untrack-only) ready"
+    },
+    {
+      "description": "Staged web root changes accidentally (e.g. a generated file relied on being present in www/ or a source file only exists in www/)",
+      "severity": "high",
+      "mitigation": "Before deletion, build the staged tree at HEAD with the sibling script and webui-assets, record a file-list plus sha256 manifest, delete, rebuild and diff the manifests (must be identical); review the 'only in www/' list: symlinks, st_values.cgi, st_values.js, webui.js, style.css, DEVDB.tcl, rega/EULA.*, rega/licenseinfo.htm"
+    },
+    {
+      "description": "Sibling rootfs patches (64, 41 on webui.js) were authored against a tree that includes a www/-derived file",
+      "severity": "medium",
+      "mitigation": "Run the sibling make check-openccu-base and validate_patches.sh against the post-deletion SHA before moving its pin; patches are applied to the generated asset-rootfs, not to www/"
+    },
+    {
+      "description": "Contributors with local make deploy workflows or ongoing branches (feature/nextgen-ui) touching www/ hit conflicts",
+      "severity": "medium",
+      "mitigation": "Rebase guidance: re-apply edits to src/webui/www; git rm conflicts resolved by taking deletion; publish a one-paragraph note in README/CONTRIBUTING"
+    },
+    {
+      "description": "The 49 rega differences and 52 non-config differences hide intentional hot-fixes made only in www/ that never reached src/webui",
+      "severity": "medium",
+      "mitigation": "Diff each differing file once with git log -- www/<path> vs src/...; confirm that www/ side is older (last www/ commit 2026-06-03 vs source 2026-10); port anything newer, otherwise drop"
+    },
+    {
+      "description": "History size does not shrink after deletion (511 MiB pack)",
+      "severity": "low",
+      "mitigation": "Out of scope; optional later git filter-repo decision for the maintainers, not part of this plan"
+    },
+    {
+      "description": "A CI guard is mis-specified and blocks legitimate www/keep placeholders used by tests/test-components.py:117",
+      "severity": "low",
+      "mitigation": "Guard only the tracked-file check (git ls-files www | grep .), not the local directory"
+    }
+  ],
+  "success_criteria": [
+    "`git ls-files www` returns nothing at the target commit; `git grep -n \"^www/\"` finds no build or CI consumer.",
+    "The staged web root (webui-assets plus webui-www-source-assets) has an identical file manifest and sha256 sums before and after the cutover commit, excluding already-merged source changes.",
+    "CI passes on all 4 platforms, including the staged-output checks at ci.yml:199-201, and tests/test-components.py passes.",
+    "The sibling repo passes make check-openccu-base and its rootfs patch validation with its pin set to the post-cutover SHA.",
+    "A CI guard fails any PR that re-adds tracked files under top-level www/.",
+    "README.md and cmake/README.md state that src/webui is the only source and that make deploy output goes to build/.",
+    "Pre-removal state is retrievable via a git tag; the rollback runbook is documented and tested once (git revert dry run).",
+    "Zero regressions in the shipped web UI (smoke: login via /login.htm, /api/homematic.cgi GET, one cp_*.cgi, one ic_*.cgi, /webui/webui.js loads) on a container built by the sibling."
+  ],
+  "focus_areas": [
+    "Evidence-based consumer check: repeat the grep matrix on the sibling at its current HEAD and ask maintainers about external users (Phase 0).",
+    "Manifest-equivalence proof of the staged web root before/after (sha256 list, including generated files and symlink targets).",
+    "Review of the 'only in www/' and differing files for hot-fixes that never reached src/webui (rega 49, non-config 52, config 49).",
+    "Guard rails: CI check against re-adding www/, make deploy redirect, README and docs update.",
+    "Sibling coordination: pin bump sequencing and keeping the webui.js line structure intact.",
+    "Communication to the nextGen UI branch: all UI work targets src/webui/www and src/webui/rega/www only."
+  ],
+  "modules": [
+    {
+      "name": "www",
+      "role": "primary",
+      "source": "index.json",
+      "doc_file": "modules/www.md"
+    },
+    {
+      "name": "webui-shell-build",
+      "role": "affected",
+      "source": "index.json"
+    },
+    {
+      "name": "webui-config-pages",
+      "role": "affected",
+      "source": "index.json"
+    },
+    {
+      "name": "webui-api",
+      "role": "affected",
+      "source": "index.json"
+    },
+    {
+      "name": "webui-rega-pages",
+      "role": "affected",
+      "source": "index.json"
+    },
+    {
+      "name": "webui-easymodes",
+      "role": "affected",
+      "source": "index.json"
+    },
+    {
+      "name": "root (CMake/Makefile/README/CI)",
+      "role": "affected",
+      "source": "index.json"
+    }
+  ]
+}

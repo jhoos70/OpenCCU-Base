@@ -1,0 +1,75 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP032 NFR and integration coverage (spec.json#SP032 non_functional_requirements[0..1]), boundary
+# and error cases of the central validation and the golden re-run: all registry fixtures replay
+# byte-identical with the schema data composed in (the central validation must not change the v1
+# answers of the fixture requests).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,schema-harness
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc post {json args} {
+  return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::SESS {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test sp032-nfr0 {NFR0: non-ASCII INFO text passes through as UTF-8 in listMethods and describe} -body {
+  set a [post {{"method":"system.listMethods","params":{},"id":1}}]
+  set b [post {{"method":"system.describe","params":{},"id":1}}]
+  # (the harness decodes the CGI output as UTF-8)
+  set u "Prüft, ob die Logikschicht (ReGa) aktiv ist"
+  list [expr {[string first $u [dict get $a stdout]] >= 0}] [expr {[string first $u [dict get $b stdout]] >= 0}]
+} -result {1 1}
+
+test sp032-nfr1 {NFR1: system.methodHelp with an unknown name stays error 500 "unknown method (<name>)", also for an empty name} -body {
+  list [err [post {{"method":"system.methodHelp","params":{"name":"Nope.nope"},"id":1}}]] [err [post {{"method":"system.methodHelp","params":{"name":""},"id":1}}]]
+} -result {{500 {unknown method (Nope.nope)}} {500 {unknown method ()}}}
+
+test sp032-err1 {boundary: without the schema data only the control-character rule applies (the pattern rules need the schema)} -body {
+  set body "\{\"method\":\"Interface.getMetadata\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"objectId\":\"1\",\"dataId\":\"a b\"\},\"id\":1\}"
+  set r [golden::call_raw $body [golden::prepare [list -candidate only:dispatcher,security-session -sessions $::SESS]]]
+  set ctl "\{\"method\":\"Interface.getMetadata\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"objectId\":\"1\",\"dataId\":\"a\\u0002b\"\},\"id\":1\}"
+  set s [golden::call_raw $ctl [golden::prepare [list -candidate only:dispatcher,security-session -sessions $::SESS]]]
+  list [expr {[err $r] eq "none" || [lindex [err $r] 1] ne "invalid argument (dataId)"}] [err $s]
+} -result {1 {403 {invalid argument (dataId)}}}
+
+test sp032-err2 {the pattern table is cached: the second request is served from /var/tmp/api_validate.cache; a changed schema rebuilds it} -body {
+  set fs [mock::fs::create]
+  set body "\{\"method\":\"Interface.getMetadata\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"objectId\":\"1\",\"dataId\":\"a b\"\},\"id\":1\}"
+  set a [post $body -fs $fs]
+  set cache [file join $fs var tmp api_validate.cache]
+  set exists [file exists $cache]
+  set head ""
+  if {$exists} { set fd [open $cache r]; set head [gets $fd]; close $fd }
+  set b [post $body -fs $fs]
+  mock::fs::destroy $fs
+  list [err $a] [err $b] $exists [string match "# validate-cache *" $head]
+} -result {{403 {invalid argument (dataId)}} {403 {invalid argument (dataId)}} 1 1}
+
+test sp032-err3 {a malformed cache file is ignored and rebuilt} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs var/tmp/api_validate.cache "# validate-cache x 1 1\n[format %c 123]broken"
+  set body "\{\"method\":\"Interface.getMetadata\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"objectId\":\"1\",\"dataId\":\"a b\"\},\"id\":1\}"
+  set a [post $body -fs $fs]
+  mock::fs::destroy $fs
+  err $a
+} -result {403 {invalid argument (dataId)}}
+
+test sp032-golden {golden re-run: all registry fixtures replay byte-identical through the staged tree with the schema data and the central validation (documented deliberate changes excluded)} -body {
+  set names {}
+  foreach fx [golden::fixtures] {
+    set m [dict get $fx method]
+    if {$m in {Channel.setName Channel.setMode Interface.setTeam system.describe system.listMethods system.methodHelp ReGa.getAllDatapoints Session.setSessionVar CCU.setSecurityLevel CCU.setHttpsRedirectEnabled CCU.downloadFirmware CCU.setSSHPassword CCU.setConfigurationRF CCU.setConfigurationWired CCU.getLGWConnectionStatus}} continue
+    lappend names $m
+  }
+  golden::compare_all -candidate only:dispatcher,security-session,schema-harness -only $names
+} -result {}
+
+cleanupTests

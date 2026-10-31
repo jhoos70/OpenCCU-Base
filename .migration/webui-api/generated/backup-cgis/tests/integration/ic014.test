@@ -1,0 +1,61 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC014 backup-cgis -> security-session: session_isValid sid (backup/common.tcl, backup_requireAdmin).
+# Request shape: sid '@'-wrapped, 12 characters, from the query. Returns the literal true | false;
+# false (and any other answer) is fail-closed: 400 INVALID_SESSION (put_error).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc cgi {rel args} { return [golden::cgi $rel -candidate only:backup-cgis,security-session {*}$args] }
+proc lines {s} { return [split $s \n] }
+proc setconf {entries} {
+  set f [file join [golden::root only:backup-cgis,security-session] api apiconfig.conf]
+  set fd [open $f w]
+  puts $fd "array set API_CONFIG \{path_allow_list.backup_files [list $entries]\}"
+  close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root only:backup-cgis,security-session] api apiconfig.conf] }
+proc tokens {r} { return [lindex [lines [dict get $r stdout]] end] }
+proc isvalidcalls {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match {*var result = false;*} $c]} { incr n } }
+  return $n
+}
+set ADMIN {{@AbCdEf1234@ 8 1000 Admin}}
+
+test ic014-1 {session_isValid is called with the '@'-wrapped 12-character sid of the query; true lets an ADMIN session read an allow-listed file} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set r [cgi backup/textfile.cgi -query "sid=%40AbCdEf1234%40&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+  list [isvalidcalls $r] [string match *RFD* [dict get $r stdout]]
+} -cleanup { clearconf } -result {1 1}
+
+test ic014-2 {false is fail-closed: an unknown session is 400 INVALID_SESSION and the file is not opened} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set r [cgi backup/textfile.cgi -query "sid=%40Unknown0001%40&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+  list [lindex [lines [dict get $r stdout]] 0] [tokens $r] [string match *RFD* [dict get $r stdout]]
+} -cleanup { clearconf } -result [list "HTTP/1.0 400 Bad Request" INVALID_SESSION 0]
+
+test ic014-3 {a sid that is not 12 characters or contains quotes is refused by session_isValid (or before it) without ReGa contact} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set out {}
+  foreach sid [list %40short%40 %22%3B%40AbCdEf1234 %40AbCdEf1234%40%40 {}] {
+    set r [cgi backup/textfile.cgi -query "sid=$sid&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -files [list etc/config/rfd.conf RFD]]
+    lappend out [tokens $r] [llength [dict get $r rega_calls]]
+  }
+  set out
+} -cleanup { clearconf } -result [lrepeat 4 INVALID_SESSION 0]
+
+test ic014-4 {a failing ReGa (any answer but the literal true) is INVALID_SESSION} -setup {
+  setconf {/etc/config/rfd.conf}
+} -body {
+  set r [cgi backup/textfile.cgi -query "sid=%40AbCdEf1234%40&file=%2Fetc%2Fconfig%2Frfd.conf" -sessions $ADMIN -regafail {*GetSessionVarStr*} -files [list etc/config/rfd.conf RFD]]
+  list [tokens $r] [string match *RFD* [dict get $r stdout]]
+} -cleanup { clearconf } -result {INVALID_SESSION 0}
+
+cleanupTests

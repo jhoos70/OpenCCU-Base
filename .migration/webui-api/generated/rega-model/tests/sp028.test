@@ -1,0 +1,75 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP028 - communication tests: contracts/behavioral-contracts.json#SP028
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 id 1234}
+set TS "2026-10-13 12:00:00"
+
+test sp028-0 {the staged method scripts of SP028 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {device/startcomtest channel/pollcomtest channel/startcomtest device/pollcomtest} {
+    set p [file join $gen rega-model methods {*}[split $f /]].tcl
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp028-1 {Device.startComTest / Channel.startComTest (GUEST): the timestamp is the test id, the test is triggered} -body {
+  set a [call Device.startComTest $S -sessions $GUEST -rega {{*DevStartComTest* {2026-10-13 12:00:00}}}]
+  set b [call Channel.startComTest $S -sessions $GUEST -rega {{*ChnStartComTest* {2026-10-13 12:00:01}}}]
+  list [result $a] [result $b] [string match *device.DevStartComTest()* [lindex [dict get $a rega_calls] end]] [string match *channel.ChnStartComTest()* [lindex [dict get $b rega_calls] end]]
+} -result {{"2026-10-13 12:00:00"} {"2026-10-13 12:00:01"} 1 1}
+
+test sp028-2 {Device.pollComTest: completion timestamp when LastTestCompletedTime() >= testId, otherwise raw false} -body {
+  set a [call Device.pollComTest [concat $S [list testId $TS]] -sessions $GUEST -rega {{*LastTestCompletedTime()* {2026-10-13 12:00:05}}}]
+  set b [call Device.pollComTest [concat $S [list testId $TS]] -sessions $GUEST -rega {{*LastTestCompletedTime()* false}}]
+  list [result $a] [result $b] [string match {*var testId = "2026-10-13 12:00:00";*} [lindex [dict get $a rega_calls] end]]
+} -result {{"2026-10-13 12:00:05"} false 1}
+
+test sp028-3 {Channel.pollComTest: same contract with TestCompletedTime()} -body {
+  set a [call Channel.pollComTest [concat $S [list testId $TS]] -sessions $GUEST -rega {{*TestCompletedTime()* {2026-10-13 12:00:07}}}]
+  set b [call Channel.pollComTest [concat $S [list testId $TS]] -sessions $GUEST -rega {{*TestCompletedTime()* false}}]
+  list [result $a] [result $b]
+} -result {{"2026-10-13 12:00:07"} false}
+
+test sp028-4 {a missing ReGa object: the script prints nothing and the answer is 500 'homematic script error' (all four methods)} -body {
+  set out {}
+  foreach m {Device.startComTest Channel.startComTest} { lappend out [err [call $m $S -sessions $GUEST]] }
+  foreach m {Device.pollComTest Channel.pollComTest} { lappend out [err [call $m [concat $S [list testId $TS]] -sessions $GUEST]] }
+  lsort -unique $out
+} -result {{500 {homematic script error}}}
+
+test sp028-5 {[TARGET] pollComTest validates testId against ^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$: 403 'invalid argument (testId)' before any ReGa script runs} -body {
+  set out {}; set n 0
+  foreach bad {abc {2026-10-13} {2026-10-13T12:00:00} {} "2026-10-13 12:00:00\"; Write(1);"} {
+    foreach m {Device.pollComTest Channel.pollComTest} {
+      set r [call $m [concat $S [list testId $bad]] -sessions $GUEST -rega {{*TestCompletedTime* x}}]
+      lappend out [err $r]
+      foreach c [dict get $r rega_calls] { if {[string match *TestCompletedTime* $c]} { incr n } }
+    }
+  }
+  list [lsort -unique $out] $n
+} -result {{{403 {invalid argument (testId)}}} 0}
+
+test sp028-6 {[TARGET] a valid testId is accepted} -body {
+  result [call Device.pollComTest [concat $S [list testId $TS]] -sessions $GUEST -rega {{*LastTestCompletedTime()* false}}]
+} -result false
+
+cleanupTests

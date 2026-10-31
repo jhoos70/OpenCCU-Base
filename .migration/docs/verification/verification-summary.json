@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-10-09T16:45:08Z",
+  "threshold": 95.0,
+  "passed": true,
+  "coverage": {
+    "total_files": 4779,
+    "covered_files": 4779,
+    "uncovered_files": [],
+    "coverage_percent": 100.0,
+    "threshold": 95.0,
+    "passed": true,
+    "uncovered_by_dir": {},
+    "file_index_entries": 19,
+    "doc_references": 800
+  },
+  "accuracy": {
+    "claims_total": 1140,
+    "claims_checked": 50,
+    "verified": 48,
+    "failed": 2,
+    "accuracy_percent": 96.0,
+    "threshold": 95.0,
+    "passed": true,
+    "verdict": "pass",
+    "failed_claims": [
+      {
+        "type": "file_exists",
+        "value": "../www/config/easymodes/js/ic_functions.js",
+        "source_doc": "modules/webui-shell-build.md",
+        "line": 75
+      },
+      {
+        "type": "file_exists",
+        "value": "old/lock_{open,closed}.png",
+        "source_doc": "modules/webui-design-docs.md",
+        "line": 77
+      }
+    ]
+  },
+  "commands": {
+    "coverage": {
+      "command": [
+        "/usr/lib/python-exec/python3.14/python3",
+        "/home/standard/dev/migration-plugin/skills/deep-explore/scripts/verify_coverage.py",
+        "/home/standard/dev/OpenCCU-Base",
+        "--docs-dir",
+        "/home/standard/dev/OpenCCU-Base/.migration/docs",
+        "--threshold",
+        "95.0",
+        "--json"
+      ],
+      "returncode": 0,
+      "stdout": "{\n  \"total_files\": 4779,\n  \"covered_files\": 4779,\n  \"uncovered_files\": [],\n  \"coverage_percent\": 100.0,\n  \"threshold\": 95.0,\n  \"passed\": true,\n  \"uncovered_by_dir\": {},\n  \"file_index_entries\": 19,\n  \"doc_references\": 800\n}\n",
+      "stderr": ""
+    },
+    "accuracy": {
+      "command": [
+        "/usr/lib/python-exec/python3.14/python3",
+        "/home/standard/dev/migration-plugin/skills/deep-explore/scripts/accuracy_check.py",
+        "/home/standard/dev/OpenCCU-Base",
+        "--docs-dir",
+        "/home/standard/dev/OpenCCU-Base/.migration/docs",
+        "--threshold",
+        "95.0",
+        "--json"
+      ],
+      "returncode": 0,
+      "stdout": "{\n  \"claims_total\": 1140,\n  \"claims_checked\": 50,\n  \"verified\": 48,\n  \"failed\": 2,\n  \"accuracy_percent\": 96.0,\n  \"threshold\": 95.0,\n  \"passed\": true,\n  \"verdict\": \"pass\",\n  \"failed_claims\": [\n    {\n      \"type\": \"file_exists\",\n      \"value\": \"../www/config/easymodes/js/ic_functions.js\",\n      \"source_doc\": \"modules/webui-shell-build.md\",\n      \"line\": 75\n    },\n    {\n      \"type\": \"file_exists\",\n      \"value\": \"old/lock_{open,closed}.png\",\n      \"source_doc\": \"modules/webui-design-docs.md\",\n      \"line\": 77\n    }\n  ]\n}\n",
+      "stderr": ""
+    }
+  }
+}

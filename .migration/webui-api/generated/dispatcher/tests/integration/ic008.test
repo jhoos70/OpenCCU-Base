@@ -1,0 +1,65 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC008 dispatcher -> event-push: GET /api/v2/events (v2/router.tcl). Request shape: query.timeout
+# integer 1..55 (default 25), header X-Session-Id. Response: array<{type,data}>. Errors: 401 invalid
+# sid; 422 timeout out of range (error 403 'invalid argument (timeout)').
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,event-push
+set SESS {{AAA111 1 1000 A}}
+proc events {sid query args} {
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/events} -query $query \
+    -header {X-Requested-With XMLHttpRequest} -header [list X-Session-Id $sid] -sessions $::SESS {*}$args]]]
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test ic008-1 {the router maps GET /api/v2/events to the provider route of event-push (v2/events.tcl) and answers the queue as array<{type,data}>} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA111 {EVENT_COUNT 1}]
+  mock::fs::write $fs tmp/event/AAA111 "{TYPE init DATA null}\n"
+  set r [events AAA111 timeout=3 -fs $fs]
+  mock::fs::destroy $fs
+  list [status $r] [string trim [dict get $r body]]
+} -result [list 200 {[{"type":"init","data":null}]}]
+
+test ic008-2 {default timeout 25 and the maximum 55 are accepted (the wait is bounded by the timeout)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA111 {EVENT_COUNT 1}]
+  mock::fs::write $fs tmp/event/AAA111 "{TYPE init DATA null}\n"
+  set a [events AAA111 "" -fs $fs]
+  mock::fs::write $fs tmp/event/AAA111 "{TYPE init DATA null}\n"
+  set b [events AAA111 timeout=55 -fs $fs]
+  mock::fs::destroy $fs
+  list [status $a] [status $b]
+} -result {200 200}
+
+test ic008-3 {error 401: no sid and an unknown sid; the queue is not read} -body {
+  set a [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/events} -header {X-Requested-With XMLHttpRequest} -sessions $::SESS]]]
+  set b [events Unknown0001 timeout=1]
+  list [status $a] [status $b]
+} -result {401 401}
+
+test ic008-4 {error 422: timeout out of range is error 403 'invalid argument (timeout)'} -body {
+  set out {}
+  foreach q {timeout=0 timeout=56 timeout=x} { set r [events AAA111 $q]; lappend out [status $r] [err $r] }
+  set out
+} -result [lrepeat 3 422 {403 {invalid argument (timeout)}}]
+
+test ic008-5 {the verb is GET only: POST is 405 with Allow: GET} -body {
+  set r [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method POST -contenttype application/json -setenv {REQUEST_URI /api/v2/events} -header {X-Requested-With XMLHttpRequest} -sessions $::SESS]]]
+  regexp {Allow: ([^\r\n]+)} [dict get $r headers] -> allow
+  list [status $r] $allow
+} -result {405 GET}
+
+cleanupTests

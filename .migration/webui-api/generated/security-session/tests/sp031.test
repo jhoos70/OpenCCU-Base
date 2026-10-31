@@ -1,0 +1,106 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP031 - Session.login / logout / renew / setSessionVar (and the unregistered Session.create):
+# contracts/behavioral-contracts.json#SP031. The per-IP login limiter has its own tests
+# (sp031-ratelimit.test, sp031-ratelimit-off.test); the [V2] cookie mode and the corrected
+# registry ARGUMENTS/levels belong to the dispatcher.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+# needs the corrected registry AND the staged dispatcher pipeline (arguments are checked before the
+# privilege lookup): active once dispatcher/homematic.cgi is staged (SP001)
+testConstraint registryFixed [expr {[file exists [file join $gen dispatcher methods.conf]] && [file exists [file join $gen dispatcher homematic.cgi]]}]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:security-session {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set LOGIN {username Admin password secret}
+set OK302 {{{HTTP/1.1 302 Found} {Location http://127.0.0.1/index.htm?sid=@AbCdEf1234@}}}
+
+test sp031-0 {the staged method scripts of SP031 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {login create logout renew setsessionvar} {
+    set p [file join $gen security-session methods session $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp031-1 {login: tbUsername/tbPassword go to http://127.0.0.1/login.htm, the inner id of 'sid=@...@' in Location is returned as a JSON string} -body {
+  set r [call Session.login $LOGIN -sessions {} -http $OK302]
+  list [result $r] [dict get $r http_calls]
+} -result [list {"AbCdEf1234"} [list {http://127.0.0.1/login.htm -query tbUsername=Admin&tbPassword=secret}]]
+
+test sp031-2 {login: a 503 status line is error 503 'service not available'} -body {
+  err [call Session.login $LOGIN -sessions {} -http {{{HTTP/1.1 503 Service Unavailable} {}}}]
+} -result {503 {service not available}}
+
+test sp031-3 {login: wrong credentials or session limit (no sid in Location) is error 501} -body {
+  err [call Session.login $LOGIN -sessions {} -http {{{HTTP/1.1 200 OK} {}}}]
+} -result {501 {invalid credentials or too many sessions}}
+
+test sp031-4 {login: a failing loopback connection is the v1 internal error 200} -body {
+  lindex [err [call Session.login $LOGIN -sessions {}]] 0
+} -result 200
+
+test sp031-5 {login with a Location holding extra '@' characters captures up to the next '@' only} -body {
+  result [call Session.login $LOGIN -sessions {} -http {{{HTTP/1.1 302 Found} {Location http://x/i.htm?sid=@Ab@Cd@}}}]
+} -result {"Ab"}
+
+test sp031-6 {renew (GUEST): a loopback GET index.htm?sid=@<sid>@ is issued, the answer is true} -body {
+  set r [call Session.renew $S -sessions $GUEST -http {{{HTTP/1.1 200 OK} {}}}]
+  list [result $r] [dict get $r http_calls]
+} -result [list true [list {http://127.0.0.1/pages/index.htm?sid=@AbCdEf1234@}]]
+
+test sp031-7 {renew for an unknown or expired session is access denied (400) before the script runs} -body {
+  set r [call Session.renew {_session_id_ Expired} -sessions $GUEST -http {{{HTTP/1.1 200 OK} {}}}]
+  list [lindex [err $r] 0] [llength [dict get $r http_calls]]
+} -result {400 0}
+
+test sp031-8 {setSessionVar (GUEST): system.SetSessionVar(var,val) with the params injected, true} -body {
+  set r [call Session.setSessionVar [concat $S {var k val v}] -sessions $GUEST]
+  set script [lindex [dict get $r rega_calls] end]
+  list [result $r] [string match *system.SetSessionVar(var,val)* $script] [string match {*var var = "k";*} $script] [string match {*var val = "v";*} $script]
+} -result {true 1 1 1}
+
+test sp031-9 {[TARGET] logout executes system.ClearSessionID for a valid session and answers true} -body {
+  set r [call Session.logout $S -sessions $GUEST]
+  set clears 0
+  foreach c [dict get $r rega_calls] { if {[string match *system.ClearSessionID(_session_id_)* $c]} { incr clears } }
+  list [result $r] $clears
+} -result {true 1}
+
+test sp031-10 {[TARGET] logout with an unknown, expired or missing session id is denied (400 / 402) and ClearSessionID is not executed} -body {
+  set out {}; set n 0
+  foreach p [list {_session_id_ Unknown0000} {_session_id_ {}}] {
+    set r [call Session.logout $p -sessions $GUEST]
+    lappend out [lindex [err $r] 0]
+    foreach c [dict get $r rega_calls] { if {[string match *ClearSessionID* $c]} { incr n } }
+  }
+  set r [call Session.logout {} -sessions $GUEST]
+  lappend out [lindex [err $r] 0]
+  list $out $n
+} -match glob -result {{400 400 *} 0}
+
+test sp031-11 {NFR4: Session.create stays unregistered: 401 method not found} -body {
+  err [call Session.create {} -sessions {}]
+} -result {401 {method not found (Session.create)}}
+
+test sp031-12 {[TARGET] corrected registry: Session.logout is GUEST, setSessionVar needs _session_id_ (402 when missing)} -constraints registryFixed -body {
+  set a [golden::call Session.setSessionVar {var k val v} -candidate staged]
+  list [err $a] [dict get [golden::registry 1] Session.logout LEVEL]
+} -result {{402 {missing argument (_session_id_)}} GUEST}
+
+cleanupTests

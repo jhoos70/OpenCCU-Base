@@ -1,0 +1,96 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP026 - mutating ReGa device and channel attributes: contracts/behavioral-contracts.json#SP026
+# (acceptance 7, the corrected ARGUMENTS of Channel.setName/setMode, lives in the dispatcher registry)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint registryFixed [file exists [file join $gen dispatcher methods.conf]]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc lastscript {r} { return [lindex [dict get $r rega_calls] end] }
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234 id 1234}
+
+test sp026-0 {the staged method scripts of SP026 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {channel/setmode channel/setlogging channel/setname channel/setusability channel/setvisibility device/setname device/setoperategrouponly device/setvisibility} {
+    set p [file join $gen rega-model methods {*}[split $f /]].tcl
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp026-1 {Device.setName / Channel.setName (ADMIN): Name() is set, the resulting name is returned as a JSON string} -body {
+  set a [call Device.setName [concat $S {name Wohnzimmer}] -rega {{*device.Name(name)* Wohnzimmer}}]
+  set b [call Channel.setName [concat $S {name Kanal}] -rega {{*channel.Name(name)* Kanal_1}}]
+  list [result $a] [result $b] [string match {*var name = "Wohnzimmer";*} [lastscript $a]] [string match {*var id = "1234";*} [lastscript $a]]
+} -result {{"Wohnzimmer"} {"Kanal_1"} 1 1}
+
+test sp026-2 {setName for an id without an object writes nothing: "" (no error)} -body {
+  list [result [call Device.setName [concat $S {name X}]]] [result [call Channel.setName [concat $S {name X}]]]
+} -result {{""} {""}}
+
+test sp026-3 {setVisibility (device and channel): the effective state true/false is returned} -body {
+  set a [call Device.setVisibility [concat $S {isVisible true}] -rega {{*dev.Visible(bIsVisible)* true}}]
+  set b [call Channel.setVisibility [concat $S {isVisible false}] -rega {{*channel.Visible(bIsVisible)* false}}]
+  list [result $a] [result $b]
+} -result {true false}
+
+test sp026-4 {Channel.setUsability: the effective state true/false is returned} -body {
+  list [result [call Channel.setUsability [concat $S {isUsable true}] -rega {{*UserAccessRights(iulOtherThanAdmin,?iAccessRights)* true}}]] \
+       [result [call Channel.setUsability [concat $S {isUsable false}] -rega {{*UserAccessRights(iulOtherThanAdmin,?iAccessRights)* false}}]]
+} -result {true false}
+
+test sp026-5 {Channel.setLogging: ChnArchive state is returned as true/false} -body {
+  result [call Channel.setLogging [concat $S {isLogged true}] -rega {{*ChnArchive(bIsLogged)* true}}]
+} -result true
+
+test sp026-6 {Channel.setMode: MODE_AES / MODE_DEFAULT is returned as a JSON string} -body {
+  list [result [call Channel.setMode [concat $S {mode MODE_AES}] -rega {{*ChnAESActive(bIsAesActive)* MODE_AES}}]] \
+       [result [call Channel.setMode [concat $S {mode MODE_DEFAULT}] -rega {{*ChnAESActive(bIsAesActive)* MODE_DEFAULT}}]]
+} -result {{"MODE_AES"} {"MODE_DEFAULT"}}
+
+test sp026-7 {Device.setOperateGroupOnly: metadata is written, the script writes nothing, the result is ""} -body {
+  set r [call Device.setOperateGroupOnly [concat $S {mode true}]]
+  list [result $r] [string match {*MetaData("operateGroupOnly", bmode)*} [lastscript $r]] [string match {*var mode = "true";*} [lastscript $r]]
+} -result {{""} 1 1}
+
+test sp026-8 {a script result that is not true/false (or the AES mode names) is error 500 'homematic script error'} -body {
+  set out {}
+  foreach {m extra} {Device.setVisibility {isVisible true} Channel.setVisibility {isVisible true} Channel.setUsability {isUsable true}
+                     Channel.setLogging {isLogged true} Channel.setMode {mode MODE_AES}} {
+    lappend out [err [call $m [concat $S $extra]]]
+  }
+  lsort -unique $out
+} -result {{500 {homematic script error}}}
+
+test sp026-9 {ADMIN only: a USER session is denied (400) and no ReGa script of the method runs} -body {
+  set out {}; set n 0
+  foreach {m extra} {Device.setName {name X} Channel.setName {name X} Device.setVisibility {isVisible true} Channel.setMode {mode MODE_AES} Device.setOperateGroupOnly {mode true}} {
+    set r [call $m [concat $S $extra] -sessions $USER]
+    lappend out [lindex [err $r] 0]
+    foreach c [dict get $r rega_calls] { if {[string match *dom.GetObject(id)* $c]} { incr n } }
+  }
+  list [lsort -unique $out] $n
+} -result {400 0}
+
+test sp026-10 {[TARGET] Channel.setName without 'name' and Channel.setMode without 'mode' are 402 (corrected ARGUMENTS), no ReGa script runs} -constraints registryFixed -body {
+  set a [golden::call Channel.setName $S -candidate staged]
+  set b [golden::call Channel.setMode $S -candidate staged]
+  list [err $a] [err $b]
+} -result {{402 {missing argument (name)}} {402 {missing argument (mode)}}}
+
+cleanupTests

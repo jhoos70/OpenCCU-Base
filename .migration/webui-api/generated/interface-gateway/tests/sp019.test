@@ -1,0 +1,105 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP019 - writing paramsets and values: contracts/behavioral-contracts.json#SP019
+# (acceptance 6, the 403 'invalid argument (type)', belongs to the central validator of the dispatcher)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:interface-gateway {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set URL xmlrpc_bin://127.0.0.1:2001
+set PUT {{"method":"Interface.putParamset","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF","address":"NEQ0123456:1","paramsetKey":"VALUES","set":[{"name":"LEVEL","type":"double","value":"0.5"},{"name":"STATE","type":"bool","value":"true"}]},"id":1}}
+set THERM {{"method":"Interface.putThermParamset","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF","address":"NEQ0123456:1","set":[{"name":"PARTY_TEMPERATURE","type":"double","value":"17.0"},{"name":"X","type":"int","value":"1"}]},"id":1}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ0123456:1}
+
+test sp019-0 {the staged method scripts of SP019 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {putparamset determineparameter putthermparamset reportvalueusage searchdalidevices setvalue} {
+    set p [file join $gen interface-gateway methods interface $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp019-1 {putParamset: each element becomes [list name [list type value]] in one struct, result true} -body {
+  set r [callraw $PUT -sessions $USER -xmlrpc {{putParamset 1}}]
+  list [result $r] [dict get $r xmlrpc_calls]
+} -result [list true [list [list $URL putParamset {string NEQ0123456:1} {string VALUES} {struct {{LEVEL {double 0.5}} {STATE {bool true}}}}]]]
+
+test sp019-2 {putParamset needs USER: a GUEST session is denied (400) without an XML-RPC call} -body {
+  set r [callraw $PUT -sessions $GUEST -xmlrpc {{putParamset 1}}]
+  list [lindex [err $r] 0] [llength [dict get $r xmlrpc_calls]]
+} -result {400 0}
+
+test sp019-3 {setValue as GUEST: xmlrpc setValue(address, valueKey, [type value]) and true} -body {
+  set r [call Interface.setValue [concat $S {valueKey LEVEL type double value 0.5}] -sessions $GUEST -xmlrpc {{setValue 1}}]
+  list [result $r] [dict get $r xmlrpc_calls]
+} -result [list true [list [list $URL setValue {string NEQ0123456:1} {string LEVEL} {double 0.5}]]]
+
+test sp019-4 {putThermParamset writes the VALUES paramset when PARTY_TEMPERATURE is present (all elements sent)} -body {
+  set r [callraw $THERM -sessions $USER -xmlrpc {{putParamset 1}}]
+  list [result $r] [dict get $r xmlrpc_calls]
+} -result [list true [list [list $URL putParamset {string NEQ0123456:1} {string VALUES} {struct {{PARTY_TEMPERATURE {double 17.0}} {X {int 1}}}}]]]
+
+test sp019-5 {putThermParamset without PARTY_TEMPERATURE: v1 internal error 200 (validParamset never assigned)} -body {
+  set j [string map {PARTY_TEMPERATURE OTHER} $THERM]
+  lindex [err [callraw $j -sessions $USER -xmlrpc {{putParamset 1}}]] 0
+} -result 200
+
+test sp019-6 {determineParameter (ADMIN) forwards address, paramsetKey, parameterId; USER is denied} -body {
+  set a [call Interface.determineParameter [concat $S {paramsetKey MASTER parameterId P1}] -xmlrpc {{determineParameter 1}}]
+  set b [call Interface.determineParameter [concat $S {paramsetKey MASTER parameterId P1}] -sessions $USER -xmlrpc {{determineParameter 1}}]
+  list [result $a] [lindex [dict get $a xmlrpc_calls] 0] [lindex [err $b] 0]
+} -result [list true [list $URL determineParameter {string NEQ0123456:1} {string MASTER} {string P1}] 400]
+
+test sp019-7 {reportValueUsage (ADMIN) sends refCounter as int} -body {
+  set r [call Interface.reportValueUsage [concat $S {valueId V1 refCounter 3}] -xmlrpc {{reportValueUsage 1}}]
+  list [result $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result [list true [list $URL reportValueUsage {string NEQ0123456:1} {string V1} {int 3}]]
+
+test sp019-8 {a faulting XML-RPC call yields the mapped error and no true result} -body {
+  set a [callraw $PUT -sessions $USER]
+  set b [call Interface.setValue [concat $S {valueKey L type double value 1}] -sessions $GUEST -fault {{setValue -6 nope}}]
+  list [err $a] [lindex [err $b] 0]
+} -result {{601 {TCL error}} 506}
+
+test sp019-9 {a set element without 'value' is a v1 internal error 200} -body {
+  set j {{"method":"Interface.putParamset","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF","address":"A:1","paramsetKey":"VALUES","set":[{"name":"LEVEL","type":"double"}]},"id":1}}
+  lindex [err [callraw $j -sessions $USER -xmlrpc {{putParamset 1}}]] 0
+} -result 200
+
+test sp019-10 {searchDaliDevices success (empty errorMessage) returns true} -body {
+  result [call Interface.searchDaliDevices [concat $S {valueKey SEARCH type bool value true}] -sessions $GUEST -xmlrpc {{setValue {}}}]
+} -result true
+
+test sp019-11 {[TARGET] searchDaliDevices failure: error text appended to /tmp/searchDali.log with Tcl file I/O (no exec echo), no JSON body} -body {
+  set fs [mock::fs::create]
+  set r [call Interface.searchDaliDevices [concat $S {valueKey SEARCH type bool value true}] -fs $fs -sessions $GUEST -fault {{setValue 1 {dali bus error $(touch x)}}}]
+  set log [expr {[file exists [file join $fs tmp searchDali.log]] ? [mock::fs::read $fs tmp/searchDali.log] : ""}]
+  set echo 0
+  foreach c [dict get $r exec_calls] { if {[lindex $c 0] eq "echo"} { incr echo } }
+  mock::fs::destroy $fs
+  list [string trim [dict get $r body]] [regexp {setValue errorMessage: dali bus error \$\(touch x\)\n$} $log] $echo
+} -result {{} 1 0}
+
+test sp019-12 {v1 privilege levels stay: setValue and searchDaliDevices GUEST, putParamset USER} -body {
+  set reg [golden::registry]
+  list [dict get $reg Interface.setValue LEVEL] [dict get $reg Interface.searchDaliDevices LEVEL] [dict get $reg Interface.putParamset LEVEL]
+} -result {GUEST GUEST USER}
+
+cleanupTests

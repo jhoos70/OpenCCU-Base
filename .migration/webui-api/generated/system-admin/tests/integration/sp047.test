@@ -1,0 +1,90 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP047 NFR and integration coverage (spec.json#SP047 non_functional_requirements[0..8]),
+# boundary and error cases. The golden re-run compares the legacy and the staged scripts for the
+# same stored configuration (the seeded registry fixture has no /lib/libfirewall.tcl).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:system-admin {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc libfw {} {
+  set fd [open [file join $::mock::repo src webui scripts libfirewall.tcl] r]
+  fconfigure $fd -translation binary -encoding iso8859-1
+  set c [read $fd]; close $fd
+  return $c
+}
+proc setreq {services ips userports mode} {
+  return "\{\"method\":\"Firewall.setConfiguration\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"services\":$services,\"ips\":$ips,\"userports\":$userports,\"mode\":\"$mode\"\},\"id\":1\}"
+}
+proc getreq {} { return {{"method":"Firewall.getConfiguration","params":{"_session_id_":"AbCdEf1234"},"id":1}} }
+set CONF "# Firewall Configuration file\nMODE = MOST_OPEN\n\nIPs = 10.0.0.1\n\n\[SERVICE SNMP\]\nId = SNMP\nPorts = 161\nAccess = full\n\n\[SERVICE XMLRPC\]\nId = XMLRPC\nPorts = 2000 2001 2002 2010 9292 42000 42001 42010 49292\nAccess = restricted\n\n\[SERVICE REGA\]\nId = REGA\nPorts = 8181 1999 48181 41999\nAccess = none\n\n\[SERVICE NEOSERVER\]\nId = NEOSERVER\nPorts = 8088 9099 1901 1902 5987 10000 48899 49880\nAccess = none\n\n"
+
+test sp047-nfr0 {NFR0: getConfiguration emits 'id', setConfiguration reads 'name' (callers translate)} -body {
+  set a [callraw [setreq {[{"id":"SNMP","access":"full"}]} {[]} {[]} RESTRICTIVE] -files [list lib/libfirewall.tcl [libfw]]]
+  lindex [err $a] 0
+} -result 200
+
+test sp047-nfr1 {NFR1: an unknown service name is silently ignored} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq {[{"name":"BOGUS","access":"full"}]} {[]} {[]} RESTRICTIVE] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  set conf [mock::fs::read $fs etc/config/firewall.conf]
+  mock::fs::destroy $fs
+  list [result $r] [string match *BOGUS* $conf]
+} -result {true 0}
+
+test sp047-nfr2 {NFR2/3: an access outside full|restricted|none and arbitrary ips/userports are stored unvalidated (v1; the v2 schema validates)} -body {
+  set fs [mock::fs::create]
+  callraw [setreq {[{"name":"SNMP","access":"weird"}]} {["any thing"]} {["p1"]} RESTRICTIVE] -fs $fs -files [list lib/libfirewall.tcl [libfw]]
+  set conf [mock::fs::read $fs etc/config/firewall.conf]
+  mock::fs::destroy $fs
+  list [regexp {Access = weird} $conf] [regexp {IPs = \{any thing\}} $conf] [regexp {USERPORTS = p1} $conf]
+} -result {1 1 1}
+
+test sp047-nfr5 {NFR5: without firewall.conf the defaults apply} -body {
+  set j [result [callraw [getreq] -files [list lib/libfirewall.tcl [libfw]]]]
+  list [regexp {"mode":"RESTRICTIVE"} $j] [regexp -all {"access": "none"} $j]
+} -result {1 4}
+
+test sp047-nfr6 {NFR6: loading migrates missing default ports - getConfiguration rewrites firewall.conf (write-then-rename, no temp file)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/firewall.conf "MODE = RESTRICTIVE\n\nIPs = 1.1.1.1\n\n\[SERVICE XMLRPC\]\nId = XMLRPC\nPorts = 2000\nAccess = none\n\n"
+  set r [callraw [getreq] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  set conf [mock::fs::read $fs etc/config/firewall.conf]
+  set files [lsort [lmap f [glob -nocomplain -directory [file join $fs etc config] *] {file tail $f}]]
+  mock::fs::destroy $fs
+  list [regexp {"ports": \[2000,2001} [result $r]] [regexp {Ports = 2000 2001} $conf] $files
+} -result {1 1 {InterfacesList.xml firewall.conf}}
+
+test sp047-nfr7 {NFR7: a service id in firewall.conf that the built-in table does not know raises on load (internal error 200)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/firewall.conf "MODE = RESTRICTIVE\n\n\[SERVICE FOO\]\nId = FOO\nPorts = 1\nAccess = none\n\n"
+  set r [callraw [getreq] -fs $fs -files [list lib/libfirewall.tcl [libfw]]]
+  mock::fs::destroy $fs
+  lindex [err $r] 0
+} -result 200
+
+test sp047-golden {golden re-run: legacy and staged getConfiguration answer byte-identical for the same stored configuration} -body {
+  set out {}
+  foreach conf [list "" $CONF] {
+    set fs1 [mock::fs::create]; set fs2 [mock::fs::create]
+    if {$conf ne ""} { mock::fs::write $fs1 etc/config/firewall.conf $conf; mock::fs::write $fs2 etc/config/firewall.conf $conf }
+    set a [golden::call_raw [getreq] [golden::prepare [list -candidate legacy -fs $fs1 -files [list lib/libfirewall.tcl [libfw]]]]]
+    set b [callraw [getreq] -fs $fs2 -files [list lib/libfirewall.tcl [libfw]]]
+    lappend out [golden::diff [dict get $a stdout] [dict get $b stdout]]
+    mock::fs::destroy $fs1; mock::fs::destroy $fs2
+  }
+  set out
+} -result {{} {}}
+
+cleanupTests

@@ -1,0 +1,1348 @@
+{
+  "feature": "webui-api",
+  "spec_dir": ".migration/webui-api/implementation",
+  "tasks_path": ".migration/webui-api/implementation/tasks.md",
+  "status": "in_progress",
+  "current_task": null,
+  "total_tasks": 303,
+  "completed_tasks": 236,
+  "declared_task_paths": [
+    ".migration/webui-api/generated/dispatcher/tests/all.tcl",
+    ".migration/webui-api/generated/security-session/tests/all.tcl",
+    ".migration/webui-api/generated/event-push/tests/all.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/all.tcl",
+    ".migration/webui-api/generated/rega-model/tests/all.tcl",
+    ".migration/webui-api/generated/system-admin/tests/all.tcl",
+    ".migration/webui-api/generated/backup-cgis/tests/all.tcl",
+    ".migration/webui-api/generated/user-profile/tests/all.tcl",
+    ".migration/webui-api/generated/schema-harness/tests/all.tcl",
+    ".migration/webui-api/generated/optional-gateway/tests/all.tcl",
+    ".migration/webui-api/generated/schema-harness/tests/mocks.test",
+    ".migration/webui-api/generated/schema-harness/tests/helpers/mocks.tcl",
+    ".migration/webui-api/generated/schema-harness/tests/golden.test",
+    ".migration/webui-api/generated/schema-harness/tests/helpers/golden.tcl",
+    ".migration/webui-api/generated/schema-harness/tests/drift.test",
+    ".migration/webui-api/generated/schema-harness/tests/helpers/drift.tcl",
+    ".migration/webui-api/generated/schema-harness/.github/workflows/ci.yml",
+    ".migration/webui-api/generated/schema-harness/tests/fixtures/client-inventory.json",
+    ".migration/webui-api/generated/dispatcher/tests/harness-smoke.test",
+    ".migration/webui-api/generated/security-session/tests/harness-smoke.test",
+    ".migration/webui-api/generated/event-push/tests/harness-smoke.test",
+    ".migration/webui-api/generated/interface-gateway/tests/harness-smoke.test",
+    ".migration/webui-api/generated/rega-model/tests/harness-smoke.test",
+    ".migration/webui-api/generated/system-admin/tests/harness-smoke.test",
+    ".migration/webui-api/generated/backup-cgis/tests/harness-smoke.test",
+    ".migration/webui-api/generated/user-profile/tests/harness-smoke.test",
+    ".migration/webui-api/generated/optional-gateway/tests/harness-smoke.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp009.test",
+    ".migration/webui-api/generated/interface-gateway/eq3/ipc.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/listinterfaces.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp009.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp016.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/dispatch.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/ispresent.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp016.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp017.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getdevicedescription.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/adddevice.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/listdevices.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/listteams.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp017.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp018.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getparamset.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getmastervalue.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getparamsetdescription.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getparamsetid.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getvalue.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp018.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp019.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/putparamset.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/determineparameter.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/putthermparamset.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/reportvalueusage.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/searchdalidevices.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setvalue.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp019.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp020.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getlinks.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/activatelinkparamset.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/addlink.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getlinkinfo.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getlinkpeers.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/removelink.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setlinkinfo.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setteam.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp020.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp021.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setinstallmodehmip.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/changedevice.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/clearconfigcache.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/deletedevice.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getinstallmode.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getkeymissmatchdevice.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/restoreconfigtodevice.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/searchdevices.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setinstallmode.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp021.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp022.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/updatefirmware.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getloglevel.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getservicemessagecount.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getsuppressedservicemessages.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/refreshDeployedDeviceFirmwareList.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setloglevel.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/suppressservicemessages.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp022.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp023.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/listbidcosinterfaces.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/changekey.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getlgwconnectionstatus.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getlgwstatus.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/init.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/rssiinfo.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setbidcosinterface.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/settempkey.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp023.test",
+    ".migration/webui-api/generated/interface-gateway/tests/sp024.test",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setmetadata.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getmetadata.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/getmetadata_crRFD.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/removemetadata.tcl",
+    ".migration/webui-api/generated/interface-gateway/methods/interface/setmetadata_crRFD.tcl",
+    ".migration/webui-api/generated/interface-gateway/tests/integration/sp024.test",
+    ".migration/webui-api/generated/rega-model/tests/sp026.test",
+    ".migration/webui-api/generated/rega-model/methods/channel/setmode.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/setlogging.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/setname.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/setusability.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/setvisibility.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/setname.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/setoperategrouponly.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/setvisibility.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp026.test",
+    ".migration/webui-api/generated/rega-model/tests/sp027.test",
+    ".migration/webui-api/generated/rega-model/methods/device/haslinksorprograms.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/getchanneltype.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/getname.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/getvalue.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/hasprogramids.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/listprogramids.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/hasprograms.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/listprogramids.tcl",
+    ".migration/webui-api/generated/rega-model/methods/room/listprogramids.tcl",
+    ".migration/webui-api/generated/rega-model/methods/subsection/listprogramids.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp027.test",
+    ".migration/webui-api/generated/rega-model/tests/sp028.test",
+    ".migration/webui-api/generated/rega-model/methods/device/startcomtest.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/pollcomtest.tcl",
+    ".migration/webui-api/generated/rega-model/methods/channel/startcomtest.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/pollcomtest.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp028.test",
+    ".migration/webui-api/generated/backup-cgis/tests/sp010.test",
+    ".migration/webui-api/generated/backup-cgis/backup/common.tcl",
+    ".migration/webui-api/generated/backup-cgis/backup/login.cgi",
+    ".migration/webui-api/generated/backup-cgis/backup/logout.cgi",
+    ".migration/webui-api/generated/backup-cgis/tests/integration/sp010.test",
+    ".migration/webui-api/generated/backup-cgis/tests/sp011.test",
+    ".migration/webui-api/generated/backup-cgis/backup/binfile.cgi",
+    ".migration/webui-api/generated/backup-cgis/backup/tarfile.cgi",
+    ".migration/webui-api/generated/backup-cgis/backup/textfile.cgi",
+    ".migration/webui-api/generated/backup-cgis/backup/version.cgi",
+    ".migration/webui-api/generated/backup-cgis/tests/integration/sp011.test",
+    ".migration/webui-api/generated/backup-cgis/tests/sp012.test",
+    ".migration/webui-api/generated/backup-cgis/backup/run-script.cgi",
+    ".migration/webui-api/generated/backup-cgis/backup/links.cgi",
+    ".migration/webui-api/generated/backup-cgis/backup/paramset.cgi",
+    ".migration/webui-api/generated/backup-cgis/tests/integration/sp012.test",
+    ".migration/webui-api/generated/system-admin/tests/sp030.test",
+    ".migration/webui-api/generated/system-admin/methods/bidcosrf/setconfiguration-rf.tcl",
+    ".migration/webui-api/generated/system-admin/methods/bidcos/changeLanGatewayKey.tcl",
+    ".migration/webui-api/generated/system-admin/methods/bidcosrf/createkeyfile.tcl",
+    ".migration/webui-api/generated/system-admin/methods/bidcosrf/getconfiguration-rf.tcl",
+    ".migration/webui-api/generated/system-admin/methods/bidcosrf/iskeyset.tcl",
+    ".migration/webui-api/generated/system-admin/methods/bidcosrf/validatekey.tcl",
+    ".migration/webui-api/generated/system-admin/methods/bidcoswired/getconfiguration-wired.tcl",
+    ".migration/webui-api/generated/system-admin/methods/bidcoswired/setconfiguration-wired.tcl",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp030.test",
+    ".migration/webui-api/generated/system-admin/tests/sp034.test",
+    ".migration/webui-api/generated/system-admin/methods/user/restartlighttpd.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/restartReGa.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/restartsshdaemon.tcl",
+    ".migration/webui-api/generated/system-admin/methods/user/deletecertificate.tcl",
+    ".migration/webui-api/generated/system-admin/methods/user/existscertificate.tcl",
+    ".migration/webui-api/generated/system-admin/methods/user/restarthmipserver.tcl",
+    ".migration/webui-api/generated/system-admin/methods/user/starthmipserver.tcl",
+    ".migration/webui-api/generated/system-admin/methods/user/stophmipserver.tcl",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp034.test",
+    ".migration/webui-api/generated/system-admin/tests/safemode-enter.test",
+    ".migration/webui-api/generated/system-admin/methods/safemode/enter.tcl",
+    ".migration/webui-api/generated/system-admin/tests/recoverymode-enter.test",
+    ".migration/webui-api/generated/system-admin/methods/recoverymode/enter.tcl",
+    ".migration/webui-api/generated/system-admin/tests/sp035.test",
+    ".migration/webui-api/generated/system-admin/methods/ccu/createfile.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/existsfile.tcl",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp035.test",
+    ".migration/webui-api/generated/system-admin/tests/sp035-patterns.test",
+    ".migration/webui-api/generated/dispatcher/apiconfig.conf",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp035-patterns.test",
+    ".migration/webui-api/generated/system-admin/tests/sp036.test",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setssh.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getsshstate.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setsshpassword.tcl",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp036.test",
+    ".migration/webui-api/generated/system-admin/tests/sp037.test",
+    ".migration/webui-api/generated/system-admin/methods/ccu/downloadFirmware.tcl",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp037.test",
+    ".migration/webui-api/generated/system-admin/tests/sp038.test",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setsecuritylevel.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getauthenabled.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/gethttpsredirectenabled.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getsecuritylevel.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getsnmpenabled.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setauthenabled.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setfirewallconfigured.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/sethttpsredirectenabled.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setsecurityhint.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setsnmpenabled.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setuserackinstallwizard.tcl",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp038.test",
+    ".migration/webui-api/generated/system-admin/tests/sp039.test",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getserial.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getaddress.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getheatinggrouplist.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/gethmipaddress.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getinfoledconfig.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getstickyunreachstate.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/getversion.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/removeFieldTestActive.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setinfoledconfig.tcl",
+    ".migration/webui-api/generated/system-admin/methods/ccu/setstickyunreach.tcl",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp039.test",
+    ".migration/webui-api/generated/system-admin/tests/sp047.test",
+    ".migration/webui-api/generated/system-admin/methods/firewall/getconfiguration.tcl",
+    ".migration/webui-api/generated/system-admin/methods/firewall/setconfiguration.tcl",
+    ".migration/webui-api/generated/system-admin/tests/integration/sp047.test",
+    ".migration/webui-api/generated/security-session/tests/sp031.test",
+    ".migration/webui-api/generated/security-session/methods/session/login.tcl",
+    ".migration/webui-api/generated/security-session/methods/session/create.tcl",
+    ".migration/webui-api/generated/security-session/methods/session/logout.tcl",
+    ".migration/webui-api/generated/security-session/methods/session/renew.tcl",
+    ".migration/webui-api/generated/security-session/methods/session/setsessionvar.tcl",
+    ".migration/webui-api/generated/security-session/tests/integration/sp031.test",
+    ".migration/webui-api/generated/security-session/tests/sp031-ratelimit.test",
+    ".migration/webui-api/generated/security-session/tests/sp031-ratelimit-off.test",
+    ".migration/webui-api/generated/security-session/eq3/ratelimit.tcl",
+    ".migration/webui-api/generated/security-session/tests/sp015.test",
+    ".migration/webui-api/generated/security-session/eq3/allowlist.tcl",
+    ".migration/webui-api/generated/security-session/tests/integration/sp015.test",
+    ".migration/webui-api/generated/event-push/tests/sp008.test",
+    ".migration/webui-api/generated/event-push/eq3/event.tcl",
+    ".migration/webui-api/generated/event-push/rega/bin/hm_deldev",
+    ".migration/webui-api/generated/event-push/tests/integration/sp008.test",
+    ".migration/webui-api/generated/backup-cgis/tests/sp010-removal.test",
+    ".migration/webui-api/generated/backup-cgis/backup/removed.cgi",
+    ".migration/webui-api/generated/security-session/tests/sp006.test",
+    ".migration/webui-api/generated/security-session/eq3/hmscript.tcl",
+    ".migration/webui-api/generated/security-session/tests/integration/sp006.test",
+    ".migration/webui-api/generated/security-session/tests/sp007.test",
+    ".migration/webui-api/generated/security-session/eq3/session.tcl",
+    ".migration/webui-api/generated/security-session/eq3/checksid.hms",
+    ".migration/webui-api/generated/security-session/eq3/rega.tcl",
+    ".migration/webui-api/generated/security-session/tests/sp007-eq3-sidshape.test",
+    ".migration/webui-api/generated/security-session/eq3/sidshape.tcl",
+    ".migration/webui-api/generated/security-session/tests/integration/sp007.test",
+    ".migration/webui-api/generated/dispatcher/tests/sp004.test",
+    ".migration/webui-api/generated/dispatcher/eq3/jsonrpc.tcl",
+    ".migration/webui-api/generated/dispatcher/eq3/common.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/integration/sp004.test",
+    ".migration/webui-api/generated/dispatcher/tests/sp005.test",
+    ".migration/webui-api/generated/dispatcher/eq3/json.tcl",
+    ".migration/webui-api/generated/dispatcher/eq3/syslog.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/integration/sp005.test",
+    ".migration/webui-api/generated/dispatcher/tests/sp002.test",
+    ".migration/webui-api/generated/dispatcher/eq3/registry.tcl",
+    ".migration/webui-api/generated/dispatcher/methods.conf",
+    ".migration/webui-api/generated/dispatcher/tests/integration/sp002.test",
+    ".migration/webui-api/generated/security-session/tests/sp003.test",
+    ".migration/webui-api/generated/security-session/eq3/privilege.tcl",
+    ".migration/webui-api/generated/security-session/eq3/getupl.hms",
+    ".migration/webui-api/generated/security-session/tests/integration/sp003.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/sp003-ratelimit-order.test",
+    ".migration/webui-api/generated/security-session/tests/sp014.test",
+    ".migration/webui-api/generated/security-session/eq3_old/session.tcl",
+    ".migration/webui-api/generated/security-session/eq3_old/common.tcl",
+    ".migration/webui-api/generated/security-session/eq3_old/once.tcl",
+    ".migration/webui-api/generated/security-session/eq3_old/user.tcl",
+    ".migration/webui-api/generated/security-session/tests/integration/sp014.test",
+    ".migration/webui-api/generated/dispatcher/tests/sp001.test",
+    ".migration/webui-api/generated/dispatcher/homematic.cgi",
+    ".migration/webui-api/generated/dispatcher/v2/rpc.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/sp001-ratelimit-v1.test",
+    ".migration/webui-api/generated/dispatcher/tests/sp001-ratelimit-v2.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/sp001-ratelimit-off.test",
+    ".migration/webui-api/generated/dispatcher/eq3/sidlimit.tcl",
+    ".migration/webui-api/generated/dispatcher/v2/router.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/integration/sp001.test",
+    ".migration/webui-api/generated/dispatcher/tests/executor.test",
+    ".migration/webui-api/generated/dispatcher/eq3/executor.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/v2auth.test",
+    ".migration/webui-api/generated/dispatcher/v2/auth.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/sp013.test",
+    ".migration/webui-api/generated/dispatcher/eq3/apiconfig.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/integration/sp013.test",
+    ".migration/webui-api/generated/security-session/tests/integration/eg8-sid-wrapping.test",
+    ".migration/webui-api/generated/dispatcher/tests/sp032.test",
+    ".migration/webui-api/generated/dispatcher/methods/system/describe.tcl",
+    ".migration/webui-api/generated/dispatcher/methods/system/listmethods.tcl",
+    ".migration/webui-api/generated/dispatcher/methods/system/methodhelp.tcl",
+    ".migration/webui-api/generated/dispatcher/eq3/validate.tcl",
+    ".migration/webui-api/generated/dispatcher/v2/schema.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/integration/sp032.test",
+    ".migration/webui-api/generated/schema-harness/tests/schema.test",
+    ".migration/webui-api/generated/schema-harness/schema/methods.json",
+    ".migration/webui-api/generated/rega-model/tests/sp025.test",
+    ".migration/webui-api/generated/rega-model/methods/device/listalldetail.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/get.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/getnewdevicecount.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/getregaidbyaddress.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/getrfaddressbyaddress.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/getrfaddressofalldevices.tcl",
+    ".migration/webui-api/generated/rega-model/methods/device/listall.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp025.test",
+    ".migration/webui-api/generated/user-profile/tests/sp033.test",
+    ".migration/webui-api/generated/user-profile/methods/user/getusername.tcl",
+    ".migration/webui-api/generated/user-profile/methods/user/getlanguage.tcl",
+    ".migration/webui-api/generated/user-profile/methods/user/getuserfirstname.tcl",
+    ".migration/webui-api/generated/user-profile/methods/user/hasuserpwd.tcl",
+    ".migration/webui-api/generated/user-profile/methods/user/isnoexpert.tcl",
+    ".migration/webui-api/generated/user-profile/methods/user/setlanguage.tcl",
+    ".migration/webui-api/generated/user-profile/v2/profile.tcl",
+    ".migration/webui-api/generated/user-profile/tests/integration/sp033.test",
+    ".migration/webui-api/generated/rega-model/tests/sp040.test",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/getall.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/get.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/getvalue.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/getvaluebyname.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp040.test",
+    ".migration/webui-api/generated/rega-model/tests/sp041.test",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/createbool.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/createenum.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/createfloat.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/deletesysvarbyname.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/setbool.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/setenum.tcl",
+    ".migration/webui-api/generated/rega-model/methods/sysvar/setfloat.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp041.test",
+    ".migration/webui-api/generated/rega-model/tests/sp042.test",
+    ".migration/webui-api/generated/rega-model/methods/program/getall.tcl",
+    ".migration/webui-api/generated/rega-model/methods/program/deleteprogrambyname.tcl",
+    ".migration/webui-api/generated/rega-model/methods/program/execute.tcl",
+    ".migration/webui-api/generated/rega-model/methods/program/get.tcl",
+    ".migration/webui-api/generated/rega-model/tests/sp042-v2-programs.test",
+    ".migration/webui-api/generated/rega-model/v2/programs.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp042.test",
+    ".migration/webui-api/generated/rega-model/tests/sp043.test",
+    ".migration/webui-api/generated/rega-model/methods/room/getall.tcl",
+    ".migration/webui-api/generated/rega-model/methods/room/addchannel.tcl",
+    ".migration/webui-api/generated/rega-model/methods/room/get.tcl",
+    ".migration/webui-api/generated/rega-model/methods/room/listall.tcl",
+    ".migration/webui-api/generated/rega-model/methods/room/removechannel.tcl",
+    ".migration/webui-api/generated/rega-model/methods/subsection/addchannel.tcl",
+    ".migration/webui-api/generated/rega-model/methods/subsection/get.tcl",
+    ".migration/webui-api/generated/rega-model/methods/subsection/getall.tcl",
+    ".migration/webui-api/generated/rega-model/methods/subsection/listall.tcl",
+    ".migration/webui-api/generated/rega-model/methods/subsection/removechannel.tcl",
+    ".migration/webui-api/generated/rega-model/tests/sp043-v2-rooms.test",
+    ".migration/webui-api/generated/rega-model/v2/rooms.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp043.test",
+    ".migration/webui-api/generated/rega-model/tests/sp044.test",
+    ".migration/webui-api/generated/rega-model/methods/rega/runscript.tcl",
+    ".migration/webui-api/generated/rega-model/methods/rega/getalldatapoints.tcl",
+    ".migration/webui-api/generated/rega-model/methods/rega/ispresent.tcl",
+    ".migration/webui-api/generated/rega-model/v2/model.tcl",
+    ".migration/webui-api/generated/rega-model/tests/integration/sp044.test",
+    ".migration/webui-api/generated/user-profile/tests/sp045.test",
+    ".migration/webui-api/generated/user-profile/methods/system/getenergyprice.tcl",
+    ".migration/webui-api/generated/user-profile/methods/system/getpositiondata.tcl",
+    ".migration/webui-api/generated/user-profile/methods/system/gettweak.tcl",
+    ".migration/webui-api/generated/user-profile/methods/system/saveobjectmodel.tcl",
+    ".migration/webui-api/generated/user-profile/tests/integration/sp045.test",
+    ".migration/webui-api/generated/user-profile/tests/sp046.test",
+    ".migration/webui-api/generated/user-profile/methods/webui/getcolors.tcl",
+    ".migration/webui-api/generated/user-profile/methods/webui/setwebuicolor.tcl",
+    ".migration/webui-api/generated/user-profile/tests/integration/sp046.test",
+    ".migration/webui-api/generated/event-push/tests/sp029.test",
+    ".migration/webui-api/generated/event-push/methods/event/subscribe.tcl",
+    ".migration/webui-api/generated/event-push/methods/event/poll.tcl",
+    ".migration/webui-api/generated/event-push/methods/event/unsubscribe.tcl",
+    ".migration/webui-api/generated/event-push/v2/events.tcl",
+    ".migration/webui-api/generated/event-push/tests/sp029-eq3-producer_datapoint.test",
+    ".migration/webui-api/generated/event-push/eq3/producer_datapoint.tcl",
+    ".migration/webui-api/generated/event-push/tests/integration/sp029.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic001.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic002.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic003.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic004.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic005.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic006.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic007.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic008.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic009.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic010.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic011.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic012.test",
+    ".migration/webui-api/generated/rega-model/tests/integration/ic013.test",
+    ".migration/webui-api/generated/backup-cgis/tests/integration/ic014.test",
+    ".migration/webui-api/generated/event-push/tests/integration/ic015.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic016.test",
+    ".migration/webui-api/generated/rega-model/tests/integration/ic017.test",
+    ".migration/webui-api/generated/system-admin/tests/integration/ic018.test",
+    ".migration/webui-api/generated/dispatcher/tests/integration/ic019.test",
+    ".migration/webui-api/generated/security-session/tests/integration/ic020.test",
+    ".migration/webui-api/generated/dispatcher/tests/flows/cf001.test",
+    ".migration/webui-api/generated/security-session/tests/flows/cf002.test",
+    ".migration/webui-api/generated/event-push/tests/flows/cf003.test",
+    ".migration/webui-api/generated/backup-cgis/tests/flows/cf004.test",
+    ".migration/webui-api/generated/security-session/tests/flows/cf005.test",
+    ".migration/webui-api/generated/dispatcher/tests/flows/cf006.test",
+    ".migration/webui-api/generated/interface-gateway/tests/flows/cf007.test",
+    ".migration/webui-api/generated/rega-model/tests/flows/cf008.test",
+    ".migration/webui-api/generated/rega-model/tests/flows/cf009.test",
+    ".migration/webui-api/generated/interface-gateway/tests/flows/cf010.test",
+    ".migration/webui-api/generated/system-admin/tests/flows/cf011.test",
+    ".migration/webui-api/generated/system-admin/tests/flows/cf012.test",
+    ".migration/webui-api/generated/system-admin/tests/flows/cf013.test",
+    ".migration/webui-api/generated/system-admin/tests/flows/cf014.test",
+    ".migration/webui-api/generated/system-admin/tests/flows/cf015.test",
+    ".migration/webui-api/generated/system-admin/tests/flows/cf016.test",
+    ".migration/webui-api/generated/user-profile/tests/flows/cf017.test",
+    ".migration/webui-api/generated/dispatcher/tests/flows/cf018.test",
+    ".migration/webui-api/generated/optional-gateway/decision/gate-report.md",
+    ".migration/webui-api/generated/optional-gateway/tests/gateway-cache.test",
+    ".migration/webui-api/generated/optional-gateway/gateway/upl_cache.tcl",
+    ".migration/webui-api/generated/optional-gateway/tests/gateway-sse.test",
+    ".migration/webui-api/generated/optional-gateway/gateway/server.tcl",
+    ".migration/webui-api/generated/optional-gateway/tests/integration/gateway-v1-frozen.test",
+    ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+    ".migration/webui-api/generated/schema-harness/tests/helpers/patchapply.tcl",
+    ".migration/webui-api/generated/schema-harness/tests/integration/verbatim-legacy.test",
+    ".migration/webui-api/generated/schema-harness/tests/helpers/legacymap.tcl",
+    ".migration/webui-api/generated/security-session/tests/integration/admin-audit-lib.test",
+    ".migration/webui-api/generated/security-session/eq3/admin_audit.tcl",
+    ".migration/webui-api/generated/dispatcher/tests/integration/admin-audit-load.test",
+    ".migration/webui-api/generated/schema-harness/COPY-PLAN.md"
+  ],
+  "coverage_gaps": [],
+  "config_warnings": [],
+  "code_generation": {
+    "output_dir": ".migration/webui-api/generated/dispatcher",
+    "output_dirs": [
+      ".migration/webui-api/generated/dispatcher",
+      ".migration/webui-api/generated/security-session",
+      ".migration/webui-api/generated/event-push",
+      ".migration/webui-api/generated/interface-gateway",
+      ".migration/webui-api/generated/rega-model",
+      ".migration/webui-api/generated/system-admin",
+      ".migration/webui-api/generated/backup-cgis",
+      ".migration/webui-api/generated/user-profile",
+      ".migration/webui-api/generated/schema-harness",
+      ".migration/webui-api/generated/optional-gateway"
+    ],
+    "config_path": ".migration/webui-api/config.json",
+    "template": {
+      "use_existing": false,
+      "paths": [],
+      "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "configured_commands": {
+      "install_command": null,
+      "build_command": "cd .migration/webui-api/generated/dispatcher && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+      "test_command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/all.tcl",
+      "acceptance_command": null,
+      "commands": [
+        "cd .migration/webui-api/generated/dispatcher && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/all.tcl"
+      ]
+    },
+    "evidence": {
+      "cd .migration/webui-api/generated/dispatcher && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:09:32.000Z"
+      },
+      "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:11:06.000Z",
+        "summary": "all.tcl:\tTotal\t247\tPassed\t247\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/security-session && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:11:07.000Z"
+      },
+      "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:11:32.000Z",
+        "summary": "all.tcl:\tTotal\t158\tPassed\t158\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/event-push && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:11:32.000Z"
+      },
+      "cd .migration/webui-api/generated/event-push && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:11:38.000Z",
+        "summary": "all.tcl:\tTotal\t45\tPassed\t45\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/interface-gateway && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:11:39.000Z"
+      },
+      "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:11:54.000Z",
+        "summary": "all.tcl:\tTotal\t218\tPassed\t218\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/rega-model && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:11:54.000Z"
+      },
+      "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:12:10.000Z",
+        "summary": "all.tcl:\tTotal\t189\tPassed\t189\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/system-admin && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:12:11.000Z"
+      },
+      "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:12:29.000Z",
+        "summary": "all.tcl:\tTotal\t202\tPassed\t202\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/backup-cgis && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:12:29.000Z"
+      },
+      "cd .migration/webui-api/generated/backup-cgis && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:12:33.000Z",
+        "summary": "all.tcl:\tTotal\t65\tPassed\t65\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/user-profile && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:12:33.000Z"
+      },
+      "cd .migration/webui-api/generated/user-profile && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:12:38.000Z",
+        "summary": "all.tcl:\tTotal\t59\tPassed\t59\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/schema-harness && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:12:38.000Z"
+      },
+      "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:13:11.000Z",
+        "summary": "all.tcl:\tTotal\t59\tPassed\t59\tSkipped\t0\tFailed\t0"
+      },
+      "cd .migration/webui-api/generated/optional-gateway && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:13:11.000Z"
+      },
+      "cd .migration/webui-api/generated/optional-gateway && tclsh8.6 tests/all.tcl": {
+        "status": "passed",
+        "observed_at": "2026-10-30T16:13:11.000Z",
+        "summary": "all.tcl:\tTotal\t1\tPassed\t1\tSkipped\t0\tFailed\t0"
+      }
+    }
+  },
+  "red_tests": {
+    "T011": {
+      "task_id": "T011",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/mocks.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T07:56:16.382Z",
+      "note": "RED (mocks.tcl missing: source failed) was observed immediately before implementation; entry recorded a few minutes late, before GREEN"
+    },
+    "T013": {
+      "task_id": "T013",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/golden.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T07:58:05.885Z"
+    },
+    "T015": {
+      "task_id": "T015",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/drift.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:03:39.249Z"
+    },
+    "SP009": {
+      "task_id": "T028",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp009.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:07:52.509Z"
+    },
+    "SP016": {
+      "task_id": "T031",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp016.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:11:52.118Z"
+    },
+    "SP017": {
+      "task_id": "T034",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp017.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:13:44.120Z"
+    },
+    "SP018": {
+      "task_id": "T037",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp018.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:14:48.248Z"
+    },
+    "SP019": {
+      "task_id": "T040",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp019.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:16:11.646Z"
+    },
+    "SP020": {
+      "task_id": "T043",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp020.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:20:13.805Z"
+    },
+    "SP021": {
+      "task_id": "T046",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp021.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:21:36.264Z"
+    },
+    "SP022": {
+      "task_id": "T049",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp022.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:23:08.009Z"
+    },
+    "SP023": {
+      "task_id": "T052",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp023.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:24:45.113Z"
+    },
+    "SP024": {
+      "task_id": "T055",
+      "test_path": ".migration/webui-api/generated/interface-gateway/tests/sp024.test",
+      "command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:26:13.801Z"
+    },
+    "SP026": {
+      "task_id": "T058",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp026.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:27:47.394Z"
+    },
+    "SP027": {
+      "task_id": "T061",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp027.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:29:18.888Z"
+    },
+    "SP028": {
+      "task_id": "T064",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp028.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:30:45.141Z"
+    },
+    "SP010": {
+      "task_id": "T067",
+      "test_path": ".migration/webui-api/generated/backup-cgis/tests/sp010.test",
+      "command": "cd .migration/webui-api/generated/backup-cgis && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:35:12.442Z"
+    },
+    "SP011": {
+      "task_id": "T070",
+      "test_path": ".migration/webui-api/generated/backup-cgis/tests/sp011.test",
+      "command": "cd .migration/webui-api/generated/backup-cgis && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:37:56.843Z"
+    },
+    "SP012": {
+      "task_id": "T073",
+      "test_path": ".migration/webui-api/generated/backup-cgis/tests/sp012.test",
+      "command": "cd .migration/webui-api/generated/backup-cgis && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:39:09.288Z"
+    },
+    "SP030": {
+      "task_id": "T076",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp030.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T08:42:02.558Z"
+    },
+    "SP034": {
+      "task_id": "T079",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp034.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T10:46:28.907Z"
+    },
+    "T081b": {
+      "task_id": "T081b",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/safemode-enter.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T10:47:41.517Z"
+    },
+    "SP035": {
+      "task_id": "T082",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp035.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T10:49:25.492Z"
+    },
+    "SP036": {
+      "task_id": "T085",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp036.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T10:51:46.053Z"
+    },
+    "SP037": {
+      "task_id": "T088",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp037.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T10:54:27.192Z"
+    },
+    "SP038": {
+      "task_id": "T091",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp038.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T10:56:36.668Z"
+    },
+    "SP039": {
+      "task_id": "T094",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp039.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T10:58:11.847Z"
+    },
+    "SP047": {
+      "task_id": "T097",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp047.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:00:20.075Z"
+    },
+    "SP031": {
+      "task_id": "T100",
+      "test_path": ".migration/webui-api/generated/security-session/tests/sp031.test",
+      "command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:02:17.674Z"
+    },
+    "T102b": {
+      "task_id": "T102b",
+      "test_path": ".migration/webui-api/generated/security-session/tests/sp031-ratelimit.test",
+      "command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:03:28.123Z"
+    },
+    "T102c": {
+      "task_id": "T102c",
+      "test_path": ".migration/webui-api/generated/security-session/tests/sp031-ratelimit-off.test",
+      "command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:03:28.192Z"
+    },
+    "SP015": {
+      "task_id": "T103",
+      "test_path": ".migration/webui-api/generated/security-session/tests/sp015.test",
+      "command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:04:57.373Z"
+    },
+    "SP008": {
+      "task_id": "T106",
+      "test_path": ".migration/webui-api/generated/event-push/tests/sp008.test",
+      "command": "cd .migration/webui-api/generated/event-push && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:06:54.904Z"
+    },
+    "T108": {
+      "task_id": "T108",
+      "test_path": ".migration/webui-api/generated/event-push/tests/integration/sp008.test",
+      "command": "cd .migration/webui-api/generated/event-push && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:08:12.741Z"
+    },
+    "SP006": {
+      "task_id": "T111",
+      "test_path": ".migration/webui-api/generated/security-session/tests/sp006.test",
+      "command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:09:55.913Z"
+    },
+    "SP007": {
+      "task_id": "T114",
+      "test_path": ".migration/webui-api/generated/security-session/tests/sp007.test",
+      "command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:12:24.564Z"
+    },
+    "SP004": {
+      "task_id": "T119",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/sp004.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:15:00.005Z"
+    },
+    "SP005": {
+      "task_id": "T122",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/sp005.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:20:20.437Z",
+      "note": "RED (11 of 14 tests failing: json.tcl/syslog.tcl missing, no sanitisation/escaping) was observed before the implementation files were written; the entry was recorded a few minutes late, immediately after GREEN of all but sp005-4"
+    },
+    "SP002": {
+      "task_id": "T126",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/sp002.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:34:17.235Z"
+    },
+    "SP003": {
+      "task_id": "T129",
+      "test_path": ".migration/webui-api/generated/security-session/tests/sp003.test",
+      "command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl",
+      "status": "RED",
+      "observed_at": "2026-10-15T11:39:47.407Z"
+    },
+    "SP014": {
+      "task_id": "T132",
+      "test_path": ".migration/webui-api/generated/security-session/tests/sp014.test",
+      "command": "cd .migration/webui-api/generated/security-session && SP014_CANDIDATE=legacy tclsh8.6 tests/sp014.test (5 of 18 fail against the unchanged v1 libraries: sp014-3..7; implementation was staged before the RED record - disclosed)",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:10:52.903Z"
+    },
+    "SP013": {
+      "task_id": "T140",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/sp013.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/sp013.test",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:12:00.402Z"
+    },
+    "SP001": {
+      "task_id": "T135",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/sp001.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/sp001.test",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:18:06.023Z"
+    },
+    "T137b": {
+      "task_id": "T137b",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/sp001-ratelimit-v1.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/sp001-ratelimit-v1.test",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:18:06.070Z"
+    },
+    "T137c": {
+      "task_id": "T137c",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/sp001-ratelimit-v2.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/sp001-ratelimit-v2.test",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:18:06.109Z"
+    },
+    "T137d": {
+      "task_id": "T137d",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/integration/sp001-ratelimit-off.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/integration/sp001-ratelimit-off.test",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:18:06.150Z"
+    },
+    "T139b": {
+      "task_id": "T139b",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/executor.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/executor.test",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:18:06.190Z"
+    },
+    "T139d": {
+      "task_id": "T139d",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/v2auth.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/v2auth.test",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:18:06.237Z"
+    },
+    "T131b": {
+      "task_id": "T131b",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/integration/sp003-ratelimit-order.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/integration/sp003-ratelimit-order.test",
+      "status": "RED",
+      "observed_at": "2026-10-15T15:18:06.294Z"
+    },
+    "T081d": {
+      "task_id": "T081d",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/recoverymode-enter.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/recoverymode-enter.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:03:22.468Z"
+    },
+    "SP032": {
+      "task_id": "T145",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/sp032.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/sp032.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:08:52.099Z"
+    },
+    "T149": {
+      "task_id": "T149",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/schema.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/schema.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:10:42.386Z"
+    },
+    "SP025": {
+      "task_id": "T151",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp025.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/sp025.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:36:35.444Z"
+    },
+    "SP033": {
+      "task_id": "T154",
+      "test_path": ".migration/webui-api/generated/user-profile/tests/sp033.test",
+      "command": "cd .migration/webui-api/generated/user-profile && tclsh8.6 tests/sp033.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:39:05.933Z"
+    },
+    "SP040": {
+      "task_id": "T158",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp040.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/sp040.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:41:41.112Z"
+    },
+    "SP041": {
+      "task_id": "T161",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp041.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/sp041.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:43:37.116Z"
+    },
+    "SP042": {
+      "task_id": "T164",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp042.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/sp042.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:44:58.314Z"
+    },
+    "SP043": {
+      "task_id": "T169",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp043.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/sp043.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:46:46.891Z"
+    },
+    "SP044": {
+      "task_id": "T174",
+      "test_path": ".migration/webui-api/generated/rega-model/tests/sp044.test",
+      "command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/sp044.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:50:23.124Z"
+    },
+    "SP045": {
+      "task_id": "T178",
+      "test_path": ".migration/webui-api/generated/user-profile/tests/sp045.test",
+      "command": "cd .migration/webui-api/generated/user-profile && tclsh8.6 tests/sp045.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:53:36.065Z"
+    },
+    "SP046": {
+      "task_id": "T181",
+      "test_path": ".migration/webui-api/generated/user-profile/tests/sp046.test",
+      "command": "cd .migration/webui-api/generated/user-profile && tclsh8.6 tests/sp046.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:55:16.647Z"
+    },
+    "SP029": {
+      "task_id": "T184",
+      "test_path": ".migration/webui-api/generated/event-push/tests/sp029.test",
+      "command": "cd .migration/webui-api/generated/event-push && tclsh8.6 tests/sp029.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T08:57:22.966Z"
+    },
+    "T193": {
+      "task_id": "T193",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/integration/ic002.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/integration/ic002.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T09:00:04.503Z"
+    },
+    "T195": {
+      "task_id": "T195",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/integration/ic003.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/integration/ic003.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T09:02:15.272Z"
+    },
+    "T227": {
+      "task_id": "T227",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/integration/ic019.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/integration/ic019.test",
+      "status": "RED",
+      "observed_at": "2026-10-20T12:08:34.089Z"
+    },
+    "T253b": {
+      "task_id": "T253b",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-29T22:44:16.679Z"
+    },
+    "T084b": {
+      "task_id": "T084b",
+      "test_path": ".migration/webui-api/generated/system-admin/tests/sp035-patterns.test",
+      "command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/sp035-patterns.test",
+      "status": "RED",
+      "observed_at": "2026-10-29T22:46:22.031Z"
+    },
+    "T253v": {
+      "task_id": "T253v",
+      "test_path": ".migration/webui-api/generated/security-session/tests/integration/admin-audit-lib.test",
+      "command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/integration/admin-audit-lib.test",
+      "status": "RED",
+      "observed_at": "2026-10-29T22:50:49.285Z"
+    },
+    "T253x": {
+      "task_id": "T253x",
+      "test_path": ".migration/webui-api/generated/dispatcher/tests/integration/admin-audit-load.test",
+      "command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/integration/admin-audit-load.test",
+      "status": "RED",
+      "observed_at": "2026-10-29T22:50:49.326Z"
+    },
+    "T253d": {
+      "task_id": "T253d",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/verbatim-legacy.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/verbatim-legacy.test",
+      "status": "RED",
+      "observed_at": "2026-10-29T22:56:34.983Z"
+    },
+    "T253f": {
+      "task_id": "T253f",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/verbatim-legacy.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/verbatim-legacy.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:51:30.811Z"
+    },
+    "T253g": {
+      "task_id": "T253g",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/verbatim-legacy.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/verbatim-legacy.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:51:30.860Z"
+    },
+    "T253h": {
+      "task_id": "T253h",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/verbatim-legacy.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/verbatim-legacy.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:51:30.910Z"
+    },
+    "T253i": {
+      "task_id": "T253i",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/verbatim-legacy.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/verbatim-legacy.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:51:30.959Z"
+    },
+    "T253j": {
+      "task_id": "T253j",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/verbatim-legacy.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/verbatim-legacy.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:51:31.008Z"
+    },
+    "T253k": {
+      "task_id": "T253k",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/verbatim-legacy.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/verbatim-legacy.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:51:31.055Z"
+    },
+    "T253l": {
+      "task_id": "T253l",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.437Z"
+    },
+    "T253m": {
+      "task_id": "T253m",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.480Z"
+    },
+    "T253n": {
+      "task_id": "T253n",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.520Z"
+    },
+    "T253o": {
+      "task_id": "T253o",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.564Z"
+    },
+    "T253p": {
+      "task_id": "T253p",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.603Z"
+    },
+    "T253q": {
+      "task_id": "T253q",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.641Z"
+    },
+    "T253r": {
+      "task_id": "T253r",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.680Z"
+    },
+    "T253s": {
+      "task_id": "T253s",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.728Z"
+    },
+    "T253t": {
+      "task_id": "T253t",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.774Z"
+    },
+    "T253u": {
+      "task_id": "T253u",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T15:55:51.815Z"
+    },
+    "T256b": {
+      "task_id": "T256b",
+      "test_path": ".migration/webui-api/generated/schema-harness/tests/integration/patch-compat.test",
+      "command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/integration/patch-compat.test",
+      "status": "RED",
+      "observed_at": "2026-10-30T16:09:31.712Z"
+    }
+  },
+  "specifications": [
+    "SP001",
+    "SP002",
+    "SP003",
+    "SP004",
+    "SP005",
+    "SP006",
+    "SP007",
+    "SP008",
+    "SP009",
+    "SP010",
+    "SP011",
+    "SP012",
+    "SP013",
+    "SP014",
+    "SP015",
+    "SP016",
+    "SP017",
+    "SP018",
+    "SP019",
+    "SP020",
+    "SP021",
+    "SP022",
+    "SP023",
+    "SP024",
+    "SP025",
+    "SP026",
+    "SP027",
+    "SP028",
+    "SP029",
+    "SP030",
+    "SP031",
+    "SP032",
+    "SP033",
+    "SP034",
+    "SP035",
+    "SP036",
+    "SP037",
+    "SP038",
+    "SP039",
+    "SP040",
+    "SP041",
+    "SP042",
+    "SP043",
+    "SP044",
+    "SP045",
+    "SP046",
+    "SP047"
+  ],
+  "control_flows": [
+    "CF001",
+    "CF002",
+    "CF003",
+    "CF004",
+    "CF005",
+    "CF006",
+    "CF007",
+    "CF008",
+    "CF009",
+    "CF010",
+    "CF011",
+    "CF012",
+    "CF013",
+    "CF014",
+    "CF015",
+    "CF016",
+    "CF017",
+    "CF018"
+  ],
+  "updated_at": "2026-10-30T16:13:11.749Z",
+  "blocked_tasks": [
+    {
+      "task_id": "T110",
+      "reason": "BLOCKED: needs live CCU/EG-1 caller check (depends on T109)",
+      "recorded_at": "2026-10-15T11:08:50.681Z"
+    },
+    {
+      "task_id": "T116",
+      "reason": "BLOCKED: needs live CCU/EG-8 (runtime trace of real ReGa session ids; contract test pins the @ wrapping per entry point)",
+      "recorded_at": "2026-10-15T11:12:47.669Z"
+    },
+    {
+      "task_id": "T117",
+      "reason": "BLOCKED: needs live CCU/EG-8 (depends on T116); interim fail-closed + escape-only delivered by SP007 T115",
+      "recorded_at": "2026-10-15T11:12:47.740Z"
+    },
+    {
+      "task_id": "T166",
+      "reason": "needs live ReGa/EG-6: v2 programs mutation operations must be prototyped on a live ReGa",
+      "recorded_at": "2026-10-20T08:45:38.462Z"
+    },
+    {
+      "task_id": "T167",
+      "reason": "needs live ReGa/EG-6 (depends on T166)",
+      "recorded_at": "2026-10-20T08:45:38.504Z"
+    },
+    {
+      "task_id": "T171",
+      "reason": "needs live ReGa/EG-6: v2 rooms/functions mutation operations",
+      "recorded_at": "2026-10-20T08:48:43.819Z"
+    },
+    {
+      "task_id": "T172",
+      "reason": "needs live ReGa/EG-6 (depends on T171)",
+      "recorded_at": "2026-10-20T08:48:43.860Z"
+    },
+    {
+      "task_id": "T187",
+      "reason": "needs live CCU/EG-2: datapoint.changed producer must be prototyped on a live CCU",
+      "recorded_at": "2026-10-20T08:58:20.763Z"
+    },
+    {
+      "task_id": "T188",
+      "reason": "needs live CCU/EG-2 (depends on T187)",
+      "recorded_at": "2026-10-20T08:58:20.819Z"
+    },
+    {
+      "task_id": "T208",
+      "reason": "needs live ReGa/EG-6 (v2 mutation routes IC010/IC011 gated)",
+      "recorded_at": "2026-10-20T12:04:06.199Z"
+    },
+    {
+      "task_id": "T209",
+      "reason": "needs live ReGa/EG-6 (v2 mutation routes IC010/IC011 gated)",
+      "recorded_at": "2026-10-20T12:04:06.240Z"
+    },
+    {
+      "task_id": "T210",
+      "reason": "needs live ReGa/EG-6 (v2 mutation routes IC010/IC011 gated)",
+      "recorded_at": "2026-10-20T12:04:06.280Z"
+    },
+    {
+      "task_id": "T211",
+      "reason": "needs live ReGa/EG-6 (v2 mutation routes IC010/IC011 gated)",
+      "recorded_at": "2026-10-20T12:04:06.321Z"
+    },
+    {
+      "task_id": "T144",
+      "reason": "gated: live CCU / decision gate (see tasks.md note)",
+      "recorded_at": "2026-10-20T12:17:23.598Z"
+    },
+    {
+      "task_id": "T248",
+      "reason": "gated: live CCU / decision gate (see tasks.md note)",
+      "recorded_at": "2026-10-20T12:17:23.637Z"
+    },
+    {
+      "task_id": "T249",
+      "reason": "gated: live CCU / decision gate (see tasks.md note)",
+      "recorded_at": "2026-10-20T12:17:23.675Z"
+    },
+    {
+      "task_id": "T250",
+      "reason": "gated: live CCU / decision gate (see tasks.md note)",
+      "recorded_at": "2026-10-20T12:17:23.731Z"
+    },
+    {
+      "task_id": "T251",
+      "reason": "gated: live CCU / decision gate (see tasks.md note)",
+      "recorded_at": "2026-10-20T12:17:23.786Z"
+    },
+    {
+      "task_id": "T252",
+      "reason": "gated: live CCU / decision gate (see tasks.md note)",
+      "recorded_at": "2026-10-20T12:17:23.828Z"
+    },
+    {
+      "task_id": "T253",
+      "reason": "gated: live CCU / decision gate (see tasks.md note)",
+      "recorded_at": "2026-10-20T12:17:23.869Z"
+    }
+  ]
+}

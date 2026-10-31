@@ -1,0 +1,83 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP018 - reading paramsets and values: contracts/behavioral-contracts.json#SP018
+# (acceptance 6, the 403 schema validation, belongs to the central validator of the dispatcher)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ0123456:1}
+set URL xmlrpc_bin://127.0.0.1:2001
+
+test sp018-0 {the staged method scripts of SP018 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {getparamset getmastervalue getparamsetdescription getparamsetid getvalue} {
+    set p [file join $gen interface-gateway methods interface $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp018-1 {getParamset: flat name/value list becomes a JSON object, every value a string} -body {
+  set r [call Interface.getParamset [concat $S {paramsetKey VALUES}] -sessions $GUEST -xmlrpc {{getParamset {LEVEL 0.5 STATE true N 3}}}]
+  list [result $r] [dict get $r xmlrpc_calls]
+} -result [list {{"LEVEL":"0.5","STATE":"true","N":"3"}} [list [list $URL getParamset {string NEQ0123456:1} {string VALUES}]]]
+
+test sp018-2 {getParamsetDescription: each parameter struct becomes {NAME, FIELD...} in an array} -body {
+  set r [call Interface.getParamsetDescription [concat $S {paramsetKey MASTER}] -sessions $GUEST -xmlrpc {{getParamsetDescription {LEVEL {TYPE FLOAT MIN 0.0 MAX 1.0}}}}]
+  result $r
+} -result {[{"NAME":"LEVEL","TYPE":"FLOAT","MIN":"0.0","MAX":"1.0"}]}
+
+test sp018-3 {getParamsetId returns the id JSON-quoted} -body {
+  set r [call Interface.getParamsetId [concat $S {paramsetType MASTER}] -sessions $GUEST -xmlrpc {{getParamsetId HM-LC-Sw1_MASTER}}]
+  list [result $r] [dict get $r xmlrpc_calls]
+} -result [list {"HM-LC-Sw1_MASTER"} [list [list $URL getParamsetId {string NEQ0123456:1} {string MASTER}]]]
+
+test sp018-4 {getValue returns the XML-RPC value as a JSON string} -body {
+  set r [call Interface.getValue [concat $S {valueKey LEVEL}] -sessions $GUEST -xmlrpc {{getValue 0.75}}]
+  list [result $r] [dict get $r xmlrpc_calls]
+} -result [list {"0.75"} [list [list $URL getValue {string NEQ0123456:1} {string LEVEL}]]]
+
+test sp018-5 {getMasterValue always requests the MASTER paramset and returns the entry for valueKey} -body {
+  set r [call Interface.getMasterValue [concat $S {valueKey TIMEOUT}] -sessions $GUEST -xmlrpc {{getParamset {TIMEOUT 30 OTHER 1}}}]
+  list [result $r] [dict get $r xmlrpc_calls]
+} -result [list {"30"} [list [list $URL getParamset {string NEQ0123456:1} {string MASTER}]]]
+
+test sp018-6 {getMasterValue with an unknown valueKey: error 501 'invalid value key'} -body {
+  err [call Interface.getMasterValue [concat $S {valueKey NOPE}] -sessions $GUEST -xmlrpc {{getParamset {TIMEOUT 30}}}]
+} -result {501 {invalid value key}}
+
+test sp018-7 {an unknown address surfaces as the mapped status; a Tcl error in the call is 601} -body {
+  set a [call Interface.getParamset [concat $S {paramsetKey VALUES}] -sessions $GUEST]
+  set b [call Interface.getParamset [concat $S {paramsetKey VALUES}] -sessions $GUEST -fault {{getParamset -2 unknown}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {601 502}
+
+test sp018-8 {getValue returning an empty string yields "" (not null)} -body {
+  result [call Interface.getValue [concat $S {valueKey LEVEL}] -sessions $GUEST -xmlrpc {{getValue {}}}]
+} -result {""}
+
+test sp018-9 {all five methods are GUEST level: no session is denied (400)} -body {
+  set codes {}
+  foreach {m extra} {Interface.getParamset {paramsetKey VALUES} Interface.getValue {valueKey X} Interface.getMasterValue {valueKey X}
+                     Interface.getParamsetId {paramsetType MASTER} Interface.getParamsetDescription {paramsetKey MASTER}} {
+    lappend codes [lindex [err [call $m [concat $S $extra] -sessions {}]] 0]
+  }
+  set codes
+} -result {400 400 400 400 400}
+
+cleanupTests

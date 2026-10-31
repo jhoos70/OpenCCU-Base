@@ -1,0 +1,82 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP023 NFR and integration coverage (spec.json#SP023 non_functional_requirements[0..8]),
+# boundary and error cases, golden re-run (getLGWConnectionStatus is a documented deliberate
+# change - 403/200-with-reference instead of a path leaking Tcl error - and is excluded).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF}
+
+test sp023-nfr0 {NFR0/8: changeKey sends no method name, the passphrase list takes its place (frozen)} -body {
+  set r [call Interface.changeKey [concat $S {passphrase pw}] -xmlrpc {{{string pw} 1}}]
+  lrange [lindex [dict get $r xmlrpc_calls] 0] 1 end
+} -result {{string pw}}
+
+test sp023-nfr1 {NFR1: setTempKey sends the literal string 'passphrase', never the caller value} -body {
+  set r [call Interface.setTempKey [concat $S {passphrase REALSECRET}] -xmlrpc {{setTempKey 1}}]
+  list [string match *REALSECRET* [lindex [dict get $r xmlrpc_calls] 0]] [lindex [lindex [dict get $r xmlrpc_calls] 0] 2]
+} -result {0 {string passphrase}}
+
+test sp023-nfr2 {NFR2: getLGWConnectionStatus makes no XML-RPC call (the interface argument is unused)} -body {
+  set r [call Interface.getLGWConnectionStatus [concat $S {serial OEQ1}] -sessions $GUEST -files [list var/status/OEQ1.connstat OK]]
+  list [result $r] [llength [dict get $r xmlrpc_calls]]
+} -result {{{"connstat":"OK", "serial":"OEQ1"}} 0}
+
+test sp023-nfr3 {NFR3: every one of the seven keys is required in a gateway struct (200 otherwise)} -body {
+  set codes {}
+  foreach drop {ADDRESS DESCRIPTION DUTY_CYCLE CONNECTED DEFAULT FIRMWARE_VERSION TYPE} {
+    set gw {ADDRESS A DESCRIPTION d DUTY_CYCLE 1 CONNECTED 1 DEFAULT 1 FIRMWARE_VERSION 1 TYPE T}
+    dict unset gw $drop
+    lappend codes [lindex [err [call Interface.listBidcosInterfaces $S -sessions $USER -xmlrpc [list [list listBidcosInterfaces [list $gw]]]]] 0]
+  }
+  set codes
+} -result {200 200 200 200 200 200 200}
+
+test sp023-nfr4 {NFR4: dutyCycle is a quoted string; isConnected/isDefault are true only for the integer 1} -body {
+  set gw {ADDRESS A DESCRIPTION d DUTY_CYCLE 7 CONNECTED true DEFAULT 2 FIRMWARE_VERSION 1 TYPE T}
+  set j [result [call Interface.listBidcosInterfaces $S -sessions $USER -xmlrpc [list [list listBidcosInterfaces [list $gw]]]]]
+  list [regexp {"dutyCycle":"7"} $j] [regexp {"isConnected":false,"isDefault":false} $j]
+} -result {1 1}
+
+test sp023-nfr5 {NFR5: rssiInfo partner data with fewer than two values yields '[,]' style tokens (v1 frozen)} -body {
+  string match {*"rssiData":\[-70,\]*} [result [call Interface.rssiInfo $S -sessions $GUEST -xmlrpc {{rssiInfo {D {P {-70}}}}}]]
+} -result 1
+
+test sp023-nfr6 {NFR6: the rssiData value 65536 is passed through unchanged} -body {
+  string match {*"rssiData":\[65536,65536\]*} [result [call Interface.rssiInfo $S -sessions $GUEST -xmlrpc {{rssiInfo {D {P {65536 65536}}}}}]]
+} -result 1
+
+test sp023-nfr7 {NFR7: Interface.init (arbitrary callback URL) is ADMIN only} -body {
+  set a [call Interface.init [concat $S {url http://evil interfaceId x}] -sessions $USER -xmlrpc {{init 1}}]
+  set b [call Interface.init [concat $S {url http://evil interfaceId x}] -sessions $GUEST -xmlrpc {{init 1}}]
+  list [lindex [err $a] 0] [lindex [err $b] 0] [llength [dict get $a xmlrpc_calls]]
+} -result {400 400 0}
+
+test sp023-err1 {the serial '../../etc/passwd' never reads outside /var/status (403, no file access)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/passwd SECRETFILE
+  set r [call Interface.getLGWConnectionStatus [concat $S {serial ../../etc/passwd}] -sessions $GUEST -fs $fs]
+  mock::fs::destroy $fs
+  list [err $r] [string match *SECRETFILE* [dict get $r stdout]]
+} -result {{403 {invalid argument (serial)}} 0}
+
+test sp023-golden {golden re-run: the gateway methods replay byte-identical (getLGWConnectionStatus excluded: deliberate change)} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.listBidcosInterfaces Interface.setBidcosInterface Interface.rssiInfo Interface.getLGWStatus Interface.init Interface.changeKey Interface.setTempKey}
+} -result {}
+
+cleanupTests

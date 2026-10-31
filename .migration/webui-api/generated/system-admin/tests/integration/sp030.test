@@ -1,0 +1,102 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP030 NFR and integration coverage (spec.json#SP030 non_functional_requirements[0..8]),
+# boundary and error cases, golden re-run (setConfigurationRF/Wired are excluded: the seeded
+# fixture carries a non-array 'interfaces', where v1 truncated/failed and the staged scripts
+# answer false without touching the file - a documented deliberate change).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:system-admin {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc setreq {method ifaces} {
+  return "\{\"method\":\"$method\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"interfaces\":$ifaces\},\"id\":1\}"
+}
+set S {_session_id_ AbCdEf1234}
+set ONE {[{"type":"T","userName":"U","serialNumber":"S","encryptionKey":"K"}]}
+
+test sp030-nfr0 {NFR0: setConfigurationRF keeps '[Interface 0]' in the header (pattern [1-9]*), the wired variant drops every interface section} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf "# h\n\[Interface 0\]\nType = Old0\n\[Interface 1\]\nType = Old1\n"
+  mock::fs::write $fs etc/config/hs485d.conf "# h\n\[Interface 0\]\nType = OldW0\n\[Interface 1\]\nType = OldW1\n"
+  callraw [setreq BidCoS_RF.setConfigurationRF $ONE] -fs $fs
+  callraw [setreq BidCoS_Wired.setConfigurationWired $ONE] -fs $fs
+  set rf [mock::fs::read $fs etc/config/rfd.conf]
+  set wired [mock::fs::read $fs etc/config/hs485d.conf]
+  mock::fs::destroy $fs
+  list [string match {*Type = Old0*} $rf] [string match {*Type = Old1*} $rf] [string match {*Old*} $wired]
+} -result {1 0 0}
+
+test sp030-nfr1 {NFR1: a comment line is skipped, 'x = [y]' starts a new section anywhere in the line} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf "# \[Commented\]\nNote = see \[Hidden\]\nType = T1\nName = N1\n"
+  set j [result [call BidCoS_RF.getConfigurationRF $S -fs $fs]]
+  mock::fs::destroy $fs
+  list [string match {*"userName": "N1"*} $j] [string match {*Commented*} $j]
+} -result {1 0}
+
+test sp030-nfr2 {NFR2/8: the encryptionKey is returned in clear text (frozen)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf "\[Interface 1\]\nType = LAN\nEncryption Key = TOPSECRET\n"
+  set j [result [call BidCoS_RF.getConfigurationRF $S -fs $fs]]
+  mock::fs::destroy $fs
+  string match {*"encryptionKey": "TOPSECRET"*} $j
+} -result 1
+
+test sp030-nfr3 {NFR3: isKeySet is true exactly when crypttool -v -t 0 fails} -body {
+  list [result [call BidCoS_RF.isKeySet $S -execfail {{{crypttool*} bad}}]] [result [call BidCoS_RF.isKeySet $S -exec {{{crypttool*} ok}}]]
+} -result {true false}
+
+test sp030-nfr4 {NFR4: validateKey passes the key as an argument of the exec list form (never through a shell)} -body {
+  set r [call BidCoS_RF.validateKey [concat $S {key {a b;c}}] -exec {{{crypttool*} ok}}]
+  lindex [dict get $r exec_calls] 0
+} -result {crypttool -v -t 3 -k {a b;c}}
+
+test sp030-nfr5 {NFR5: a missing 'Current user key' / 'Previous user key' line gives index 0 and no Key line for it} -body {
+  set fs [mock::fs::create]
+  call BidCoS_RF.createKeyFile [concat $S {key k}] -fs $fs -exec {{{crypttool -g} ""}}
+  set out [mock::fs::read $fs etc/config/keys]
+  mock::fs::destroy $fs
+  set out
+} -result "Current Index = 0\nKey 0 = \nLast Index = 0\n"
+
+test sp030-nfr6 {NFR6: changeLanGatewayKey stores the keys as given - no hashing} -body {
+  set fs [mock::fs::create]
+  call BidCoS.changeLanGatewayKey {_session_id_ AbCdEf1234 lgwclass RF lgwserial G1 lgwip 1.1.1.1 newkey PLAINNEW curkey PLAINCUR} -fs $fs
+  set out [mock::fs::read $fs etc/config/G1.keychange]
+  mock::fs::destroy $fs
+  list [string match *KEY=PLAINNEW* $out] [string match *CURKEY=PLAINCUR* $out]
+} -result {1 1}
+
+test sp030-nfr7 {NFR7: the generated wired header uses EQ3_SERVICE_HS485D_PORT from /etc/eq3services.ports.tcl} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/eq3services.ports.tcl "set EQ3_SERVICE_HS485D_PORT 2077"
+  callraw [setreq BidCoS_Wired.setConfigurationWired $ONE] -fs $fs
+  set out [mock::fs::read $fs etc/config/hs485d.conf]
+  mock::fs::destroy $fs
+  string match "*Listen Port = 2077*" $out
+} -result 1
+
+test sp030-err1 {the response never contains the file path or a Tcl trace for the false results} -body {
+  set fs [mock::fs::create]
+  set r [callraw [setreq BidCoS_RF.setConfigurationRF {["oops"]}] -fs $fs]
+  mock::fs::destroy $fs
+  list [result $r] [string match */etc/* [dict get $r stdout]]
+} -result {false 0}
+
+test sp030-golden {golden re-run: the read methods, createKeyFile, isKeySet, validateKey and changeLanGatewayKey replay byte-identical} -body {
+  golden::compare_all -candidate only:system-admin -only {BidCoS_RF.getConfigurationRF BidCoS_Wired.getConfigurationWired BidCoS_RF.createKeyFile BidCoS_RF.isKeySet BidCoS_RF.validateKey BidCoS.changeLanGatewayKey}
+} -result {}
+
+cleanupTests

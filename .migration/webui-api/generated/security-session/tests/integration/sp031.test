@@ -1,0 +1,55 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP031 NFR and integration coverage (spec.json#SP031 non_functional_requirements[0..8]),
+# boundary and error cases, golden re-run. NFR5 (header X-Session-Id wins over params._session_id_)
+# and the [V2] cookie belong to the dispatcher v2 route tests; NFR6-8 (limiter) are covered by
+# sp031-ratelimit.test and sp031-ratelimit-off.test.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:security-session {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+
+test sp031-nfr0 {NFR0: login without username or password is 402 'missing argument (<name>)'} -body {
+  list [err [call Session.login {password x} -sessions {}]] [err [call Session.login {username x} -sessions {}]]
+} -result {{402 {missing argument (username)}} {402 {missing argument (password)}}}
+
+test sp031-nfr1 {NFR1: a failing loopback connection is the v1 internal error 200 (the dispatcher sanitises it later)} -body {
+  lindex [err [call Session.login {username a password b} -sessions {}]] 0
+} -result 200
+
+test sp031-nfr2 {NFR2: the Location regexp captures up to the next '@'} -body {
+  result [call Session.login {username a password b} -sessions {} -http {{{HTTP/1.1 302 Found} {Location /x?sid=@AAA@BBB@}}}]
+} -result {"AAA"}
+
+test sp031-nfr3 {NFR3: renew answers true regardless of the page hit result} -body {
+  set a [result [call Session.renew {_session_id_ AbCdEf1234} -sessions $GUEST -http {{{HTTP/1.1 500 Error} {}}}]]
+  set b [result [call Session.renew {_session_id_ AbCdEf1234} -sessions $GUEST -http {{{HTTP/1.1 200 OK} {Location /elsewhere}}}]]
+  list $a $b
+} -result {true true}
+
+test sp031-nfr4 {NFR4: Session.create is not in the registry} -body {
+  list [dict exists [golden::registry] Session.create] [lindex [err [call Session.create {} -sessions {}]] 0]
+} -result {0 401}
+
+test sp031-err1 {the credentials are neither logged to the syslog nor echoed in the response} -body {
+  set r [call Session.login {username Admin password TOPSECRETPW} -sessions {} -http {{{HTTP/1.1 200 OK} {}}}]
+  list [string match *TOPSECRETPW* [dict get $r stdout]] [string match *TOPSECRETPW* [dict get $r syslog]]
+} -result {0 0}
+
+test sp031-golden {golden re-run: Session.login/logout/renew/setSessionVar replay byte-identical through the staged tree} -body {
+  golden::compare_all -candidate only:security-session -only {Session.login Session.logout Session.renew Session.setSessionVar}
+} -result {}
+
+cleanupTests

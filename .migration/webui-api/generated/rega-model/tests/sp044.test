@@ -1,0 +1,150 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP044 - ReGa bridge methods (ReGa.runScript ADMIN, ReGa.isPresent NONE, ReGa.getAllDatapoints
+# ADMIN) and the v2 bulk read model GET /api/v2/model (IC009, BD-13).
+# contracts/behavioral-contracts.json#SP044
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234}
+proc model {query args} {
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/model} -query $query \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::GUEST {*}$args]]]
+}
+proc chn {id args} {
+  set d [dict create ID $id NAME ch$id ADDRESS NEQ1:$id DEVICE 1 INDEX $id GROUP_PARTNER_ID 65535 READY_CONFIG true MODE MODE_DEFAULT \
+    CATEGORY CATEGORY_NONE USABLE true LOGGED false VISIBLE true LOGABLE true READABLE true WRITABLE false EVENTABLE true AES_AVAILABLE false \
+    VIRTUAL false CHANNEL_TYPE KEY CHANNEL_NAME HM-X]
+  foreach {k v} $args { dict set d $k $v }
+  set s ""
+  dict for {k v} $d { append s [list $k $v] " " }
+  return [string trimright $s]
+}
+proc dev {id} {
+  return [list ID $id NAME "Dev $id" ADDRESS NEQ$id INTERFACE BidCos-RF DEVICE_TYPE HM-X READY_CONFIG true GROUP_ONLY false CHANNELS [list [chn 1]]]
+}
+
+test sp044-0 {the staged method scripts of SP044 and the v2 model route exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {methods/rega/runscript methods/rega/ispresent methods/rega/getalldatapoints v2/model} {
+    set p [file join $gen rega-model {*}[split $f /]].tcl
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp044-1 {acceptance[0],NFR1: ReGa.runScript passes the script unchanged and answers the output as a JSON string ('/' is escaped)} -body {
+  set r [call ReGa.runScript {_session_id_ AbCdEf1234 script {Write("a/b");}} -sessions $ADMIN -rega {{*Write("a/b");* a/b}}]
+  list [result $r] [string match {*Write("a/b");*} [lindex [dict get $r rega_calls] end]]
+} -result [list {"a\/b"} 1]
+
+test sp044-2 {acceptance[1]: a session below ADMIN is denied (400) and the script is not executed} -body {
+  set r [call ReGa.runScript {_session_id_ AbCdEf1234 script {Write("x");}} -sessions $GUEST]
+  list [lindex [err $r] 0] [llength [lsearch -all -inline -glob [dict get $r rega_calls] {*Write("x");*}]]
+} -result {400 0}
+
+test sp044-3 {acceptance[3]: a failing script gives the empty JSON string} -body {
+  result [call ReGa.runScript {_session_id_ AbCdEf1234 script {boom}} -sessions $ADMIN -regafail {*boom*}]
+} -result {""}
+
+test sp044-4 {acceptance[2]: ReGa.isPresent is true for the answer 'OK', otherwise false (NONE: no session needed)} -body {
+  list [result [call ReGa.isPresent {} -sessions {} -rega {{*Write('OK');* OK}}]] [result [call ReGa.isPresent {} -sessions {} -rega {{*Write('OK');* nope}}]] [result [call ReGa.isPresent {} -sessions {} -regafail {*Write('OK');*}]]
+} -result {true false false}
+
+test sp044-5 {acceptance[4]: ReGa.getAllDatapoints keeps the line format, in ascending id order, with the trailing empty element} -body {
+  set out "7--CHANNEL--ch7--NEQ1\n3--DEVICE--Dev--NEQ1\n12--HSSDP--dp--Dev--NEQ1\n5--ROOM--Kitchen\n"
+  result [call ReGa.getAllDatapoints $S -sessions $ADMIN -rega [list [list {*EnumIDs()*} $out]]]
+} -result {["3--DEVICE--Dev--NEQ1","5--ROOM--Kitchen","7--CHANNEL--ch7--NEQ1","12--HSSDP--dp--Dev--NEQ1",""]}
+
+test sp044-6 {acceptance[4],NFR5 [TARGET]: the script enumerates the object collections - it contains no loop over 65,535 dom.GetObject probes} -body {
+  set r [call ReGa.getAllDatapoints $S -sessions $ADMIN]
+  set script [lindex [dict get $r rega_calls] end]
+  list [string match {*65535*} $script] [regexp {dom\.GetObject\(loop\)} $script] [string match {*Devices().EnumIDs()*} $script]
+} -result {0 0 1}
+
+test sp044-7 {acceptance[5] [TARGET]: ReGa.getAllDatapoints without _session_id_ is 402 'missing argument (_session_id_)'} -body {
+  err [call ReGa.getAllDatapoints {} -sessions $ADMIN]
+} -result {402 {missing argument (_session_id_)}}
+
+test sp044-8 {acceptance[0],[4] privilege: getAllDatapoints and runScript need ADMIN} -body {
+  list [lindex [err [call ReGa.getAllDatapoints $S -sessions $GUEST]] 0] [lindex [err [call ReGa.runScript {_session_id_ AbCdEf1234 script x} -sessions $GUEST]] 0]
+} -result {400 400}
+
+test sp044-9 {acceptance[6] [V2]: GET /api/v2/model?sections=devices&limit=50&offset=100 with 120 devices: total 120, offset 100, limit 50, 20 items each with channels; ONE bulk script for the devices} -body {
+  set recs {}
+  for {set i 1} {$i <= 120} {incr i} { lappend recs [dev $i] }
+  set r [model "sections=devices&limit=50&offset=100" -rega [list [list {*Devices().EnumIDs()*Channels()*} $recs]]]
+  set j [string trim [dict get $r body]]
+  set scripts 0
+  foreach c [dict get $r rega_calls] { if {[string match {*Devices().EnumIDs()*Channels()*} $c]} { incr scripts } }
+  list [status $r] [regexp {^\{"devices":\{"total":120,"offset":100,"limit":50,"items":\[\{"id":"101",} $j] [llength [regexp -all -inline {"address":"NEQ[0-9]+","interface"} $j]] [regexp -all {"channels":\[\{} $j] $scripts [regexp {"id":"120",.*\]\}\}$} $j]
+} -result {200 1 20 20 1 1}
+
+test sp044-10 {acceptance[6] [V2]: without sections all sections but datapoints are returned, each as {total,offset,limit,items}; defaults limit 100, offset 0} -body {
+  set r [model "" -rega [list [list {*Devices().EnumIDs()*Channels()*} [list [dev 1]]] \
+    [list {*ID_ROOMS*EnumUsedIDs()*} [list [list ID 1201 NAME Kitchen DESCRIPTION d CHANNELS {1301}]]] \
+    [list {*ID_FUNCTIONS*EnumUsedIDs()*} [list [list ID 1101 NAME Light DESCRIPTION d CHANNELS {1301}]]] \
+    [list {*ID_SYSTEM_VARIABLES*EnumIDs()*} [list [list ID 5 NAME V TYPE LOGIC UNIT {} VALUE 1 LOGGED true VISIBLE true INTERNAL false CHANNEL_ID 65535 VALUE_MIN 0 VALUE_MAX 1 VALUE_LIST {} VALUE_NAME_0 a VALUE_NAME_1 b]]] \
+    [list {*ID_PROGRAMS*EnumIDs()*} [list [list ID 9 NAME P TIME t ACTIVE true INTERNAL false]]]]]
+  set j [string trim [dict get $r body]]
+  list [status $r] [regexp {"devices":\{"total":1,"offset":0,"limit":100,"items":} $j] [regexp {"channels":\{"total":1,"offset":0,"limit":100,"items":\[\{"id":"1",} $j] \
+    [regexp {"rooms":\{"total":1,.*"items":\[\{"id":"1201","name":"Kitchen","description":"d","channelIds":\["1301"\]\}\]\}} $j] \
+    [regexp {"functions":\{"total":1} $j] [regexp {"sysvars":\{"total":1,.*"isLogged":true,"isVisible":true,"isInternal":false} $j] [regexp {"programs":\{"total":1,.*"isActive":true,"isInternal":false,"lastExecuteTime":"t"\}\]\}\}$} $j] [string match *datapoints* $j]
+} -result {200 1 1 1 1 1 1 0}
+
+test sp044-11 {acceptance[6] [V2]: sections=devices,rooms returns only the requested sections (acceptance of SP025[8])} -body {
+  set r [model "sections=rooms,functions" -rega [list [list {*ID_ROOMS*EnumUsedIDs()*} {}] [list {*ID_FUNCTIONS*EnumUsedIDs()*} {}]]]
+  set j [string trim [dict get $r body]]
+  list [status $r] [regexp {^\{"rooms":\{"total":0,"offset":0,"limit":100,"items":\[\]\},"functions":\{"total":0,"offset":0,"limit":100,"items":\[\]\}\}$} $j]
+} -result {200 1}
+
+test sp044-12 {acceptance[6] [V2]: sections=datapoints is supported (opt-in section)} -body {
+  set r [model "sections=datapoints" -rega [list [list {*HSSDP*} [list [list ID 12 NAME dp CHANNEL 7]]]]]
+  set j [string trim [dict get $r body]]
+  list [status $r] [regexp {^\{"datapoints":\{"total":1,"offset":0,"limit":100,"items":\[\{"id":"12","name":"dp"} $j]
+} -result {200 1}
+
+test sp044-13 {SP025 acceptance[9] [V2]: without a valid sid HTTP 401 and no ReGa script of the model is executed} -body {
+  set a [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/model} -header {X-Requested-With XMLHttpRequest} -sessions $::GUEST]]]
+  set b [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/model} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id Unknown0001} -sessions $::GUEST]]]
+  list [status $a] [status $b] [llength [lsearch -all -inline -glob [dict get $a rega_calls] *EnumIDs()*]] [llength [lsearch -all -inline -glob [dict get $b rega_calls] *ID_ROOMS*]]
+} -result {401 401 0 0}
+
+test sp044-14 {SP025 NFR10 [V2]: limit 0 or above 500, a malformed limit/offset or an unknown section is HTTP 422 with error 403 'invalid argument (<name>)'} -body {
+  set out {}
+  foreach q {limit=0 limit=501 limit=abc offset=-1 sections=nothing limit= } {
+    set r [model $q]
+    lappend out "[status $r] [lindex [err $r] 1]"
+  }
+  set out
+} -result {{422 invalid argument (limit)} {422 invalid argument (limit)} {422 invalid argument (limit)} {422 invalid argument (offset)} {422 invalid argument (sections)} {422 invalid argument (limit)}}
+
+test sp044-15 {the maximum limit 500 is accepted; the route is GET only (POST is 405 with Allow: GET)} -body {
+  set a [model "sections=rooms&limit=500" -rega [list [list {*ID_ROOMS*EnumUsedIDs()*} {}]]]
+  set b [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method POST -contenttype application/json -setenv {REQUEST_URI /api/v2/model} -header {X-Requested-With XMLHttpRequest} -sessions $::GUEST]]]
+  regexp {Allow: ([^\r\n]+)} [dict get $b headers] -> allow
+  list [status $a] [status $b] $allow
+} -result {200 405 GET}
+
+cleanupTests

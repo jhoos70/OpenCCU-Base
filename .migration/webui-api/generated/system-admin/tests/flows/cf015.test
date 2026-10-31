@@ -1,0 +1,88 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF015 SafeMode.enter and RecoveryMode.enter (flow-model.md#cf015, incl. the re-baseline
+# addition): ADMIN call -> flag file (write-then-rename) -> rega system.Save() -> background reboot
+# -> true. Failures before the reboot end the call without a reboot.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+set CAND only:dispatcher,security-session,system-admin
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::ADMIN {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc saves {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *system.Save()* $c]} { incr n } }
+  return $n
+}
+set S {_session_id_ AbCdEf1234}
+set REBOOT {/sbin/reboot -d 2 2>/dev/null >/dev/null &}
+
+test cf015-1 {SafeMode steps 2-5: flag file '1' (atomic), system.Save() once, background reboot, true} -body {
+  set fs [mock::fs::create]
+  set r [call SafeMode.enter $S -fs $fs]
+  set flag MISSING
+  if {[file exists [file join $fs etc config safemode]]} { set flag [mock::fs::read $fs etc/config/safemode] }
+  set left [llength [glob -nocomplain -directory [file join $fs etc config] *.tmp]]
+  mock::fs::destroy $fs
+  list [result $r] $flag [saves $r] [dict get $r exec_calls] $left
+} -result [list true "1\n" 1 [list $REBOOT] 0]
+
+test cf015-2 {SafeMode error path: /etc/config not writable - error 200, no reboot, no system.Save()} -constraints unixNotRoot -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/InterfacesList.xml "<interfaces/>"
+  file attributes [file join $fs etc config] -permissions 0555
+  set r [call SafeMode.enter $S -fs $fs -interfaces 0]
+  file attributes [file join $fs etc config] -permissions 0755
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] [llength [dict get $r exec_calls]] [saves $r]
+} -result {200 0 0}
+
+test cf015-3 {RecoveryMode steps 2-6: PLATFORM from /VERSION, system.Save(), flag /usr/local/.recoveryMode, background reboot, true} -body {
+  set fs [mock::fs::create]
+  set r [call RecoveryMode.enter $S -fs $fs -files {VERSION "PLATFORM=rpi4\n"}]
+  set flag MISSING
+  if {[file exists [file join $fs usr local .recoveryMode]]} { set flag [mock::fs::read $fs usr/local/.recoveryMode] }
+  mock::fs::destroy $fs
+  list [result $r] $flag [saves $r] [dict get $r exec_calls]
+} -result [list true "1\n" 1 [list $REBOOT]]
+
+test cf015-4 {RecoveryMode errors: no PLATFORM 500, oci/lxc 501 - nothing saved, written or rebooted} -body {
+  set fs [mock::fs::create]
+  set a [call RecoveryMode.enter $S -fs $fs]
+  set b [call RecoveryMode.enter $S -fs $fs -files {VERSION "PLATFORM=oci\n"}]
+  set out [list [lindex [err $a] 0] [lindex [err $b] 0] [expr {[saves $a] + [saves $b]}] [expr {[llength [dict get $a exec_calls]] + [llength [dict get $b exec_calls]]}] [file exists [file join $fs usr local .recoveryMode]]]
+  mock::fs::destroy $fs
+  set out
+} -result {500 501 0 0 0}
+
+test cf015-5 {RecoveryMode errors: Save fails -> 500 no flag; reboot fails -> flag removed and 500} -body {
+  set fs [mock::fs::create]
+  set a [call RecoveryMode.enter $S -fs $fs -files {VERSION "PLATFORM=rpi4\n"} -regafail {{*system.Save()*}}]
+  set flagA [file exists [file join $fs usr local .recoveryMode]]
+  set b [call RecoveryMode.enter $S -fs $fs -files {VERSION "PLATFORM=rpi4\n"} -execfail {{*reboot* boom}}]
+  set flagB [file exists [file join $fs usr local .recoveryMode]]
+  mock::fs::destroy $fs
+  list [lindex [err $a] 0] $flagA [lindex [err $b] 0] $flagB
+} -result {500 0 500 0}
+
+test cf015-6 {error path: a non-ADMIN session is denied (400) before anything is written; no request data reaches the command line} -body {
+  set fs [mock::fs::create]
+  set r [call SafeMode.enter [list _session_id_ AbCdEf1234 x {$(reboot)}] -fs $fs -sessions {{AbCdEf1234 2 1 U}}]
+  set flag [file exists [file join $fs etc config safemode]]
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $flag [llength [dict get $r exec_calls]]
+} -result {400 0 0}
+
+cleanupTests

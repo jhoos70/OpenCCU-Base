@@ -1,0 +1,56 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC013 rega-model -> interface-gateway: Device.hasLinksOrPrograms resolves the interface of the
+# device from INTERFACE_LIST (resolved lazily by the dispatcher) and calls getLinks /
+# getDeviceDescription on its URL. Request: interface = name in INTERFACE_LIST, address. Response:
+# links array<struct>. XML-RPC failures are mapped (501-507|599); an unknown interface is an
+# internal error 200 'internal error (ref: <cid>)' (no errorInfo).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model,interface-gateway
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc linkrega {iface} {
+  return [list {*ChnDPUsageCount* false} {*ChnLinkCount* true} [list {*Write(dom.GetObject(device.Interface()))*} $iface] \
+    {*Write(device.Address())* NEQ1} {*channel.Address()#* {NEQ1:0 NEQ1:1}}]
+}
+set S {_session_id_ AbCdEf1234 id 1234}
+
+test ic013-1 {the interface name of the device is resolved through INTERFACE_LIST: the XML-RPC calls go to the URL of that interface} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega [linkrega BidCos-RF] -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER NEQ2:1}}} {getDeviceDescription {DIRECTION 1}}}]
+  list [result $r] [lsort -unique [lmap c [dict get $r xmlrpc_calls] {lindex $c 0}]]
+} -result {true xmlrpc_bin://127.0.0.1:2001}
+
+test ic013-2 {INTERFACE_LIST is resolved lazily: the interface list is read for this method} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/InterfacesList.xml "<interfaces><ipc><name>BidCos-RF</name><url>xmlrpc_bin://127.0.0.1:2001</url><info>x</info></ipc></interfaces>"
+  call Device.hasLinksOrPrograms $S -rega [linkrega BidCos-RF] -fs $fs -interfaces 0 -xmlrpc {{getLinks {}}}
+  set cached [file exists [file join $fs var tmp api_ipc.cache]]
+  mock::fs::destroy $fs
+  set cached
+} -result 1
+
+test ic013-3 {an XML-RPC fault is answered with the mapped status and not with the fault text (hasLinksOrPrograms fails closed: internal error)} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega [linkrega BidCos-RF] -fault {{getLinks -2 secret-text}}]
+  list [string match *secret-text* [dict get $r body]] [string match *errorInfo* [dict get $r body]]
+} -result {0 0}
+
+test ic013-4 {an interface that is not in the table is the generic error 200 with a correlation id - no errorInfo and no 'ifaceList' internals in the answer} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega [linkrega Unknown-Iface]]
+  lassign [err $r] code msg
+  list $code [regexp {^internal error \(ref: [0-9a-f]{16}\)$} $msg] [string match *ifaceList* [dict get $r body]]
+} -result {200 1 0}
+
+cleanupTests

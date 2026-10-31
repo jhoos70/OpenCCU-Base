@@ -1,0 +1,104 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP013 - config-tool (non-central) mode comes from the explicit flag config_tool_mode of
+# api/apiconfig.conf, never from DOCUMENT_ROOT: contracts/behavioral-contracts.json#SP013
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/syslog.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/apiconfig.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:dispatcher {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc flat {r} { return [join [lines $r] " "] }
+
+test sp013-0 {the staged library and the default configuration file exist} -body {
+  list [file exists [file join $gen dispatcher eq3 apiconfig.tcl]] [file exists [file join $gen dispatcher apiconfig.conf]]
+} -result {1 1}
+
+test sp013-1 {acceptance[1] [TARGET]: with the shipped apiconfig.conf (and no flag) central is true, whatever DOCUMENT_ROOT is} -body {
+  set out {}
+  foreach dr {/www/ /www /www// /opt/cfg/ {}} {
+    lappend out [flat [drv "
+      set ::env(DOCUMENT_ROOT) {$dr}
+      apiconfig_load apiconfig.conf
+      puts \[apiconfig_central\]
+    "]]
+  }
+  set out
+} -result {true true true true true}
+
+test sp013-2 {the shipped defaults preserve v1: all flags false and the BD-09 limits} -body {
+  flat [drv {
+    apiconfig_load apiconfig.conf
+    foreach k {strict_mode config_tool_mode v2_enabled cookie_mode rate_limit sid_shape_strict batch_limit per_sid_limit per_sid_window_seconds login_ip_limit login_ip_window_seconds} {
+      lappend out $API_CONFIG($k)
+    }
+    puts $out
+  }]
+} -result {false false false false false false 20 60 10 10 60}
+
+test sp013-3 {acceptance[2] [TARGET]: config_tool_mode true gives central=false and a per-request syslog line is written by the privilege bypass} -body {
+  set r [drv {
+    apiconfig_load /tmp/cfg.conf
+    puts [apiconfig_central]
+    puts [apiconfig_flag config_tool_mode]
+  } -files {tmp/cfg.conf "array set API_CONFIG {config_tool_mode true}\n"}]
+  lines $r
+} -result {false 1}
+
+test sp013-4 {acceptance[1],[2]: only the literal value true selects the bypass (yes, 1, on, TRUEISH keep central=true; TRUE is accepted)} -body {
+  set out {}
+  foreach v {yes 1 on TRUEISH "" false TRUE} {
+    set r [drv "
+      apiconfig_load /tmp/cfg.conf
+      puts \[apiconfig_central\]
+    " -files [list tmp/cfg.conf "array set API_CONFIG {config_tool_mode {$v}}\n"]]
+    lappend out [lindex [lines $r] 0]
+  }
+  set out
+} -result {true true true true true true false}
+
+test sp013-5 {NFR3: a missing config file gives the defaults} -body {
+  flat [drv {
+    apiconfig_load /tmp/does-not-exist.conf
+    puts "[apiconfig_central] $API_CONFIG(strict_mode) $API_CONFIG(rate_limit) $API_CONFIG(v2_enabled)"
+  }]
+} -result {true false false false}
+
+test sp013-6 {NFR3: an unreadable or malformed config file gives the defaults and one syslog line with the correlation id} -body {
+  set bad "array set API_CONFIG [format %c 123]config_tool_mode true\n"
+  set r [drv {
+    apiconfig_load /tmp/bad.conf
+    puts "[apiconfig_central] $API_CONFIG(rate_limit)"
+    puts [llength $::MOCK_SYSLOG]
+  } -files [list tmp/bad.conf $bad]]
+  list [lindex [lines $r] 0] [llength [dict get $r syslog]] [string match {*cid=*apiconfig*} [lindex [dict get $r syslog] 0]]
+} -result {{true false} 1 1}
+
+test sp013-7 {a config file cannot execute arbitrary commands beyond setting API_CONFIG keys (unknown commands are ignored, defaults stay)} -body {
+  set r [drv {
+    apiconfig_load /tmp/evil.conf
+    puts "[apiconfig_central] [file exists /tmp/pwned]"
+  } -files {tmp/evil.conf "file mkdir /tmp/pwned\narray set API_CONFIG {rate_limit true}\n"}]
+  lines $r
+} -result {{true 0}}
+
+test sp013-8 {acceptance[0]: with BIDCOS_SERVICE set the interface list exposes a 'default' interface (ipc.tcl)} -body {
+  set r [golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/ipc.tcl]
+    array set I [ipc_getInterfaces]
+    puts [lsort [array names I]]
+    array set d $I(default)
+    puts "$d(PORT) $d(URL)"
+  } -candidate only:dispatcher -setenv {BIDCOS_SERVICE xmlrpc_bin://127.0.0.1:2001}]
+  lines $r
+} -result {{BidCos-RF default} {2001 xmlrpc_bin://127.0.0.1:2001}}
+
+cleanupTests

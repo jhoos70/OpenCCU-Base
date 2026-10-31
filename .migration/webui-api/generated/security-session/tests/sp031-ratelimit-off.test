@@ -1,0 +1,62 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP031 acceptance[13] and NFR8: with the default configuration (rate_limit=false, strict_mode=false)
+# on the v1 path the per-IP login limiter is skipped entirely: no 429, the unchanged v1 outcome for
+# every attempt, no file access under /tmp/webui-ratelimit/. The test requires the staged limiter
+# library (the gate), so it fails until the configuration gate exists.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set T0 1700000000
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc login {fs addr t} {
+  return [golden::call Session.login {username u password p} -candidate only:security-session -sessions {} -fs $fs \
+    -remote_addr $addr -now $t -http {{{HTTP/1.1 200 OK} {}}}]
+}
+
+test rloff-0 {the staged limiter library exists (the gate lives in it)} -body {
+  file exists [file join $gen security-session eq3 ratelimit.tcl]
+} -result 1
+
+test rloff-1 {default configuration: ratelimit::enabled is false and login_ip_check returns {0 0} without touching the file system} -body {
+  set fs [mock::fs::create]
+  set r [golden::tcl {
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    source [file join $env(DOCUMENT_ROOT) api/eq3/ratelimit.tcl]
+    puts [ratelimit::enabled]
+    for {set i 0} {$i < 100} {incr i} { set last [ratelimit::login_ip_check 192.0.2.10] }
+    puts $last
+  } -candidate only:security-session -fs $fs -now $T0]
+  set dir [file exists [file join $fs tmp webui-ratelimit]]
+  mock::fs::destroy $fs
+  list [split [string trim [dict get $r stdout]] \n] $dir
+} -result [list {0 {0 0}} 0]
+
+test rloff-2 {default configuration: the 11th and the 100th login from 192.0.2.10 within 60 s return the unchanged v1 outcome, never 429, no counter file} -body {
+  set fs [mock::fs::create]
+  set codes {}
+  for {set i 0} {$i < 100} {incr i} { lappend codes [lindex [err [login $fs 192.0.2.10 [expr {$T0 + $i % 50}]]] 0] }
+  set dir [file exists [file join $fs tmp webui-ratelimit]]
+  mock::fs::destroy $fs
+  list [lsort -unique $codes] $dir
+} -result {501 0}
+
+test rloff-3 {rate_limit=false explicitly in apiconfig.conf behaves like the default} -setup {
+  set f [file join [golden::root only:security-session] api apiconfig.conf]
+  set fd [open $f w]; puts $fd {array set API_CONFIG {rate_limit false strict_mode false}}; close $fd
+} -body {
+  set fs [mock::fs::create]
+  set codes {}
+  for {set i 0} {$i < 15} {incr i} { lappend codes [lindex [err [login $fs 192.0.2.10 $T0]] 0] }
+  set dir [file exists [file join $fs tmp webui-ratelimit]]
+  mock::fs::destroy $fs
+  list [lsort -unique $codes] $dir
+} -cleanup { file delete -force $f } -result {501 0}
+
+cleanupTests

@@ -1,0 +1,163 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP038 - security configuration (security level, authentication, HTTPS redirect, SNMP, flag files):
+# contracts/behavioral-contracts.json#SP038
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER {{AbCdEf1234 2 1000 User}}
+# stand-ins for the CCU libraries /lib/libsecuritylevel.tcl and /lib/libfirewall.tcl; calls are logged to /tmp/lib.log
+set SECLIB {
+  proc lg {s} { set fd [open /tmp/lib.log a]; puts $fd $s; close $fd }
+  proc SEC_setsecuritylevel {l} { lg "setlevel $l"; return 1 }
+  proc SEC_getsecuritylevel {} { return MEDIUM }
+  proc SEC_setAuthEnabled {b} { lg "setauth $b"; return 1 }
+  proc SEC_getAuthEnabled {} { return 1 }
+}
+set FWLIB {
+  proc lg {s} { set fd [open /tmp/lib.log a]; puts $fd $s; close $fd }
+  proc Firewall_setLoggingEnabled {b} { lg "logging $b" }
+  proc Firewall_loadConfiguration {} { lg load }
+  proc Firewall_set_service_access {s m} { lg "access $s $m" }
+  proc Firewall_saveConfiguration {} { lg save }
+  proc Firewall_configureFirewall {} { lg configure }
+}
+proc libfiles {} { return [list lib/libsecuritylevel.tcl $::SECLIB lib/libfirewall.tcl $::FWLIB] }
+proc liblog {fs} { if {[file exists [file join $fs tmp lib.log]]} { return [string trim [mock::fs::read $fs tmp/lib.log]] }; return "" }
+
+test sp038-0 {the staged method scripts of SP038 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {setsecuritylevel getauthenabled gethttpsredirectenabled getsecuritylevel getsnmpenabled setauthenabled setfirewallconfigured sethttpsredirectenabled setsecurityhint setsnmpenabled setuserackinstallwizard} {
+    set p [file join $gen system-admin methods ccu $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp038-1 {CCU.setSecurityLevel: LOW/MEDIUM/HIGH (case-sensitive) call SEC_setsecuritylevel and answer true, anything else is false and changes nothing} -body {
+  set fs [mock::fs::create]
+  set out {}
+  foreach lvl {LOW MEDIUM HIGH low EXTREME {}} { lappend out [result [call CCU.setSecurityLevel [list _session_id_ AbCdEf1234 level $lvl] -fs $fs -files [libfiles]]] }
+  set log [liblog $fs]
+  mock::fs::destroy $fs
+  list $out $log
+} -result [list {true true true false false false} "setlevel LOW\nsetlevel MEDIUM\nsetlevel HIGH"]
+
+test sp038-2 {CCU.getSecurityLevel returns SEC_getsecuritylevel as a JSON string} -body {
+  result [call CCU.getSecurityLevel $S -files [libfiles]]
+} -result {"MEDIUM"}
+
+test sp038-3 {CCU.setAuthEnabled: 'true'/'false' call SEC_setAuthEnabled, any other value is false; getAuthEnabled answers 1/0} -body {
+  set fs [mock::fs::create]
+  set out {}
+  foreach v {true false 1 TRUE} { lappend out [result [call CCU.setAuthEnabled [list _session_id_ AbCdEf1234 enabled $v] -fs $fs -files [libfiles]]] }
+  set log [liblog $fs]
+  mock::fs::destroy $fs
+  list $out $log [result [call CCU.getAuthEnabled $S -files [libfiles]]]
+} -result [list {true true false false} "setauth true\nsetauth false" 1]
+
+test sp038-4 {CCU.getHttpsRedirectEnabled: 1/0 by the existence of /etc/config/httpsRedirectEnabled} -body {
+  set fs [mock::fs::create]
+  set a [result [call CCU.getHttpsRedirectEnabled $S -fs $fs]]
+  mock::fs::write $fs etc/config/httpsRedirectEnabled ""
+  set b [result [call CCU.getHttpsRedirectEnabled $S -fs $fs]]
+  mock::fs::destroy $fs
+  list $a $b
+} -result {0 1}
+
+test sp038-5 {[TARGET] CCU.setHttpsRedirectEnabled: 'true' touches, 'false' removes (both answer true, no error 200), any other value is false and touches nothing} -body {
+  set a [call CCU.setHttpsRedirectEnabled {_session_id_ AbCdEf1234 enabled true}]
+  set b [call CCU.setHttpsRedirectEnabled {_session_id_ AbCdEf1234 enabled false}]
+  set c [call CCU.setHttpsRedirectEnabled {_session_id_ AbCdEf1234 enabled 1}]
+  list [result $a] [dict get $a exec_calls] [result $b] [dict get $b exec_calls] [result $c] [dict get $c exec_calls]
+} -result [list true [list {touch -- /etc/config/httpsRedirectEnabled}] true [list {rm -- /etc/config/httpsRedirectEnabled}] false {}]
+
+test sp038-6 {[TARGET] a failing touch/rm (read-only /etc/config) answers false and is logged to the syslog} -body {
+  set a [call CCU.setHttpsRedirectEnabled {_session_id_ AbCdEf1234 enabled true} -execfail {{{touch*} {Read-only file system}}}]
+  set b [call CCU.setHttpsRedirectEnabled {_session_id_ AbCdEf1234 enabled false} -execfail {{{rm*} {Read-only file system}}}]
+  set n 0
+  foreach r [list $a $b] { foreach s [dict get $r syslog] { if {[regexp {cid=[0-9a-f]{16} method=CCU.setHttpsRedirectEnabled} $s]} { incr n } } }
+  list [result $a] [result $b] $n
+} -result {false false 2}
+
+test sp038-7 {CCU.setSNMPEnabled true: setSNMPUser.sh <usr> <pass> runs (exec list), SNMP access full, config saved and applied, {"msg":"noError"}} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSNMPEnabled [concat $S {enabled true usr snmpuser pass {pa ss;1}}] -fs $fs -files [libfiles]]
+  set log [liblog $fs]
+  mock::fs::destroy $fs
+  list [result $r] [lindex [dict get $r exec_calls] 0] [split $log \n]
+} -result [list {{"msg" : "noError"}} {/bin/setSNMPUser.sh snmpuser {pa ss;1} >/dev/null} {{logging 1} load {access SNMP full} save configure}]
+
+test sp038-8 {CCU.setSNMPEnabled false: unsetSNMPUser.sh, access none} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSNMPEnabled [concat $S {enabled false usr u pass p}] -fs $fs -files [libfiles]]
+  set log [liblog $fs]
+  mock::fs::destroy $fs
+  list [result $r] [lindex [dict get $r exec_calls] 0] [lindex [split $log \n] 2]
+} -result [list {{"msg" : "noError"}} {/bin/unsetSNMPUser.sh >/dev/null} {access SNMP none}]
+
+test sp038-9 {CCU.setSNMPEnabled: a failing helper changes the access in memory only - no save/apply, the error text is the msg} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSNMPEnabled [concat $S {enabled true usr u pass p}] -fs $fs -files [libfiles] -execfail {{{/bin/setSNMPUser.sh*} {user creation failed}}}]
+  set log [liblog $fs]
+  mock::fs::destroy $fs
+  list [result $r] [split $log \n]
+} -result [list {{"msg" : "user creation failed"}} {{logging 1} load {access SNMP full}}]
+
+test sp038-10 {CCU.setSNMPEnabled with a non-boolean 'enabled' is the v1 internal error 200} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSNMPEnabled [concat $S {enabled maybe usr u pass p}] -fs $fs -files [libfiles]]
+  mock::fs::destroy $fs
+  lindex [err $r] 0
+} -result 200
+
+test sp038-11 {CCU.setSecurityHint (USER) and CCU.setFirewallConfigured (ADMIN) touch their flag files and answer true; a GUEST is denied for setSecurityHint} -body {
+  set a [call CCU.setSecurityHint $S -sessions $USER]
+  set b [call CCU.setFirewallConfigured $S]
+  set c [call CCU.setSecurityHint $S -sessions $GUEST]
+  list [result $a] [lindex [dict get $a exec_calls] 0] [result $b] [lindex [dict get $b exec_calls] 0] [lindex [err $c] 0]
+} -result {true {touch -- /etc/config/userAckSecurityHint} true {touch -- /etc/config/firewallConfigured} 400}
+
+test sp038-12 {CCU.setUserAckInstallWizard (GUEST): touch userAckInstallWizardId_<uid>, delete the legacy file if legacyName matches ^[!-.0-~]+$; true} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/userprofiles/userAckInstallWizard_oldname x
+  mock::fs::write $fs etc/config/userprofiles/userAckInstallWizard_bad/name x
+  set a [call CCU.setUserAckInstallWizard [concat $S {legacyName oldname}] -sessions $GUEST -fs $fs]
+  set gone [expr {![file exists [file join $fs etc config userprofiles userAckInstallWizard_oldname]]}]
+  set b [call CCU.setUserAckInstallWizard [concat $S {legacyName bad/name}] -sessions $GUEST -fs $fs]
+  set kept [file exists [file join $fs etc config userprofiles userAckInstallWizard_bad name]]
+  mock::fs::destroy $fs
+  list [result $a] [lindex [dict get $a exec_calls] 0] $gone [result $b] $kept
+} -result {true {touch /etc/config/userprofiles/userAckInstallWizardId_1000} 1 true 1}
+
+test sp038-13 {CCU.setUserAckInstallWizard: no numeric user id - nothing is touched, true is still returned} -body {
+  set r [call CCU.setUserAckInstallWizard $S -sessions $GUEST -regafail {*StrValueByIndex(";",?0)*}]
+  list [result $r] [dict get $r exec_calls]
+} -result {true {}}
+
+test sp038-14 {CCU.getSNMPEnabled keeps the v1 result 1 whenever snmpd-ccu3.conf exists (even empty)} -body {
+  set fs [mock::fs::create]
+  set a [result [call CCU.getSNMPEnabled $S -fs $fs]]
+  mock::fs::write $fs etc/config/snmp/snmpd-ccu3.conf ""
+  set b [result [call CCU.getSNMPEnabled $S -fs $fs]]
+  mock::fs::destroy $fs
+  list $a $b
+} -result {0 1}
+
+cleanupTests

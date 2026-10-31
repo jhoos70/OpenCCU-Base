@@ -1,0 +1,15 @@
+!##
+!# Checks whether a session id is valid (v1 frozen, staged SP007). The id is injected as the
+!# variable _session_id_ by hmscript_runFromFile; the answer is the literal true or false.
+!##
+
+var result = false;
+
+if (system.IsVar("_session_id_"))
+{
+	var id = system.GetVar("_session_id_");
+	var s  = system.GetSessionVarStr(id);
+	if (s) { result = true; }
+}
+
+Write(result);

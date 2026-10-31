@@ -1,0 +1,127 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP001 acceptance[13], [15], [16] and NFR9, NFR10: the per-sid request limiter on the v1 path
+# /api/homematic.cgi (rate_limit=true: per_sid_limit 60 per per_sid_window_seconds 10). The limiter
+# runs after the parse (sid known) and before lookup, privilege check (getupl.hms) and script.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set T0 1700000000
+set SESS {{AbCdEf1234 8 1000 Admin} {ZyXwVu9876 8 1001 Admin}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc req {sid fs t args} {
+  set body "\{\"method\":\"Device.listAll\",\"params\":\{\"_session_id_\":\"$sid\",\"interface\":\"BidCos-RF\"\},\"id\":1\}"
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::SESS -fs $fs -now $t {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc getupls {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *StrValueByIndex* $c]} { incr n } }
+  return $n
+}
+proc seed {fs sid stamps} {
+  set d [file join $fs tmp webui-ratelimit]
+  file mkdir $d
+  set fd [open [file join $d sid-$sid] w]; puts $fd [join $stamps \n]; close $fd
+}
+proc stamps {fs sid} {
+  set f [file join $fs tmp webui-ratelimit sid-$sid]
+  if {![file exists $f]} { return {} }
+  set fd [open $f r]; set c [string trim [read $fd]]; close $fd
+  return [split $c \n]
+}
+
+test rl1-1 {rate_limit=true: requests 1-60 with _session_id_=AbCdEf1234 within 10 s are processed, the 61st is error 429 "rate limit exceeded" with HTTP 200, no getupl.hms, no script} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  set ok 0
+  for {set i 0} {$i < 60} {incr i} {
+    set r [req AbCdEf1234 $fs [expr {$T0 + ($i / 10)}]]
+    if {[err $r] eq "none"} { incr ok }
+  }
+  set r [req AbCdEf1234 $fs [expr {$T0 + 6}]]
+  list $ok [err $r] [dict get $r rega_calls] [regexp -nocase {^Status:|Retry-After} [dict get $r headers]]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result [list 60 {429 {rate limit exceeded}} {} 0]
+
+test rl1-2 {the limited request executes neither getupl.hms nor the method script (counter seeded at 60)} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set r [req AbCdEf1234 $fs [expr {$T0 + 3}]]
+  list [err $r] [getupls $r] [llength [dict get $r rega_calls]]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {{429 {rate limit exceeded}} 0 0}
+
+test rl1-3 {acceptance[15]: another sid (ZyXwVu9876) and a sid-less system.listMethods are unaffected and the sid-less request is not counted} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set other [req ZyXwVu9876 $fs [expr {$T0 + 1}]]
+  set none [golden::call_raw {{"method":"system.listMethods","params":{},"id":1}} [golden::prepare [list -candidate $::CAND -fs $fs -now [expr {$T0 + 1}]]]]
+  list [err $other] [string match {*"error": null*} [dict get $none body]] [llength [stamps $fs ZyXwVu9876]] \
+    [lsort [glob -nocomplain -tails -directory [file join $fs tmp webui-ratelimit] *]]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {none 1 1 {sid-AbCdEf1234 sid-ZyXwVu9876}}
+
+test rl1-4 {acceptance[16]: reached 60 at t=0, the request at t=11 s restarts the counter at 1} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set r [req AbCdEf1234 $fs [expr {$T0 + 11}]]
+  list [err $r] [stamps $fs AbCdEf1234]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result [list none [list [expr {$T0 + 11}]]]
+
+test rl1-5 {the window slides: 59 old and 1 recent stamp, the request after the old ones expired is counted 2nd} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [concat [lrepeat 59 $T0] [expr {$T0 + 9}]]
+} -body {
+  set r [req AbCdEf1234 $fs [expr {$T0 + 12}]]
+  list [err $r] [llength [stamps $fs AbCdEf1234]]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {none 2}
+
+test rl1-6 {strict_mode=true activates the limiter although rate_limit is false} -setup {
+  setconf {array set API_CONFIG {strict_mode true rate_limit false}}
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set r [req AbCdEf1234 $fs [expr {$T0 + 1}] -header {X-Requested-With XMLHttpRequest}]
+  err $r
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {429 {rate limit exceeded}}
+
+test rl1-7 {the counter file name is sid-<sid with characters outside [A-Za-z0-9._-] mapped to '_', at most 64 characters>} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+} -body {
+  set long [string repeat a 80]
+  req "@Ab/..\$x@" $fs $T0
+  req $long $fs $T0
+  lsort [lmap f [glob -tails -directory [file join $fs tmp webui-ratelimit] *] { expr {[string length $f] > 64 ? "long" : $f} }]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {long sid-_Ab_.._x_}
+
+test rl1-8 {fail-open: an unavailable counter store processes the request unthrottled and writes one syslog line with the correlation id} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  # /tmp/webui-ratelimit is a plain file, so the store cannot be created
+  set fd [open [file join $fs tmp webui-ratelimit] w]; puts $fd x; close $fd
+} -body {
+  set r [req AbCdEf1234 $fs $T0]
+  set lines {}
+  foreach s [dict get $r syslog] { if {[string match {*rate limiter unavailable*} $s]} { lappend lines $s } }
+  list [err $r] [llength $lines] [regexp {cid=[0-9a-f]{16}} [lindex $lines 0]]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {none 1 1}
+
+cleanupTests

@@ -1,0 +1,103 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP027 - program/link usage and channel facts: contracts/behavioral-contracts.json#SP027
+# (Room/Subsection.listProgramIds keep the v1 defect here; the working de-duplication is SP043)
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:rega-model {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set S {_session_id_ AbCdEf1234 id 1234}
+
+test sp027-0 {the staged method scripts of SP027 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {device/haslinksorprograms channel/getchanneltype channel/getname channel/getvalue channel/hasprogramids channel/listprogramids device/hasprograms device/listprogramids room/listprogramids subsection/listprogramids} {
+    set p [file join $gen rega-model methods {*}[split $f /]].tcl
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp027-1 {Device.listProgramIds (GUEST): ids are de-duplicated and returned as a string array} -body {
+  result [call Device.listProgramIds $S -sessions $GUEST -rega {{*ChnEnumDPUsagePrograms* {{1234} {1234} {5678}}}}]
+} -result {["1234","5678"]}
+
+test sp027-2 {Device.hasPrograms (ADMIN): true iff a channel has ChnDPUsageCount() > 0} -body {
+  list [result [call Device.hasPrograms $S -rega {{*ChnDPUsageCount* true}}]] [result [call Device.hasPrograms $S -rega {{*ChnDPUsageCount* false}}]] [result [call Device.hasPrograms $S]]
+} -result {true false false}
+
+proc linkrega {args} {
+  return [list {*ChnDPUsageCount* false} {*ChnLinkCount* true} {*Write(dom.GetObject(device.Interface()))* BidCos-RF} \
+    {*Write(device.Address())* NEQ1} {*channel.Address()#* {NEQ1:0 NEQ1:1}}]
+}
+
+test sp027-3a {Device.hasLinksOrPrograms: used in programs -> true without any XML-RPC call} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega {{*ChnDPUsageCount* true}}]
+  list [result $r] [llength [dict get $r xmlrpc_calls]]
+} -result {true 0}
+
+test sp027-3b {Device.hasLinksOrPrograms: an external link peer (other parent device) -> true; getLinks/getDeviceDescription per channel > 0} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega [linkrega] \
+    -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER NEQ2:1}}} {getDeviceDescription {DIRECTION 1}}}]
+  list [result $r] [lmap c [dict get $r xmlrpc_calls] {lindex $c 1}]
+} -result {true {getLinks getDeviceDescription}}
+
+test sp027-3c {Device.hasLinksOrPrograms: only internal links (same parent) or '@' peers -> false} -body {
+  set a [call Device.hasLinksOrPrograms $S -rega [linkrega] -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER NEQ1:2}}} {getDeviceDescription {DIRECTION 1}}}]
+  set b [call Device.hasLinksOrPrograms $S -rega [linkrega] -xmlrpc {{getLinks {{SENDER NEQ1:1 RECEIVER @VIRTUAL:1}}} {getDeviceDescription {DIRECTION 1}}}]
+  list [result $a] [result $b]
+} -result {false false}
+
+test sp027-3d {[TARGET] a device on an interface outside BidCos-RF/BidCos-Wired/HmIP-RF/HmIP-Wired: sanitised 200 with a reference (no ifaceList text), the cause goes to the syslog} -body {
+  set r [call Device.hasLinksOrPrograms $S -rega [list {*ChnDPUsageCount* false} {*ChnLinkCount* true} {*Write(dom.GetObject(device.Interface()))* CUxD}]]
+  set e [err $r]
+  list [lindex $e 0] [regexp {^internal error \(ref: [0-9a-f]{16}\)$} [lindex $e 1]] [string match *ifaceList* [dict get $r stdout]] \
+    [regexp {cid=[0-9a-f]{16} .*ifaceList} [lindex [dict get $r syslog] end]]
+} -result {200 1 0 1}
+
+test sp027-4 {Channel.hasProgramIds (GUEST): raw true/false from the script} -body {
+  list [result [call Channel.hasProgramIds $S -sessions $GUEST -rega {{*ChnEnumDPUsagePrograms* true}}]] [result [call Channel.hasProgramIds $S -sessions $GUEST -rega {{*ChnEnumDPUsagePrograms* false}}]]
+} -result {true false}
+
+test sp027-5 {Channel.listProgramIds (GUEST): the program ids as a string array} -body {
+  result [call Channel.listProgramIds $S -sessions $GUEST -rega {{*ChnEnumDPUsagePrograms* {{11} {22}}}}]
+} -result {["11","22"]}
+
+test sp027-6 {Channel.getName (ADMIN): the name of the channel with that address} -body {
+  set r [call Channel.getName {_session_id_ AbCdEf1234 address NEQ0123456:1} -rega {{*EnumEnabledVisibleIDs* Wohnzimmer}}]
+  list [result $r] [string match {*var address = "NEQ0123456:1";*} [lindex [dict get $r rega_calls] end]]
+} -result {{"Wohnzimmer"} 1}
+
+test sp027-7 {Channel.getValue and Channel.getChannelType (ADMIN) return the script output as a JSON string} -body {
+  list [result [call Channel.getValue $S -rega {{*obj.State()* 0.5}}]] [result [call Channel.getChannelType $S -rega {{*obj.HssType()* SWITCH}}]]
+} -result {{"0.5"} {"SWITCH"}}
+
+test sp027-8 {superseded by SP043 acceptance[6] [TARGET]: Room.listProgramIds and Subsection.listProgramIds no longer fail on the undefined command '-lrmdups' of v1 - they answer the de-duplicated ids} -body {
+  set a [call Room.listProgramIds $S -sessions $GUEST -rega {{*EnumUsedIDs* {{1234} {1234}}}}]
+  set b [call Subsection.listProgramIds $S -sessions $GUEST -rega {{*EnumUsedIDs* {{1234} {1234}}}}]
+  list [result $a] [result $b]
+} -result {{["1234"]} {["1234"]}}
+
+test sp027-9 {privilege levels hold: the ADMIN methods deny a GUEST session (400)} -body {
+  set out {}
+  foreach {m extra} {Device.hasPrograms {} Device.hasLinksOrPrograms {} Channel.getValue {} Channel.getChannelType {}} {
+    lappend out [lindex [err [call $m $S -sessions $GUEST]] 0]
+  }
+  lappend out [lindex [err [call Channel.getName {_session_id_ AbCdEf1234 address X} -sessions $GUEST]] 0]
+  set out
+} -result {400 400 400 400 400}
+
+cleanupTests

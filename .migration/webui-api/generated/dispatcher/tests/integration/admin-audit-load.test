@@ -1,0 +1,53 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP034 / BD-06 (T253x): the dispatcher sources the shared audit library eq3/admin_audit.tcl next
+# to the other eq3 libraries, so that the proc admin_audit exists when a system-admin method script
+# runs through the executor, and a script that only calls admin_audit emits its syslog line once.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+# private composed root (distinct candidate string) whose restartReGa script is replaced by a probe
+set CAND only:system-admin,dispatcher,security-session
+proc probe_root {} {
+  set api [file join [golden::root $::CAND] api]
+  set f [file join $api methods ccu restartReGa.tcl]
+  set fd [open $f w]
+  puts $fd "admin_audit \"probe action\"\njsonrpc_response true"
+  close $fd
+}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+
+test adminload-1 {homematic.cgi sources eq3/admin_audit.tcl with the other optional eq3 libraries} -body {
+  set fd [open [file join $gen dispatcher homematic.cgi] r]; set c [read $fd]; close $fd
+  set hit 0
+  foreach l [split $c "\n"] {
+    if {[string match "*foreach lib*privilege*" $l] && [string match "*admin_audit*" $l]} { set hit 1 }
+  }
+  set hit
+} -result 1
+
+test adminload-2 {a method script that only calls admin_audit runs and emits its syslog line exactly once} -setup {
+  probe_root
+} -body {
+  set r [call CCU.restartReGa {_session_id_ AbCdEf1234} -sessions $ADMIN -rega {{*GetSessionVarStr* 1000}}]
+  set n 0
+  foreach e [dict get $r syslog] {
+    set l [lindex $e end]
+    if {[regexp {cid=[0-9a-f]{16} method=CCU\.restartReGa uid=1000 action=probe action$} $l]} { incr n }
+  }
+  list [err $r] $n
+} -result {none 1}
+
+test adminload-3 {the library file ships with the security-session component} -body {
+  file exists [file join $gen security-session eq3 admin_audit.tcl]
+} -result 1
+
+cleanupTests

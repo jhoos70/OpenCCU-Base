@@ -1,0 +1,73 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP006 NFR and integration coverage (spec.json#SP006 non_functional_requirements[0..5]),
+# boundary and error cases, golden re-run of all 180 registry fixtures through the staged tree.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/json.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/jsonrpc.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/hmscript.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:security-session {*}$args] }
+
+test sp006-nfr0 {NFR0: two names that sanitize to the same identifier emit two 'var' declarations with that name} -body {
+  set r [drv {
+    array set args {}
+    set args(a-b) 1
+    set args(ab) 2
+    hmscript {Write(1);} args
+  }]
+  set s [lindex [dict get $r rega_calls] end]
+  llength [regexp -all -inline {var ab = } $s]
+} -result 2
+
+test sp006-nfr1 {NFR1: an extra param named like a script variable is declared before the script (the interpreter decides on the redeclaration)} -body {
+  set r [drv {
+    array set args {}
+    set args(id) evil
+    hmscript {var id = 1;} args
+  }]
+  set s [lindex [dict get $r rega_calls] end]
+  expr {[string first {var id = "evil";} $s] < [string first {var id = 1;} $s]}
+} -result 1
+
+test sp006-nfr3 {NFR3: hmscript_runInline does no injection} -body {
+  set r [drv { hmscript_runInline {Write(1);} }]
+  lindex [dict get $r rega_calls] end
+} -result {Write(1);}
+
+test sp006-nfr4 {NFR4: sourcing hmscript.tcl runs 'package require HomeMatic' unconditionally} -body {
+  set fd [open [file join $gen security-session eq3 hmscript.tcl] r]; set c [read $fd]; close $fd
+  regexp -line {^package require HomeMatic$} $c
+} -result 1
+
+test sp006-err1 {client text is never executed as script text: a value with a closing quote and Write() stays inside the string literal} -body {
+  set r [drv {
+    array set args {}
+    set args(v) "\";Write(\"pwned\");\""
+    hmscript {Write(v);} args
+  }]
+  set s [lindex [dict get $r rega_calls] end]
+  string first {var v = "\";Write(\"pwned\");\"";} $s
+} -result 0
+
+test sp006-err2 {the escaped prefix is exactly one escape pass: a value that already contains a backslash is not escaped twice} -body {
+  set r [drv {
+    array set args {}
+    set args(v) {a\b}
+    hmscript {X} args
+  }]
+  string first {var v = "a\\b";} [lindex [dict get $r rega_calls] end]
+} -result 0
+
+test sp006-golden {golden re-run: all 180 registry fixtures replay byte-identical through the staged security-session tree (hmscript, session methods, allow-list, limiter gate)} -body {
+  golden::compare_all -candidate only:security-session
+} -result {}
+
+cleanupTests

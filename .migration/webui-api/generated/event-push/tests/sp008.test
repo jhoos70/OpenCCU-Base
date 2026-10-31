@@ -1,0 +1,140 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP008 - per-session event queue library (eq3/event.tcl): contracts/behavioral-contracts.json#SP008
+# Subscribe/poll/unsubscribe (SP029) use the helpers tested here (event_reset_count,
+# event_queue_path, lock_tryget/lock_release, event_fire).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+set T0 1700000000
+set PRE {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/event.tcl]
+}
+proc drv {script args} { return [golden::tcl "$::PRE\n$script" -candidate only:event-push {*}$args] }
+proc out {r} { return [split [string trim [dict get $r stdout]] \n] }
+proc rd {fs rel} { if {[file exists [file join $fs {*}[split $rel /]]]} { return [mock::fs::read $fs $rel] }; return MISSING }
+
+test sp008-0 {the staged event library exists and is complete Tcl} -body {
+  set p [file join $gen event-push eq3 event.tcl]
+  if {![file exists $p]} { return missing }
+  set fd [open $p r]; set c [read $fd]; close $fd
+  info complete $c
+} -result 1
+
+test sp008-1 {event_fire appends '{TYPE <type> DATA <message>}' to the queue of every subscriber below the limit, increments EVENT_COUNT, rewrites the list} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA {EVENT_COUNT 0} BBB {EVENT_COUNT 63} CCC {EVENT_COUNT 64}]
+  drv {event_fire delete {"dev1"}} -fs $fs -now $T0
+  set a [rd $fs tmp/event/AAA]; set b [rd $fs tmp/event/BBB]; set c [rd $fs tmp/event/CCC]
+  array set l [rd $fs tmp/event/subscriber.list]
+  set counts [list [lindex $l(AAA) 1] [lindex $l(BBB) 1] [lindex $l(CCC) 1]]
+  mock::fs::destroy $fs
+  list $a $b $c $counts
+} -result [list "{TYPE delete DATA {\"dev1\"}}\n" "{TYPE delete DATA {\"dev1\"}}\n" MISSING {1 64 64}]
+
+test sp008-2 {sourcing the library creates /tmp/event and an empty subscriber list when it does not exist} -body {
+  set fs [mock::fs::create]
+  drv {puts ok} -fs $fs
+  set dir [file isdirectory [file join $fs tmp event]]
+  set list [rd $fs tmp/event/subscriber.list]
+  mock::fs::destroy $fs
+  list $dir $list
+} -result [list 1 ""]
+
+test sp008-3 {[TARGET] a subscriber at the limit queues again after event_reset_count (no permanent stall after 64 events)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA {EVENT_COUNT 64}]
+  drv {event_fire t1 1; event_reset_count AAA; event_fire t2 2} -fs $fs -now $T0
+  set q [rd $fs tmp/event/AAA]
+  array set l [rd $fs tmp/event/subscriber.list]
+  mock::fs::destroy $fs
+  list $q [lindex $l(AAA) 1]
+} -result [list "{TYPE t2 DATA 2}\n" 1]
+
+test sp008-4 {[TARGET] lock_tryget: 1 for the exclusive create, 0 while a fresh lock exists, a stale lock (older than event_lock_stale_seconds = 10) is reclaimed} -body {
+  set fs [mock::fs::create]
+  set r [drv {
+    set l /tmp/event/lock
+    puts [lock_tryget $l]
+    puts [lock_tryget $l]
+  } -fs $fs -now $T0]
+  set first [out $r]
+  set lockfile [file join $fs tmp event lock]
+  file mtime $lockfile [expr {$T0 - 11}]
+  set r2 [drv { puts [lock_tryget /tmp/event/lock] } -fs $fs -now $T0]
+  mock::fs::destroy $fs
+  list $first [out $r2]
+} -result {{1 0} 1}
+
+test sp008-5 {[TARGET] lock_release removes only a lock created by the same process} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/lock "424242"
+  drv {lock_release /tmp/event/lock} -fs $fs
+  set foreign [file exists [file join $fs tmp event lock]]
+  file delete -force [file join $fs tmp event lock]
+  drv {lock_tryget /tmp/event/lock; lock_release /tmp/event/lock} -fs $fs
+  set own [file exists [file join $fs tmp event lock]]
+  mock::fs::destroy $fs
+  list $foreign $own
+} -result {1 0}
+
+test sp008-6 {[TARGET] subscriber.list is rewritten write-then-rename: no temp file stays; an unwritable directory keeps the previous list byte-identical} -constraints unixNotRoot -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA {EVENT_COUNT 0}]
+  drv {event_fire t 1} -fs $fs -now $T0
+  set files [lsort [lmap f [glob -nocomplain -directory [file join $fs tmp event] *] {file tail $f}]]
+  set old [rd $fs tmp/event/subscriber.list]
+  file attributes [file join $fs tmp event] -permissions 0555
+  drv {event_fire t 2} -fs $fs -now $T0
+  file attributes [file join $fs tmp event] -permissions 0755
+  set same [expr {[rd $fs tmp/event/subscriber.list] eq $old}]
+  mock::fs::destroy $fs
+  list $files $same
+} -result {{AAA subscriber.list} 1}
+
+test sp008-7 {[TARGET] queue file names: only ^@?[A-Za-z0-9]{1,12}@?$ ids map to a path inside /tmp/event, everything else is refused} -body {
+  set r [drv {
+    foreach id {AbCdEf1234 @AbCdEf1234@ a ABCDEFGHIJKL ../etc/passwd a/b {} ABCDEFGHIJKLM {a b} . .. @@ a@b} { lappend res [list $id [event_queue_path $id]] }
+    foreach p $res { puts $p }
+  }]
+  out $r
+} -result {{AbCdEf1234 /tmp/event/AbCdEf1234} {@AbCdEf1234@ /tmp/event/@AbCdEf1234@} {a /tmp/event/a} {ABCDEFGHIJKL /tmp/event/ABCDEFGHIJKL} {../etc/passwd {}} {a/b {}} {{} {}} {ABCDEFGHIJKLM {}} {{a b} {}} {. {}} {.. {}} {@@ {}} {a@b {}}}
+
+test sp008-8 {[TARGET] event_fire never writes outside /tmp/event: invalid subscriber ids in the list are skipped} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list ../evil {EVENT_COUNT 0} GOOD {EVENT_COUNT 0}]
+  drv {event_fire t 1} -fs $fs -now $T0
+  set evil [file exists [file join $fs tmp evil]]
+  set good [rd $fs tmp/event/GOOD]
+  mock::fs::destroy $fs
+  list $evil $good
+} -result [list 0 "{TYPE t DATA 1}\n"]
+
+test sp008-9 {[TARGET] event_fire_string builds DATA with JSON string escaping: a device name with a quote or backslash yields valid JSON} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list AAA {EVENT_COUNT 0}]
+  drv {event_fire_string delete "a\"b\\c"} -fs $fs -now $T0
+  set q [rd $fs tmp/event/AAA]
+  mock::fs::destroy $fs
+  set ev [lindex [string trim $q] 0]
+  array set e $ev
+  set e(DATA)
+} -result {"a\"b\\c"}
+
+test sp008-10 {NFR1 [TARGET]: an internal error in event_fire goes to the syslog with the correlation id (not swallowed) and the lock is released} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list "[format %c 123]unbalanced"
+  set r [drv {event_fire t 1} -fs $fs -now $T0]
+  set n 0
+  foreach s [dict get $r syslog] { if {[regexp {cid=[0-9a-f]{16} method=event_fire} $s]} { incr n } }
+  set lock [file exists [file join $fs tmp event lock]]
+  mock::fs::destroy $fs
+  list $n $lock
+} -result {1 0}
+
+cleanupTests

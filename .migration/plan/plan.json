@@ -1,0 +1,143 @@
+{
+  "schema_version": "1.1",
+  "created_at": "09 Oct 2026 22:42:36",
+  "updated_at": "10 Oct 2026 11:22:27",
+  "features": [
+    {
+      "name": "webui-config-pages",
+      "path": "src/webui/www/config (excl. easymodes), www/pda, error, tools, upnp",
+      "summary": "cp_*/ic_* CGI pages and PDA UI",
+      "status": "open"
+    },
+    {
+      "name": "webui-shell-build",
+      "path": "src/webui (www/webui, www_source, bootstrap, scripts, CfgTool)",
+      "summary": "WebUI app shell, JS architecture and build pipeline",
+      "status": "open"
+    },
+    {
+      "name": "webui-rega-pages",
+      "path": "src/webui/rega, src/webui/www/ise",
+      "summary": "ReGa-served WebUI pages and ise assets",
+      "status": "open"
+    },
+    {
+      "name": "webui-design-docs",
+      "path": "src/webui/design, src/webui/documentation",
+      "summary": "Unused design sources and stale JsDoc",
+      "status": "open"
+    },
+    {
+      "name": "webui-easymodes",
+      "path": "src/webui/www/config/easymodes",
+      "summary": "Device link/master profile definitions (2,561 files)",
+      "status": "open"
+    },
+    {
+      "name": "webui-api",
+      "path": "src/webui/www/api, src/webui/www/tcl",
+      "summary": "JSON-RPC API (180 methods) and Tcl libraries",
+      "status": "in-progress"
+    },
+    {
+      "name": "src-feature--hss-led",
+      "path": "src/hss_led",
+      "summary": "LED controller daemon",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "src-feature--multimacd",
+      "path": "src/multimacd",
+      "summary": "Multi-MAC daemon and eq3loop client",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "src-feature--kernel-drivers",
+      "path": "src/eq3_char_loop, src/bcm2835_raw_uart",
+      "summary": "Kernel char drivers (eq3loop, raw UART)",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "src-feature--rfd",
+      "path": "src/rfd",
+      "summary": "BidCoS-RF radio daemon (XML-RPC 2001)",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "src-feature--hs485d",
+      "path": "src/hs485d, src/hs485dLoader",
+      "summary": "HomeMatic Wired daemon and loader (XML-RPC 2000)",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "src-feature--config-tools",
+      "path": "src/eq3configd, eq3configcmd, crypttool, libeq3config, libLanDeviceUtils, libUnifiedLanComm",
+      "summary": "Network/device config tooling and crypto",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "src-feature--tcl-extensions",
+      "path": "src/tclrega, tclrpc, tclticks, tcl_homematic",
+      "summary": "Native Tcl extensions and HomeMatic package",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "usr",
+      "path": "usr",
+      "summary": "HomeMatic Tcl package (generated snapshot)",
+      "status": "open"
+    },
+    {
+      "name": "opt",
+      "path": "opt",
+      "summary": "FTL templates, jars and configs under /opt",
+      "status": "open"
+    },
+    {
+      "name": "firmware",
+      "path": "firmware",
+      "summary": "Device firmware images and descriptors",
+      "status": "open"
+    },
+    {
+      "name": "src-feature--network-tools",
+      "path": "src/ssdpd, src/SetInterfaceClock",
+      "summary": "SSDP daemon and interface clock tool",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "src-feature--native-libs",
+      "path": "src/libhsscomm, libXmlRpc, libxmlparser, libelvutils",
+      "summary": "Shared native libraries and tracked prebuilt libs",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "src-feature--devicetypes",
+      "path": "src/devicetypes",
+      "summary": "Device type descriptions and generation",
+      "status": "open",
+      "parent_module": "src-feature"
+    },
+    {
+      "name": "bin-feature",
+      "path": "bin",
+      "summary": "Prebuilt binaries incl. closed-source ReGaHss",
+      "status": "open"
+    },
+    {
+      "name": "www",
+      "path": "www",
+      "summary": "Committed deployed web root drifted from src/webui/www",
+      "status": "in-progress"
+    }
+  ]
+}

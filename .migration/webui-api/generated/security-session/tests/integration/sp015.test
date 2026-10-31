@@ -1,0 +1,66 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP015 NFR and integration coverage (spec.json#SP015 non_functional_requirements[0..3]),
+# boundary and error cases, golden re-run of the allow-listed surface that lives in this tree.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc raw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate only:security-session -sessions {} {*}$args]]] }
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+
+test sp015-nfr0 {NFR0: the v1 GET listing reuses one array for all entries (documented; every one of the 180 entries has all keys)} -body {
+  set bad 0
+  dict for {name e} [golden::registry] {
+    foreach k {LEVEL SCRIPT_FILE ARGUMENTS INFO} { if {![dict exists $e $k]} { incr bad } }
+  }
+  set bad
+} -result 0
+
+test sp015-nfr1 {NFR1: Session.login distinguishes only 503 and 501} -body {
+  set out {}
+  foreach h {{{{HTTP/1.1 503 X} {}}} {{{HTTP/1.1 200 OK} {}}} {{{HTTP/1.1 401 Unauthorized} {}}}} {
+    lappend out [lindex [err [golden::call Session.login {username a password b} -candidate only:security-session -sessions {} -http $h]] 0]
+  }
+  set out
+} -result {503 501 501}
+
+test sp015-nfr2 {NFR2: Session.renew and Session.setSessionVar need a live session} -body {
+  set a [golden::call Session.renew {_session_id_ Nope} -candidate only:security-session -sessions $GUEST]
+  set b [golden::call Session.setSessionVar {_session_id_ Nope var k val v} -candidate only:security-session -sessions $GUEST]
+  list [lindex [err $a] 0] [lindex [err $b] 0]
+} -result {400 400}
+
+test sp015-nfr3 {NFR3: failures before the privilege check answer the generic error contract without a session and without errorInfo or paths} -body {
+  set out {}
+  foreach req [list {{"method":"No.such","params":{},"id":1}} {not json} {{"params":{},"id":1}}] {
+    set r [raw $req]
+    set b [dict get $r body]
+    lappend out [lindex [err $r] 0] [expr {[string match *while?executing* $b] || [string match */tmp/* $b] || [string match *.tcl* $b]}]
+  }
+  set out
+} -result {401 0 100 0 102 0}
+
+test sp015-err1 {a method outside the allow-list is not reachable without a session (access denied 400)} -body {
+  set out {}
+  foreach m {CCU.getSerial Interface.listInterfaces Device.listAll} {
+    lappend out [lindex [err [golden::call $m {_session_id_ none} -candidate only:security-session -sessions {}]] 0]
+  }
+  set out
+} -result {400 400 400}
+
+test sp015-err2 {every allow-listed method name is in the registry (the allow-list does not reference removed methods)} -body {
+  set missing {}
+  foreach m [exec tclsh8.6 << "source [file join $gen security-session eq3 allowlist.tcl]; puts \[allowlist::methods\]"] {
+    if {![dict exists [golden::registry] $m]} { lappend missing $m }
+  }
+  set missing
+} -result {}
+
+cleanupTests

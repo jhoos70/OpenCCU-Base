@@ -1,0 +1,101 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP016 - Interface.* dispatch (methods/interface/dispatch.tcl): contracts/behavioral-contracts.json#SP016
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint registryFixed [file exists [file join $gen dispatcher methods.conf]]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+set GP {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ0123456:1 paramsetKey VALUES}
+
+test sp016-1 {dispatch loads the INTERFACE_LIST entry and sources the METHOD_FILE script (XML-RPC goes to the interface URL)} -body {
+  set r [call Interface.getParamset $GP -xmlrpc {{getParamset {LEVEL 0.5 STATE true}}}]
+  list [dict get $r body] [dict get $r xmlrpc_calls]
+} -match glob -result {*"result": {"LEVEL":"0.5","STATE":"true"},"error": null\}* {{xmlrpc_bin://127.0.0.1:2001 getParamset {string NEQ0123456:1} {string VALUES}}}}
+
+test sp016-2 {unknown interface name: error 500 'unknown interface (<name>)', script exits before the method file} -body {
+  set r [call Interface.getParamset [dict replace $GP interface nope] -xmlrpc {{getParamset {A 1}}}]
+  list [err $r] [llength [dict get $r xmlrpc_calls]]
+} -result {{500 {unknown interface (nope)}} 0}
+
+foreach {status code msg} {
+  1 601 {TCL error}
+  2 602 {TCL return}
+  3 603 {TCL break}
+  4 604 {TCL continue}
+  -1 501 {XML-RPC: general error}
+  -2 502 {XML-RPC: unknown device or channel}
+  -3 503 {XML-RPC: unknown paramset}
+  -4 504 {XML-RPC: device address expected}
+  -5 505 {XML-RPC: unknown argument or value}
+  -6 506 {XML-RPC: operation not supported}
+  -10 507 {Transmission pending in HmIP Legacy API}
+  77 599 {unknown error (77)}
+} {
+  # the Tcl codes 2..4 (return/break/continue) cannot be raised through a mocked proc, so the
+  # mapping is driven directly: checkXmlRpcStatus [catch {return -code N text}]
+  test sp016-map$status "checkXmlRpcStatus maps catch status $status to $code" -body [format {
+    set r [golden::tcl {
+      foreach f {common json jsonrpc} { source [file join $env(DOCUMENT_ROOT) api/eq3/$f.tcl] }
+      set src [file_load [file join $env(DOCUMENT_ROOT) api/methods/interface/dispatch.tcl]]
+      set i [string first "# ENTRY POINT" $src]
+      if {$i < 0} { set i [string first "# Einsprunktpunkt" $src] }
+      eval [string range $src 0 [expr {$i - 1}]]
+      checkXmlRpcStatus [catch {return -level 0 -code %s fault-text}]
+    } -candidate only:interface-gateway]
+    err $r
+  } $status] -result [list $code $msg]
+}
+
+test sp016-3 {catch status 0: processing continues with the normal response} -body {
+  err [call Interface.getParamset $GP -xmlrpc {{getParamset {A 1}}}]
+} -result none
+
+test sp016-4 {[TARGET] the fault text goes to syslog with a 16-hex correlation id and the code; the client gets only the fixed message} -body {
+  set r [call Interface.getParamset $GP -fault {{getParamset -2 {secret fault text}}}]
+  set line {}
+  foreach s [dict get $r syslog] { if {[string match *secret* $s]} { set line $s } }
+  list [err $r] [string match *secret* [dict get $r body]] \
+    [regexp {cid=[0-9a-f]{16} } $line] [regexp {code=502} $line] [regexp {method=Interface.getParamset} $line] [regexp {webui-api} $line]
+} -result {{502 {XML-RPC: unknown device or channel}} 0 1 1 1 1}
+
+test sp016-5 {[TARGET] the correlation id logged for the fault is the id of the request (one id per request)} -body {
+  set r [call Interface.getParamset $GP -fault {{getParamset -2 {secret fault text}}}]
+  set ids {}
+  foreach s [dict get $r syslog] { if {[regexp {cid=([0-9a-f]{16})} $s -> id]} { lappend ids $id } }
+  llength [lsort -unique $ids]
+} -result 1
+
+test sp016-6 {Interface.listInterfaces as GUEST returns {name, port, info} with port as an unquoted number} -body {
+  set r [call Interface.listInterfaces {_session_id_ AbCdEf1234} -sessions {{AbCdEf1234 1 1000 Guest}}]
+  dict get $r body
+} -result {{"id": 1,"version": "1.1","result": [{"name":"BidCos-RF","port":2001,"info":"BidCos-RF"}],"error": null}}
+
+test sp016-7 {Interface.listInterfaces without a valid session is denied (400)} -body {
+  lindex [err [call Interface.listInterfaces {_session_id_ nope}]] 0
+} -result 400
+
+test sp016-8 {Interface.isPresent needs no session: true if system.listMethods succeeds, false otherwise} -body {
+  set a [call Interface.isPresent {interface BidCos-RF} -sessions {} -xmlrpc {{system.listMethods {a}}}]
+  set b [call Interface.isPresent {interface BidCos-RF} -sessions {} -fault {{system.listMethods -1 down}}]
+  list [regexp {"result": true,} [dict get $a body]] [regexp {"result": false,} [dict get $b body]] [dict get $a xmlrpc_calls]
+} -result {1 1 {{xmlrpc_bin://127.0.0.1:2001 system.listMethods}}}
+
+test sp016-9 {Interface.isPresent with a bad interface name returns 500 unknown interface (not false)} -body {
+  err [call Interface.isPresent {interface nope} -sessions {}]
+} -result {500 {unknown interface (nope)}}
+
+test sp016-10 {[TARGET] Interface.setTeam with the corrected ARGUMENTS passes the 402 check and resolves the interface} -constraints registryFixed -body {
+  set r [golden::call Interface.setTeam {_session_id_ AbCdEf1234 interface BidCos-RF channelAddress NEQ0123456:1 teamAddress *NEQ0123457} \
+    -candidate staged -xmlrpc {{setTeam true}}]
+  list [err $r] [lindex [dict get $r xmlrpc_calls] 0]
+} -result {none {xmlrpc_bin://127.0.0.1:2001 setTeam {string NEQ0123456:1} {string *NEQ0123457}}}
+
+cleanupTests

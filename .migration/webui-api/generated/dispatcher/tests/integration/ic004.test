@@ -1,0 +1,57 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC004 dispatcher -> interface-gateway: the executor sources methods/interface/dispatch.tcl
+# (SCRIPT_FILE) which reads METHOD_FILE interface/<name>.tcl. Request shape: args(interface) = a
+# name in INTERFACE_LIST, method(METHOD_FILE). Errors: 500 unknown interface (<name>); XML-RPC
+# status mapping 501-507|599|601-604.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,interface-gateway
+set SESS {{AbCdEf1234 1 1000 Guest}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+
+test ic004-1 {the registry names dispatch.tcl as SCRIPT_FILE and a METHOD_FILE under interface/ for the 49 Interface.* entries; the executor sources dispatch.tcl} -body {
+  set fd [open [file join $gen dispatcher methods.conf] r]; fconfigure $fd -encoding utf-8
+  array set reg [read $fd]; close $fd
+  array set e $reg(Interface.getDeviceDescription)
+  set n 0
+  foreach name [array names reg] {
+    array unset x; array set x $reg($name)
+    if {[info exists x(METHOD_FILE)] && $x(SCRIPT_FILE) eq "interface/dispatch.tcl" && [string match interface/*.tcl $x(METHOD_FILE)]} { incr n }
+  }
+  list $e(SCRIPT_FILE) $e(METHOD_FILE) $n
+} -result {interface/dispatch.tcl interface/getdevicedescription.tcl 49}
+
+test ic004-2 {args(interface) names an interface of INTERFACE_LIST: the XML-RPC call goes to its URL} -body {
+  set r [call Interface.getDeviceDescription {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ1} -xmlrpc {{getDeviceDescription {ADDRESS NEQ1}}}]
+  list [lmap c [dict get $r xmlrpc_calls] {lindex $c 1}] [lindex [lindex [dict get $r xmlrpc_calls] 0] 0]
+} -result {getDeviceDescription xmlrpc_bin://127.0.0.1:2001}
+
+test ic004-3 {error 500: an interface that is not in INTERFACE_LIST is 'unknown interface (<name>)' and no XML-RPC call is made} -body {
+  set r [call Interface.getDeviceDescription {_session_id_ AbCdEf1234 interface Nope address NEQ1}]
+  list [err $r] [llength [dict get $r xmlrpc_calls]]
+} -result {{500 {unknown interface (Nope)}} 0}
+
+test ic004-4 {XML-RPC status mapping: fault -1..-6 -> 501..506, -10 -> 507, other faults -> 599, a failing call -> 601..604; the fault text is not returned} -body {
+  set out {}
+  foreach {f} {-1 -2 -6 -10 -7} {
+    set r [call Interface.getDeviceDescription {_session_id_ AbCdEf1234 interface BidCos-RF address NEQ1} -fault [list [list getDeviceDescription $f secret-fault-text]]]
+    lappend out [lindex [err $r] 0] [string match *secret-fault-text* [dict get $r body]]
+  }
+  set out
+} -result {501 0 502 0 506 0 507 0 599 0}
+
+test ic004-5 {a METHOD_FILE that the registry does not name is never sourced: the method name decides, not the client} -body {
+  set r [call Interface.nothing {_session_id_ AbCdEf1234 interface BidCos-RF}]
+  err $r
+} -result {401 {method not found (Interface.nothing)}}
+
+cleanupTests

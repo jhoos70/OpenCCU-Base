@@ -1,0 +1,142 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP041 - SysVar create / set / delete (USER level): v1 behaviour frozen (duplicate names are
+# created), /api/v2 enforces name uniqueness (409). contracts/behavioral-contracts.json#SP041
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc created {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *CreateObject* $c]} { incr n } }
+  return $n
+}
+set USER {{AbCdEf1234 2 1000 User}}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+set NAME "Invalid name. Must match \[A-Za-z0-9_-.:\]"
+set OKBOOL {{*CreateObject*} {{"name":"Presence","id":"4711","value":"true" }}}
+
+test sp041-0 {the staged method scripts of SP041 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {createbool createfloat createenum setbool setfloat setenum deletesysvarbyname} {
+    set p [file join $gen rega-model methods sysvar $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp041-1 {acceptance[0],[1]: createBool / createFloat / createEnum create the variable and answer {name,id,value}} -body {
+  set p {_session_id_ AbCdEf1234 name Presence internal 0 chnID -1}
+  set a [call SysVar.createBool [list {*}$p init_val true] -sessions $USER -rega [list $::OKBOOL]]
+  set b [call SysVar.createFloat [list {*}$p minValue 0 maxValue 10] -sessions $USER -rega [list [list {*ivtFloat*} {{"name":"Presence","id":"4712","value":"0" }}]]]
+  set c [call SysVar.createEnum [list {*}$p valList {a;b;c}] -sessions $USER -rega [list [list {*istEnum*} {{"name":"Presence","id":"4713","value":"a;b;c" }}]]]
+  list [result $a] [result $b] [result $c] [created $a]
+} -result [list {{"name":"Presence","id":"4711","value":"true" }} {{"name":"Presence","id":"4712","value":"0" }} {{"name":"Presence","id":"4713","value":"a;b;c" }} 1]
+
+test sp041-2 {acceptance[2]: an invalid name is error 1 (createBool) / 100 (createFloat, createEnum) and nothing is created} -body {
+  set p {_session_id_ AbCdEf1234 name {bad name} internal 0 chnID -1}
+  set a [call SysVar.createBool [list {*}$p init_val true] -sessions $USER]
+  set b [call SysVar.createFloat [list {*}$p minValue 0 maxValue 1] -sessions $USER]
+  set c [call SysVar.createEnum [list {*}$p valList a] -sessions $USER]
+  list [err $a] [err $b] [err $c] [created $a]
+} -result [list [list 1 $NAME] [list 100 $NAME] [list 100 $NAME] 0]
+
+test sp041-3 {acceptance[3]: the parameter errors keep their codes (createBool 2,3,4; createFloat 101-104; createEnum 101-103) and messages} -body {
+  set p {_session_id_ AbCdEf1234 name N}
+  set out {}
+  lappend out [err [call SysVar.createBool [list {*}$p init_val maybe internal 0 chnID -1] -sessions $USER]]
+  lappend out [err [call SysVar.createBool [list {*}$p init_val true internal x chnID -1] -sessions $USER]]
+  lappend out [err [call SysVar.createBool [list {*}$p init_val true internal 0 chnID y] -sessions $USER]]
+  lappend out [err [call SysVar.createFloat [list {*}$p minValue a maxValue 1 internal 0 chnID -1] -sessions $USER]]
+  lappend out [err [call SysVar.createFloat [list {*}$p minValue 0 maxValue b internal 0 chnID -1] -sessions $USER]]
+  lappend out [err [call SysVar.createFloat [list {*}$p minValue 0 maxValue 1 internal x chnID -1] -sessions $USER]]
+  lappend out [err [call SysVar.createFloat [list {*}$p minValue 0 maxValue 1 internal 0 chnID y] -sessions $USER]]
+  lappend out [err [call SysVar.createEnum [list {*}$p valList {a b} internal 0 chnID -1] -sessions $USER]]
+  lappend out [err [call SysVar.createEnum [list {*}$p valList a internal x chnID -1] -sessions $USER]]
+  lappend out [err [call SysVar.createEnum [list {*}$p valList a internal 0 chnID y] -sessions $USER]]
+  set out
+} -result {{2 {Value 'maybe' is not a valid boolean}} {3 {Value 'x' is not a valid integer}} {4 {Value 'y' is not a valid integer}} {101 {Value 'a' is not a valid float}} {102 {Value 'b' is not a valid float}} {103 {Value 'x' is not a valid integer}} {104 {Value 'y' is not a valid integer}} {101 {Invalid valList. Expected format: Wert1;Wert2;Wert3;...}} {102 {Value 'x' is not a valid integer}} {103 {Value 'y' is not a valid integer}}}
+
+test sp041-4 {NFR2: internal 'true' is rejected as a non-integer (only 0/1 numbers are accepted)} -body {
+  err [call SysVar.createBool {_session_id_ AbCdEf1234 name N init_val true internal true chnID -1} -sessions $USER]
+} -result {3 {Value 'true' is not a valid integer}}
+
+test sp041-5 {NFR0 (frozen v1): a second create with the same name is not checked - the ReGa script runs again} -body {
+  set p {_session_id_ AbCdEf1234 name Presence internal 0 chnID -1 init_val true}
+  set a [call SysVar.createBool $p -sessions $USER -rega [list $::OKBOOL]]
+  set b [call SysVar.createBool $p -sessions $USER -rega [list $::OKBOOL]]
+  list [created $a] [created $b] [string match {*name already exists*} [dict get $b body]]
+} -result {1 1 0}
+
+test sp041-6 {acceptance[8] [V2]: createBool / createFloat / createEnum on /api/v2/rpc with an existing name: nothing is created, HTTP 409, error 500 "name already exists (Presence)"} -body {
+  set exists {{*Write("exists")*} exists}
+  set out {}
+  foreach {m extra} {SysVar.createBool {init_val true} SysVar.createFloat {minValue 0 maxValue 1} SysVar.createEnum {valList a;b}} {
+    set r [call $m [concat {name Presence internal 0 chnID -1} $extra] -sessions $USER -rega [list $exists $::OKBOOL] {*}$::V2]
+    lappend out [status $r] [err $r] [created $r]
+  }
+  set out
+} -result [lrepeat 3 409 {500 {name already exists (Presence)}} 0]
+
+test sp041-7 {acceptance[9] [V2]: a new name on /api/v2/rpc creates exactly one variable and answers HTTP 200} -body {
+  set r [call SysVar.createBool {name Presence internal 0 chnID -1 init_val true} -sessions $USER -rega [list $::OKBOOL] {*}$::V2]
+  list [status $r] [result $r] [created $r]
+} -result [list 200 {{"name":"Presence","id":"4711","value":"true" }} 1]
+
+test sp041-8 {acceptance[4]: setBool normalises numerics to 0/1, calls sv.State(value) and echoes the value when ReGa answers true, else -1} -body {
+  set p {_session_id_ AbCdEf1234 name Presence}
+  set a [call SysVar.setBool [list {*}$p value 5] -sessions $USER -rega {{*State(value)* true}}]
+  set b [call SysVar.setBool [list {*}$p value 0] -sessions $USER -rega {{*State(value)* false}}]
+  set c [call SysVar.setBool [list {*}$p value -3] -sessions $USER -rega {{*State(value)* true}}]
+  list [result $a] [result $b] [result $c] [string match {*var value = "1";*} [lindex [dict get $a rega_calls] end]] [string match {*var value = "0";*} [lindex [dict get $c rega_calls] end]]
+} -result {1 -1 0 1 1}
+
+test sp041-9 {acceptance[4],NFR4: setFloat echoes args(value) as it is (not quoted) when ReGa answers true, else -1} -body {
+  set p {_session_id_ AbCdEf1234 name Temp}
+  list [result [call SysVar.setFloat [list {*}$p value 21.5] -sessions $USER -rega {{*State(value)* true}}]] [result [call SysVar.setFloat [list {*}$p value 21.5] -sessions $USER -rega {{*State(value)* false}}]]
+} -result {21.5 -1}
+
+test sp041-10 {acceptance[5]: setEnum answers the quoted valueList when ReGa answers true, else -1} -body {
+  set p {_session_id_ AbCdEf1234 name E valueList A;B;C}
+  list [result [call SysVar.setEnum $p -sessions $USER -rega {{*ValueList(valueList)* true}}]] [result [call SysVar.setEnum $p -sessions $USER -rega {{*ValueList(valueList)* false}}]]
+} -result {{"A;B;C"} -1}
+
+test sp041-11 {acceptance[7],NFR3: set* on a missing variable (empty ReGa answer) and a non-numeric setBool value are internal error 200} -body {
+  set p {_session_id_ AbCdEf1234 name Nope}
+  list [lindex [err [call SysVar.setBool [list {*}$p value 1] -sessions $USER]] 0] [lindex [err [call SysVar.setFloat [list {*}$p value 1] -sessions $USER]] 0] \
+    [lindex [err [call SysVar.setEnum [list {*}$p valueList a] -sessions $USER]] 0] [lindex [err [call SysVar.setBool [list {*}$p value abc] -sessions $USER]] 0]
+} -result {200 200 200 200}
+
+test sp041-12 {acceptance[6]: deleteSysVarByName removes the variable and answers true} -body {
+  set r [call SysVar.deleteSysVarByName {_session_id_ AbCdEf1234 name Presence} -sessions $USER -rega {{*Remove(sysVar.ID())* true}}]
+  list [result $r] [string match {*oSysVars.Remove(sysVar.ID())*} [lindex [dict get $r rega_calls] end]]
+} -result {true 1}
+
+test sp041-13 {privilege: all seven methods need USER - a GUEST session is denied (400) and nothing runs} -body {
+  set out {}
+  foreach m {SysVar.createBool SysVar.createFloat SysVar.createEnum SysVar.setBool SysVar.setFloat SysVar.setEnum SysVar.deleteSysVarByName} {
+    set r [call $m {_session_id_ AbCdEf1234 name N init_val true minValue 0 maxValue 1 valList a internal 0 chnID -1 value 1 valueList a} -sessions {{AbCdEf1234 1 1000 Guest}}]
+    lappend out [lindex [err $r] 0]
+  }
+  set out
+} -result {400 400 400 400 400 400 400}
+
+cleanupTests

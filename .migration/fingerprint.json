@@ -1,0 +1,985 @@
+{
+  "generated_at": "2026-10-09T16:09:23.946Z",
+  "repo_root": "/home/standard/dev/OpenCCU-Base",
+  "total_files": 9793,
+  "total_loc": 1064513,
+  "tier": "large",
+  "languages": [
+    {
+      "language": "Tcl",
+      "loc": 658860,
+      "percentage": 62
+    },
+    {
+      "language": "JavaScript",
+      "loc": 144291,
+      "percentage": 14
+    },
+    {
+      "language": "XML",
+      "loc": 127452,
+      "percentage": 12
+    },
+    {
+      "language": "C++",
+      "loc": 74825,
+      "percentage": 7
+    },
+    {
+      "language": "C/C++",
+      "loc": 27387,
+      "percentage": 3
+    },
+    {
+      "language": "CSS",
+      "loc": 23575,
+      "percentage": 2
+    },
+    {
+      "language": "C",
+      "loc": 3673,
+      "percentage": 0
+    },
+    {
+      "language": "HTML",
+      "loc": 1919,
+      "percentage": 0
+    },
+    {
+      "language": "XSLT",
+      "loc": 1708,
+      "percentage": 0
+    },
+    {
+      "language": "YAML",
+      "loc": 331,
+      "percentage": 0
+    },
+    {
+      "language": "Python",
+      "loc": 160,
+      "percentage": 0
+    },
+    {
+      "language": "Shell",
+      "loc": 119,
+      "percentage": 0
+    },
+    {
+      "language": "JSON",
+      "loc": 92,
+      "percentage": 0
+    },
+    {
+      "language": "SCSS",
+      "loc": 79,
+      "percentage": 0
+    },
+    {
+      "language": "Java",
+      "loc": 42,
+      "percentage": 0
+    }
+  ],
+  "source_languages": [
+    {
+      "language": "Tcl",
+      "loc": 658860,
+      "percentage": 72
+    },
+    {
+      "language": "JavaScript",
+      "loc": 144291,
+      "percentage": 16
+    },
+    {
+      "language": "C++",
+      "loc": 74825,
+      "percentage": 8
+    },
+    {
+      "language": "C/C++",
+      "loc": 27387,
+      "percentage": 3
+    },
+    {
+      "language": "C",
+      "loc": 3673,
+      "percentage": 0
+    },
+    {
+      "language": "Python",
+      "loc": 160,
+      "percentage": 0
+    },
+    {
+      "language": "Shell",
+      "loc": 119,
+      "percentage": 0
+    },
+    {
+      "language": "Java",
+      "loc": 42,
+      "percentage": 0
+    }
+  ],
+  "source_loc": 909357,
+  "is_monorepo": true,
+  "has_tests": true,
+  "root_manifests": [
+    "CMakeLists.txt",
+    "Makefile",
+    ".github"
+  ],
+  "ci_cd": [
+    ".github/workflows"
+  ],
+  "skip_dirs": [
+    ".git",
+    ".claude",
+    "bin"
+  ],
+  "auto_skipped_dirs": [
+    "src/webui/www_source/config/devdescr"
+  ],
+  "glob_exclude": "!{.git,.claude,bin,src/webui/www_source/config/devdescr}",
+  "entry_point_hints": [
+    "CMakeLists.txt",
+    "Makefile",
+    "src/SetInterfaceClock/CMakeLists.txt",
+    "src/bcm2835_raw_uart/CMakeLists.txt",
+    "src/crypttool/CMakeLists.txt",
+    "src/devicetypes/CMakeLists.txt",
+    "src/eq3_char_loop/CMakeLists.txt",
+    "src/eq3_char_loop/Makefile",
+    "src/eq3configcmd/CMakeLists.txt",
+    "src/eq3configd/CMakeLists.txt",
+    "src/eq3configd/main.cpp",
+    "src/hs485d/CMakeLists.txt",
+    "src/hs485dLoader/CMakeLists.txt",
+    "src/hss_led/CMakeLists.txt",
+    "src/libLanDeviceUtils/CMakeLists.txt",
+    "src/libUnifiedLanComm/CMakeLists.txt",
+    "src/libXmlRpc/CMakeLists.txt",
+    "src/libelvutils/CMakeLists.txt",
+    "src/libeq3config/CMakeLists.txt",
+    "src/libhsscomm/CMakeLists.txt"
+  ],
+  "entry_points_by_category": {
+    "cli": [
+      "src/eq3configd/main.cpp"
+    ],
+    "build": [
+      "CMakeLists.txt",
+      "Makefile",
+      "src/SetInterfaceClock/CMakeLists.txt",
+      "src/bcm2835_raw_uart/CMakeLists.txt",
+      "src/crypttool/CMakeLists.txt",
+      "src/devicetypes/CMakeLists.txt",
+      "src/eq3_char_loop/CMakeLists.txt",
+      "src/eq3_char_loop/Makefile",
+      "src/eq3configcmd/CMakeLists.txt",
+      "src/eq3configd/CMakeLists.txt",
+      "src/hs485d/CMakeLists.txt",
+      "src/hs485dLoader/CMakeLists.txt",
+      "src/hss_led/CMakeLists.txt",
+      "src/libLanDeviceUtils/CMakeLists.txt",
+      "src/libUnifiedLanComm/CMakeLists.txt",
+      "src/libXmlRpc/CMakeLists.txt",
+      "src/libelvutils/CMakeLists.txt",
+      "src/libeq3config/CMakeLists.txt",
+      "src/libhsscomm/CMakeLists.txt"
+    ]
+  },
+  "technology_map": {
+    ".": {
+      "total": 5,
+      "loc": 77,
+      "effective_units": 5,
+      "dominant_language": "(GITIGNORE)",
+      "extensions": {
+        "(.gitignore)": 1,
+        ".txt": 1,
+        ".json": 1,
+        "(Makefile)": 1,
+        ".md": 1
+      }
+    },
+    ".github": {
+      "total": 2,
+      "loc": 331,
+      "effective_units": 2,
+      "dominant_language": "YAML",
+      "extensions": {
+        ".yml": 2
+      }
+    },
+    "bin": {
+      "total": 47,
+      "loc": 0,
+      "effective_units": 47,
+      "dominant_language": "(REGAHSS)",
+      "extensions": {
+        "(ReGaHss)": 4,
+        "(SetInterfaceClock)": 4,
+        "(crypttool)": 4,
+        "(eq3configcmd)": 4,
+        "(eq3configd)": 4,
+        "(hs485d)": 4,
+        "(hs485dLoader)": 4,
+        "(hss_led)": 4
+      }
+    },
+    "build-tools": {
+      "total": 1,
+      "loc": 0,
+      "effective_units": 1,
+      "dominant_language": "(BIDCOS-DEVICETYPE-STRIP)",
+      "extensions": {
+        "(bidcos-devicetype-strip)": 1
+      }
+    },
+    "cmake": {
+      "total": 7,
+      "loc": 0,
+      "effective_units": 7,
+      "dominant_language": "CMAKE",
+      "extensions": {
+        ".cmake": 6,
+        ".md": 1
+      }
+    },
+    "etc": {
+      "total": 3,
+      "loc": 27,
+      "effective_units": 3,
+      "dominant_language": "CONF",
+      "extensions": {
+        ".conf": 1,
+        ".cfg": 1,
+        ".xml": 1
+      }
+    },
+    "firmware": {
+      "total": 166,
+      "loc": 0,
+      "effective_units": 166,
+      "dominant_language": "XML",
+      "extensions": {
+        ".xml": 143,
+        ".hex": 10,
+        ".eq3": 9,
+        "(fwmap)": 4
+      }
+    },
+    "licenses": {
+      "total": 4,
+      "loc": 0,
+      "effective_units": 4,
+      "dominant_language": "TXT",
+      "extensions": {
+        ".txt": 3,
+        ".md": 1
+      }
+    },
+    "opt": {
+      "total": 21,
+      "loc": 8116,
+      "effective_units": 21,
+      "dominant_language": "FTL",
+      "extensions": {
+        ".ftl": 17,
+        ".xml": 1,
+        ".dit": 1,
+        ".fwfix": 1,
+        ".config": 1
+      }
+    },
+    "src": {
+      "total": 5519,
+      "loc": 669582,
+      "effective_units": 5519,
+      "dominant_language": "TXT",
+      "extensions": {
+        ".txt": 1479,
+        ".tcl": 1337,
+        ".png": 964,
+        ".js": 380,
+        ".h": 379,
+        ".cpp": 357,
+        ".xml": 156,
+        ".htm": 106
+      },
+      "subdirs": {
+        "src/SetInterfaceClock": {
+          "total": 2,
+          "loc": 112,
+          "effective_units": 2,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1,
+            ".cpp": 1
+          }
+        },
+        "src/bcm2835_raw_uart": {
+          "total": 6,
+          "loc": 1318,
+          "effective_units": 6,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1,
+            ".in": 1,
+            ".pdf": 1,
+            ".dts": 1,
+            ".c": 1,
+            ".mk": 1
+          }
+        },
+        "src/crypttool": {
+          "total": 5,
+          "loc": 623,
+          "effective_units": 5,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 2,
+            ".cpp": 2,
+            ".h": 1
+          }
+        },
+        "src/devicetypes": {
+          "total": 159,
+          "loc": 120708,
+          "effective_units": 159,
+          "dominant_language": "XML",
+          "extensions": {
+            ".xml": 148,
+            ".xsl": 4,
+            ".tcl": 2,
+            ".txt": 1,
+            ".cmake": 1,
+            ".xsd": 1,
+            ".cgi": 1,
+            ".js": 1
+          }
+        },
+        "src/eq3_char_loop": {
+          "total": 6,
+          "loc": 2355,
+          "effective_units": 6,
+          "dominant_language": "C",
+          "extensions": {
+            ".c": 3,
+            ".txt": 1,
+            ".pdf": 1,
+            "(Makefile)": 1
+          }
+        },
+        "src/eq3configcmd": {
+          "total": 2,
+          "loc": 80,
+          "effective_units": 2,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1,
+            ".cpp": 1
+          }
+        },
+        "src/eq3configd": {
+          "total": 9,
+          "loc": 1276,
+          "effective_units": 9,
+          "dominant_language": "C++",
+          "extensions": {
+            ".cpp": 3,
+            ".h": 2,
+            ".txt": 1,
+            ".cbp": 1,
+            ".depend": 1,
+            ".layout": 1
+          }
+        },
+        "src/hs485d": {
+          "total": 68,
+          "loc": 11224,
+          "effective_units": 68,
+          "dominant_language": "C/C++",
+          "extensions": {
+            ".h": 33,
+            ".cpp": 32,
+            ".txt": 1,
+            ".bindist": 1,
+            ".sh": 1
+          }
+        },
+        "src/hs485dLoader": {
+          "total": 2,
+          "loc": 338,
+          "effective_units": 2,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1,
+            ".cpp": 1
+          }
+        },
+        "src/hss_led": {
+          "total": 36,
+          "loc": 3021,
+          "effective_units": 36,
+          "dominant_language": "C/C++",
+          "extensions": {
+            ".h": 18,
+            ".cpp": 17,
+            ".txt": 1
+          }
+        },
+        "src/libLanDeviceUtils": {
+          "total": 39,
+          "loc": 4406,
+          "effective_units": 39,
+          "dominant_language": "C/C++",
+          "extensions": {
+            ".h": 20,
+            ".cpp": 17,
+            "(.gitignore)": 1,
+            ".txt": 1
+          }
+        },
+        "src/libUnifiedLanComm": {
+          "total": 20,
+          "loc": 1788,
+          "effective_units": 20,
+          "dominant_language": "C/C++",
+          "extensions": {
+            ".h": 10,
+            ".cpp": 7,
+            "(.gitignore)": 1,
+            ".txt": 1,
+            ".sh": 1
+          }
+        },
+        "src/libXmlRpc": {
+          "total": 29,
+          "loc": 5617,
+          "effective_units": 29,
+          "dominant_language": "C/C++",
+          "extensions": {
+            ".h": 14,
+            ".cpp": 10,
+            ".txt": 1,
+            "(COPYING)": 1,
+            ".html": 1,
+            "(Doxyfile)": 1,
+            ".vcproj": 1
+          }
+        },
+        "src/libelvutils": {
+          "total": 45,
+          "loc": 3126,
+          "effective_units": 45,
+          "dominant_language": "C++",
+          "extensions": {
+            ".cpp": 22,
+            ".h": 22,
+            ".txt": 1
+          }
+        },
+        "src/libeq3config": {
+          "total": 69,
+          "loc": 9490,
+          "effective_units": 69,
+          "dominant_language": "C++",
+          "extensions": {
+            ".cpp": 30,
+            ".h": 28,
+            ".def": 9,
+            ".txt": 2
+          }
+        },
+        "src/libhsscomm": {
+          "total": 115,
+          "loc": 11719,
+          "effective_units": 115,
+          "dominant_language": "C/C++",
+          "extensions": {
+            ".h": 57,
+            ".cpp": 56,
+            ".txt": 1,
+            ".bindist": 1
+          }
+        },
+        "src/libxmlparser": {
+          "total": 6,
+          "loc": 2511,
+          "effective_units": 6,
+          "dominant_language": "VCPROJ",
+          "extensions": {
+            ".vcproj": 2,
+            ".txt": 1,
+            "(LICENSE)": 1,
+            ".cpp": 1,
+            ".h": 1
+          }
+        },
+        "src/multimacd": {
+          "total": 200,
+          "loc": 15656,
+          "effective_units": 200,
+          "dominant_language": "C/C++",
+          "extensions": {
+            ".h": 104,
+            ".cpp": 92,
+            "(.gitignore)": 1,
+            ".txt": 1,
+            ".conf": 1,
+            ".sh": 1
+          }
+        },
+        "src/rfd": {
+          "total": 135,
+          "loc": 29852,
+          "effective_units": 135,
+          "dominant_language": "C/C++",
+          "extensions": {
+            ".h": 69,
+            ".cpp": 61,
+            ".sh": 2,
+            ".txt": 1,
+            ".mk": 1,
+            ".conf": 1
+          }
+        },
+        "src/ssdpd": {
+          "total": 2,
+          "loc": 483,
+          "effective_units": 2,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1,
+            ".cpp": 1
+          }
+        },
+        "src/tcl_homematic": {
+          "total": 13,
+          "loc": 194,
+          "effective_units": 13,
+          "dominant_language": "Tcl",
+          "extensions": {
+            ".tcl": 10,
+            ".txt": 2,
+            "(.gitignore)": 1
+          }
+        },
+        "src/tclrega": {
+          "total": 2,
+          "loc": 518,
+          "effective_units": 2,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1,
+            ".cpp": 1
+          }
+        },
+        "src/tclrpc": {
+          "total": 2,
+          "loc": 420,
+          "effective_units": 2,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1,
+            ".cpp": 1
+          }
+        },
+        "src/tclticks": {
+          "total": 2,
+          "loc": 100,
+          "effective_units": 2,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1,
+            ".cpp": 1
+          }
+        },
+        "src/webui": {
+          "total": 4545,
+          "loc": 442647,
+          "effective_units": 4545,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1452,
+            ".tcl": 1325,
+            ".png": 964,
+            ".js": 379,
+            ".htm": 106,
+            ".fn": 70,
+            ".cgi": 53,
+            ".css": 40
+          }
+        }
+      }
+    },
+    "tests": {
+      "total": 5,
+      "loc": 205,
+      "effective_units": 5,
+      "dominant_language": "XML",
+      "extensions": {
+        ".xml": 3,
+        ".sh": 1,
+        ".py": 1
+      }
+    },
+    "usr": {
+      "total": 2,
+      "loc": 121,
+      "effective_units": 2,
+      "dominant_language": "Tcl",
+      "extensions": {
+        ".tcl": 2
+      }
+    },
+    "www": {
+      "total": 4011,
+      "loc": 386054,
+      "effective_units": 4011,
+      "dominant_language": "TXT",
+      "extensions": {
+        ".txt": 1443,
+        ".tcl": 1309,
+        ".png": 861,
+        ".htm": 105,
+        ".js": 101,
+        ".fn": 70,
+        ".cgi": 46,
+        ".gif": 20
+      },
+      "subdirs": {
+        "www/api": {
+          "total": 203,
+          "loc": 7043,
+          "effective_units": 203,
+          "dominant_language": "Tcl",
+          "extensions": {
+            ".tcl": 190,
+            ".cgi": 10,
+            ".hms": 2,
+            ".conf": 1
+          }
+        },
+        "www/config": {
+          "total": 3185,
+          "loc": 327628,
+          "effective_units": 3185,
+          "dominant_language": "TXT",
+          "extensions": {
+            ".txt": 1442,
+            ".tcl": 1090,
+            ".png": 589,
+            ".js": 38,
+            ".cgi": 25,
+            "(.gitignore)": 1
+          }
+        },
+        "www/error": {
+          "total": 2,
+          "loc": 229,
+          "effective_units": 2,
+          "dominant_language": "HTML",
+          "extensions": {
+            ".html": 2
+          }
+        },
+        "www/ise": {
+          "total": 259,
+          "loc": 0,
+          "effective_units": 259,
+          "dominant_language": "PNG",
+          "extensions": {
+            ".png": 227,
+            ".gif": 17,
+            ".jpg": 9,
+            ".ico": 2,
+            ".cgi": 1,
+            ".htm": 1,
+            ".gi": 1,
+            ".j_": 1
+          }
+        },
+        "www/pda": {
+          "total": 48,
+          "loc": 1571,
+          "effective_units": 48,
+          "dominant_language": "Tcl",
+          "extensions": {
+            ".tcl": 21,
+            ".png": 12,
+            ".tmpl": 8,
+            ".cgi": 5,
+            ".css": 2
+          }
+        },
+        "www/rega": {
+          "total": 186,
+          "loc": 306,
+          "effective_units": 186,
+          "dominant_language": "HTM",
+          "extensions": {
+            ".htm": 104,
+            ".fn": 70,
+            ".xml": 6,
+            ".inc": 3,
+            ".ico": 2,
+            ".txt": 1
+          }
+        },
+        "www/tcl": {
+          "total": 8,
+          "loc": 4483,
+          "effective_units": 8,
+          "dominant_language": "Tcl",
+          "extensions": {
+            ".tcl": 8
+          }
+        },
+        "www/tools": {
+          "total": 12,
+          "loc": 1344,
+          "effective_units": 12,
+          "dominant_language": "JavaScript",
+          "extensions": {
+            ".js": 7,
+            ".html": 3,
+            ".cgi": 2
+          }
+        },
+        "www/upnp": {
+          "total": 2,
+          "loc": 0,
+          "effective_units": 2,
+          "dominant_language": "CGI",
+          "extensions": {
+            ".cgi": 2
+          }
+        },
+        "www/webui": {
+          "total": 106,
+          "loc": 43450,
+          "effective_units": 106,
+          "dominant_language": "JavaScript",
+          "extensions": {
+            ".js": 56,
+            ".png": 33,
+            ".css": 12,
+            ".gif": 3,
+            ".html": 1,
+            ".cgi": 1
+          }
+        }
+      }
+    }
+  },
+  "integration_seams": [
+    {
+      "label": "msmq",
+      "description": "Microsoft MQ messaging integration",
+      "files": [
+        "./src/hs485d/HS485Controller.h",
+        "./src/hs485d/HS485ControllerCCU1.h"
+      ]
+    },
+    {
+      "label": "ipc",
+      "description": "Inter-process communication",
+      "files": [
+        "./src/eq3_char_loop/eq3_char_loop.c",
+        "./src/hs485d/HS485Controller.cpp",
+        "./src/hs485d/HS485Controller.h",
+        "./src/hs485d/HS485ControllerCCU1.cpp",
+        "./src/hs485d/HS485ControllerCCU1.h",
+        "./src/hs485d/LGWPortWrapper.cpp",
+        "./src/hs485d/hs485d.cpp",
+        "./src/hs485dLoader/hs485dLoader.cpp",
+        "./src/hss_led/LedController.cpp",
+        "./src/libLanDeviceUtils/include/IPConfiguration.h"
+      ]
+    },
+    {
+      "label": "tcl-load",
+      "description": "TCL loading external package or shared lib",
+      "files": [
+        "./src/devicetypes/list_values.tcl",
+        "./src/eq3configd/main.cpp",
+        "./src/eq3configd/src/udpframe.cpp",
+        "./src/hs485d/HMWLGWCommand.h",
+        "./src/hs485d/HMWLGWTransportFrame.cpp",
+        "./src/hs485d/HMWLGWTransportFrame.h",
+        "./src/hs485d/HS485CommMessageLGW.h",
+        "./src/hs485d/HS485ControllerLGW.cpp",
+        "./src/libLanDeviceUtils/src/EQ3ConfigProtocol.h"
+      ]
+    },
+    {
+      "label": "xmlrpc",
+      "description": "XML-RPC calls",
+      "files": [
+        "./src/SetInterfaceClock/SetInterfaceClock.cpp",
+        "./src/hs485d/HS485Central.cpp",
+        "./src/hs485d/HS485Central.h",
+        "./src/hs485d/HS485Channel.cpp",
+        "./src/hs485d/HS485Channel.h",
+        "./src/hs485d/HS485ChannelDescription.cpp",
+        "./src/hs485d/HS485ChannelDescription.h",
+        "./src/hs485d/HS485Controller.cpp",
+        "./src/hs485d/HS485Controller.h",
+        "./src/hs485d/HS485ControllerCCU1.cpp"
+      ]
+    }
+  ],
+  "extension_inventory": {
+    ".txt": 2926,
+    ".tcl": 2648,
+    ".png": 1825,
+    ".js": 481,
+    ".h": 379,
+    ".cpp": 357,
+    ".xml": 310,
+    ".htm": 211,
+    ".fn": 140,
+    ".cgi": 100,
+    ".css": 54,
+    ".gif": 49,
+    ".jpg": 46,
+    ".tmpl": 21,
+    ".ftl": 17,
+    ".html": 15,
+    ".psd": 12,
+    ".hex": 10,
+    "(.gitignore)": 9,
+    ".eq3": 9,
+    ".def": 9,
+    ".jst": 9,
+    ".conf": 8,
+    ".ico": 8,
+    ".cmake": 7
+  },
+  "build_tools": [
+    {
+      "file": "Makefile",
+      "tool": "make"
+    },
+    {
+      "file": "CMakeLists.txt",
+      "tool": "cmake"
+    }
+  ],
+  "docs": {
+    "files": [
+      "README.md"
+    ],
+    "hasReadme": true,
+    "hasContributing": false,
+    "hasArchDocs": false
+  },
+  "git": {
+    "branch": "main",
+    "commitCount": 1770,
+    "lastCommit": "2026-10-09T17:10:45+02:00",
+    "firstCommit": "2015-04-19T00:07:24+02:00",
+    "ageInDays": 4191,
+    "contributors": 11
+  },
+  "file_size_stats": {
+    "count": 4266,
+    "p50": 4073,
+    "p95": 46062,
+    "max": 1935867,
+    "filesOver10k": 1377,
+    "filesOver100k": 64
+  },
+  "largest_files": {
+    "byLoc": [
+      {
+        "path": "www/webui/style.css",
+        "loc": 9156
+      },
+      {
+        "path": "src/webui/www/config/easymodes/etc/hmipChannelConfigDialogs.tcl",
+        "loc": 8311
+      },
+      {
+        "path": "www/config/easymodes/etc/hmipChannelConfigDialogs.tcl",
+        "loc": 8310
+      },
+      {
+        "path": "opt/HMServer/groups/groupdefinitions.xml",
+        "loc": 8116
+      },
+      {
+        "path": "src/devicetypes/rftypes/rf_tc_it_wm-w-eu.xml",
+        "loc": 5693
+      },
+      {
+        "path": "src/devicetypes/rftypes/ccu1/rf_tc_it_wm-w-eu.xml",
+        "loc": 5682
+      },
+      {
+        "path": "src/webui/www_source/webui/css/x_style.css",
+        "loc": 5368
+      },
+      {
+        "path": "src/webui/www/webui/js/extern/prototype.js",
+        "loc": 4234
+      },
+      {
+        "path": "www/webui/js/extern/prototype.js",
+        "loc": 4234
+      },
+      {
+        "path": "src/webui/www_source/ise/js/functions.js",
+        "loc": 4147
+      }
+    ],
+    "bySize": [
+      {
+        "path": "www/webui/webui.js",
+        "size": 1935867
+      },
+      {
+        "path": "firmware/rftypes/replaceMap/rfReplaceMap.xml",
+        "size": 1079140
+      },
+      {
+        "path": "src/devicetypes/replaceMap/rfReplaceMap.xml",
+        "size": 1079140
+      },
+      {
+        "path": "opt/HMServer/groups/groupdefinitions.xml",
+        "size": 358646
+      },
+      {
+        "path": "src/webui/www/config/easymodes/etc/hmipChannelConfigDialogs.tcl",
+        "size": 320138
+      },
+      {
+        "path": "www/config/easymodes/etc/hmipChannelConfigDialogs.tcl",
+        "size": 320058
+      },
+      {
+        "path": "src/devicetypes/rftypes/ccu1/rf_tc_it_wm-w-eu.xml",
+        "size": 314442
+      },
+      {
+        "path": "src/devicetypes/rftypes/rf_tc_it_wm-w-eu.xml",
+        "size": 299579
+      },
+      {
+        "path": "src/devicetypes/rftypes/rf_cc_tc_le_v1_9.xml",
+        "size": 263905
+      },
+      {
+        "path": "src/devicetypes/rftypes/rf_cc_tc.xml",
+        "size": 205443
+      }
+    ]
+  },
+  "prior_docs": null
+}

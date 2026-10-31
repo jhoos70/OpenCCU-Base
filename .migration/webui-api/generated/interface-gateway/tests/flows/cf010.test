@@ -1,0 +1,73 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF010 Install mode (Interface.setInstallModeHMIP; flow-model.md#cf010): CF007 steps -> on/time
+# conversion -> branch on installMode (LOCAL whitelist struct, ALL, otherwise STOP) -> status check
+# -> true. v1 stays frozen; on /api/v2 'on' is forced to 0 for any installMode other than LOCAL/ALL
+# and the key must be 32 hex digits.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,interface-gateway,schema-harness
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set XMLIF "<interfaces>\n<ipc><name>HmIP-RF</name><url>http://127.0.0.1:2010</url><info>HmIP-RF</info></ipc>\n</interfaces>"
+set IF [list -interfaces 0 -files [list etc/config/InterfacesList.xml $XMLIF]]
+set S {_session_id_ AbCdEf1234 interface HmIP-RF}
+set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::ADMIN {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set KEY 00112233445566778899AABBCCDDEEFF
+
+test cf010-1 {step 3 ALL: setInstallMode(bool on, int time)} -body {
+  set r [call Interface.setInstallModeHMIP [concat $S {installMode ALL on true time 60 address {} key {} keymode {}}] {*}$IF -xmlrpc {{setInstallMode 1}}]
+  set c [lindex [dict get $r xmlrpc_calls] 0]
+  list [result $r] [lindex $c 1] [lrange $c 2 end]
+} -result [list true setInstallMode {{bool 1} {int 60}}]
+
+test cf010-2 {step 3 LOCAL: setInstallModeWithWhitelist with the struct ADDRESS/KEY/KEY_MODE} -body {
+  set r [call Interface.setInstallModeHMIP [concat $S [list installMode LOCAL on true time 90 address 3014F711A000 key $::KEY keymode LOCAL]] {*}$IF -xmlrpc {{setInstallModeWithWhitelist 1}}]
+  set c [lindex [dict get $r xmlrpc_calls] 0]
+  list [result $r] [lindex $c 1]
+} -result {true setInstallModeWithWhitelist}
+
+test cf010-3 {step 2: on is true for "true", 1 and "1" and false otherwise; time defaults to 30} -body {
+  set out {}
+  foreach v {true 1 yes 0 {}} {
+    set r [call Interface.setInstallModeHMIP [concat $S [list installMode ALL on $v time {} address {} key {} keymode {}]] {*}$IF -xmlrpc {{setInstallMode 1}}]
+    set c [lindex [dict get $r xmlrpc_calls] 0]
+    lappend out [lindex $c 2 1]/[lindex $c 3 1]
+  }
+  set out
+} -result {1/30 1/30 0/30 0/30 0/30}
+
+test cf010-4 {step 5 v2: for an installMode other than LOCAL/ALL the flag 'on' is forced to 0; a non-hex key is 403 'invalid argument (key)' (HTTP 422)} -body {
+  set a [call Interface.setInstallModeHMIP [list interface HmIP-RF installMode STOP on true time 30 address {} key {} keymode {}] {*}$IF -xmlrpc {{setInstallMode 1}} {*}$V2]
+  set onValue [lindex [lindex [dict get $a xmlrpc_calls] 0] 2 1]
+  set b [call Interface.setInstallModeHMIP [list interface HmIP-RF installMode LOCAL on true time 30 address 3014F711A000 key nothex keymode LOCAL] {*}$IF {*}$V2]
+  list $onValue [err $b] [status $b]
+} -result {0 {403 {invalid argument (key)}} 422}
+
+test cf010-5 {step 5 v1 frozen: a non-hex key is forwarded unvalidated} -body {
+  set r [call Interface.setInstallModeHMIP [concat $S [list installMode LOCAL on true time 30 address 3014F711A000 key nothex keymode LOCAL]] {*}$IF -xmlrpc {{setInstallModeWithWhitelist 1}}]
+  list [result $r] [llength [dict get $r xmlrpc_calls]]
+} -result {true 1}
+
+test cf010-6 {error path: an XML-RPC fault is mapped (501-507/599)} -body {
+  set r [call Interface.setInstallModeHMIP [concat $S {installMode ALL on true time 60 address {} key {} keymode {}}] {*}$IF -fault {{setInstallMode -2 boom}}]
+  list [err $r] [string match *boom* [dict get $r body]]
+} -result {{502 {XML-RPC: unknown device or channel}} 0}
+
+cleanupTests

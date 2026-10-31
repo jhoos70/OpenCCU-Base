@@ -1,0 +1,217 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# Contract: mock bridges of the schema-harness (T011/T012).
+set here [file dirname [file normalize [info script]]]
+source [file join $here helpers mocks.tcl]
+
+# ---------------------------------------------------------------- xmlrpc
+test mock-xmlrpc-1 {scripted struct is returned for a method, call is recorded} -setup {
+  mock::xmlrpc::reset
+  mock::xmlrpc::install
+  mock::xmlrpc::expect getParamset {LEVEL 0.5 STATE true}
+} -body {
+  set r [xmlrpc http://127.0.0.1:2001 getParamset [list string NEQ0123456:1] [list string VALUES]]
+  list $r [mock::xmlrpc::calls]
+} -result {{LEVEL 0.5 STATE true} {{http://127.0.0.1:2001 getParamset {string NEQ0123456:1} {string VALUES}}}}
+
+test mock-xmlrpc-2 {scripted fault surfaces as a Tcl return code that catch can map} -setup {
+  mock::xmlrpc::reset
+  mock::xmlrpc::install
+  mock::xmlrpc::fault getDeviceDescription -2 "unknown device"
+} -body {
+  set status [catch {xmlrpc http://127.0.0.1:2001 getDeviceDescription {string X}} msg]
+  list $status $msg
+} -result {-2 {unknown device}}
+
+test mock-xmlrpc-3 {an unscripted call is a Tcl error (status 1), never a silent success} -setup {
+  mock::xmlrpc::reset
+  mock::xmlrpc::install
+} -body {
+  catch {xmlrpc http://127.0.0.1:2001 nothingScripted} msg
+} -match glob -result 1
+
+test mock-xmlrpc-4 {multiple scripted answers for the same method are consumed in order, the last one repeats} -setup {
+  mock::xmlrpc::reset
+  mock::xmlrpc::install
+  mock::xmlrpc::expect listDevices {a}
+  mock::xmlrpc::expect listDevices {b}
+} -body {
+  list [xmlrpc u listDevices] [xmlrpc u listDevices] [xmlrpc u listDevices]
+} -result {a b b}
+
+# ----------------------------------------------------------- rega_script
+test mock-rega-1 {rega_script returns the scripted STDOUT for a matching script} -setup {
+  mock::rega_script::reset
+  mock::rega_script::install
+  mock::rega_script::expect *Write(42)* 42
+} -body {
+  set out [dict get [rega_script "var x = 1;\nWrite(42);"] STDOUT]
+  list $out [llength [mock::rega_script::calls]]
+} -result {42 1}
+
+test mock-rega-2 {an unmatched script yields empty STDOUT} -setup {
+  mock::rega_script::reset
+  mock::rega_script::install
+} -body {
+  dict get [rega_script "Write(1);"] STDOUT
+} -result {}
+
+test mock-rega-3 {a failing rega_script raises a Tcl error so hmscript_run can fall back to the empty string} -setup {
+  mock::rega_script::reset
+  mock::rega_script::install
+  mock::rega_script::fail *boom*
+} -body {
+  catch {rega_script "boom"}
+} -result 1
+
+test mock-rega-4 {rega_exec is defined and recorded as well} -setup {
+  mock::rega_script::reset
+  mock::rega_script::install
+  mock::rega_script::expect *x* OUT
+} -body {
+  dict get [rega_exec "x"] STDOUT
+} -result OUT
+
+# --------------------------------------------------------------- session
+test mock-session-1 {a registered session answers the checksid and getupl HomeMatic scripts} -setup {
+  mock::rega_script::reset
+  mock::session::reset
+  mock::session::add AbCdEf1234 2 1004
+  mock::rega_script::install
+} -body {
+  set up [string map [list \\n \n] "var _session_id_ = \"AbCdEf1234\";\nvar s = system.GetSessionVarStr(id); upl = s.StrValueByIndex(\";\", 1);"]
+  array set u [rega_script $up]
+  array set c [rega_script "var _session_id_ = \"AbCdEf1234\";\nvar s = system.GetSessionVarStr(id); Write(result);"]
+  array set n [rega_script "var _session_id_ = \"nobody\";\nvar s = system.GetSessionVarStr(id); upl = s.StrValueByIndex(\";\", 1);"]
+  list $u(STDOUT) $c(STDOUT) $n(STDOUT)
+} -result {2 true 0}
+
+# ------------------------------------------------------------------- cgi
+test mock-cgi-1 {POST env carries method, content length, content type, body and HTTP_* headers} -body {
+  set d [mock::cgi_env::build POST -body {{"method":"x","params":{}}} -contenttype application/json \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -remote_addr 192.0.2.7]
+  set e [dict get $d env]
+  list [dict get $e REQUEST_METHOD] [dict get $e CONTENT_LENGTH] [dict get $e CONTENT_TYPE] \
+    [dict get $e HTTP_X_REQUESTED_WITH] [dict get $e HTTP_X_SESSION_ID] [dict get $e REMOTE_ADDR] [dict get $d stdin]
+} -result {POST 26 application/json XMLHttpRequest AbCdEf1234 192.0.2.7 {{"method":"x","params":{}}}}
+
+test mock-cgi-2 {GET env carries the query string and no body} -body {
+  set d [mock::cgi_env::build GET -query a=b]
+  set e [dict get $d env]
+  list [dict get $e REQUEST_METHOD] [dict get $e QUERY_STRING] [dict get $d stdin] [dict exists $e CONTENT_LENGTH]
+} -result {GET a=b {} 0}
+
+# -------------------------------------------------------------------- fs
+test mock-fs-1 {fs temp root provides /tmp/event, /etc/config and /var/tmp and can be written and read} -body {
+  set root [mock::fs::create]
+  mock::fs::write $root etc/config/InterfacesList.xml "<ipc/>"
+  set r [list [file isdirectory [file join $root tmp event]] [file isdirectory [file join $root var tmp]] [mock::fs::read $root etc/config/InterfacesList.xml]]
+  mock::fs::destroy $root
+  lappend r [file exists $root]
+} -result {1 1 <ipc/> 0}
+
+# ------------------------------------------------------ run_cgi (bridge)
+test mock-run-1 {run_cgi executes a CGI in a subprocess with env, stdin, mocked xmlrpc/rega and recorded syslog} -setup {
+  set tmp [mock::tmpdir]
+  set fd [open [file join $tmp t.cgi] w]
+  puts $fd {
+    load tclrpc.so
+    set body [read stdin $env(CONTENT_LENGTH)]
+    set r [xmlrpc http://h m [list string $body]]
+    array set x [rega_script "Write(1);"]
+    exec logger -t webui-api -p daemon.err "hello world"
+    puts "CONTENT-TYPE: text/plain"
+    puts ""
+    puts "$r|$x(STDOUT)"
+  }
+  close $fd
+  mock::xmlrpc::reset; mock::rega_script::reset
+  mock::xmlrpc::expect m RESULT
+  mock::rega_script::expect *Write* R1
+} -body {
+  set d [mock::cgi_env::build POST -body abc -contenttype text/plain]
+  set res [mock::run_cgi [file join $tmp t.cgi] $d]
+  list [dict get $res status] [string trim [lindex [split [dict get $res stdout] \n] end-1]] \
+    [dict get $res syslog] [llength [dict get $res xmlrpc_calls]] [llength [dict get $res rega_calls]]
+} -cleanup {
+  file delete -force $tmp
+} -result {0 RESULT|R1 {{-t webui-api -p daemon.err {hello world}}} 1 1}
+
+test mock-run-2 {run_cgi maps /tmp, /etc and /var paths into the fs root} -setup {
+  set tmp [mock::tmpdir]
+  set root [mock::fs::create]
+  set fd [open [file join $tmp t.cgi] w]
+  puts $fd {
+    set fd [open /tmp/event/probe w]; puts $fd hi; close $fd
+    puts "CONTENT-TYPE: text/plain"
+    puts ""
+    puts [file exists /tmp/event/probe]
+  }
+  close $fd
+} -body {
+  set res [mock::run_cgi [file join $tmp t.cgi] [mock::cgi_env::build GET] -fsroot $root]
+  list [string trim [lindex [split [dict get $res stdout] \n] end-1]] [file exists [file join $root tmp event probe]] [file exists /tmp/event/probe]
+} -cleanup {
+  file delete -force $tmp
+  mock::fs::destroy $root
+} -result {1 1 0}
+
+test mock-run-3 {run_cgi supports a frozen clock for window based logic} -setup {
+  set tmp [mock::tmpdir]
+  set fd [open [file join $tmp t.cgi] w]
+  puts $fd {
+    puts "CONTENT-TYPE: text/plain"
+    puts ""
+    puts [clock seconds]
+  }
+  close $fd
+} -body {
+  set res [mock::run_cgi [file join $tmp t.cgi] [mock::cgi_env::build GET] -now 1700000000]
+  string trim [lindex [split [dict get $res stdout] \n] end-1]
+} -cleanup {
+  file delete -force $tmp
+} -result 1700000000
+
+test mock-run-5 {external commands never run inside run_cgi: they are recorded and answered by mock::exec} -setup {
+  set tmp [mock::tmpdir]
+  set marker [file join $tmp marker]
+  set fd [open [file join $tmp t.cgi] w]
+  puts $fd "
+    set out \[exec sh -c {touch $marker}\]
+    set v \[exec cat /etc/config/tweaks\]
+    puts \"CONTENT-TYPE: text/plain\"
+    puts \"\"
+    puts \"\$v\"
+  "
+  close $fd
+  mock::exec::reset
+  mock::exec::expect {cat /etc/config/tweaks} {fromrule}
+} -body {
+  set res [mock::run_cgi [file join $tmp t.cgi] [mock::cgi_env::build GET]]
+  list [string trim [lindex [split [dict get $res stdout] \n] end-1]] [file exists $marker] [dict get $res exec_calls]
+} -cleanup {
+  mock::exec::reset
+  file delete -force $tmp
+} -result {fromrule 0 {{sh -c {touch */marker}} {cat /etc/config/tweaks}}} -match glob
+
+test mock-run-4 {compose builds a document root overlaying the staged components over the legacy api tree} -body {
+  set doc [mock::compose -legacy 1 -staged 0]
+  set r [list [file exists [file join $doc api homematic.cgi]] [file exists [file join $doc api eq3 json.tcl]] [file exists [file join $doc api methods.conf]]]
+  file delete -force $doc
+  set r
+} -result {1 1 1}
+
+test mock-http-1 {the scripted ::http::geturl returns a token whose code and meta can be read (session login.htm)} -setup {
+  mock::http::reset
+  mock::http::install
+  mock::http::expect "HTTP/1.1 302 Found" {Location http://x/index.htm?sid=@AbCdEf1234@}
+} -body {
+  set tok [::http::geturl http://127.0.0.1/login.htm -query a=b]
+  upvar #0 $tok s
+  set r [list [::http::code $tok] $s(meta) [llength [mock::http::calls]]]
+  ::http::cleanup $tok
+  set r
+} -result {{HTTP/1.1 302 Found} {Location http://x/index.htm?sid=@AbCdEf1234@} 1}
+
+cleanupTests

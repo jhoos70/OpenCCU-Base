@@ -1,0 +1,55 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC018 system-admin -> security-session: rega system.Save() / hmscript_runInline (SafeMode.enter,
+# RecoveryMode.enter, restartReGa). Request: script = fixed text. Response: STDOUT; an empty answer
+# is ignored (frozen) for restartReGa, a failing system.Save() is an error for RecoveryMode.enter.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,system-admin
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc saves {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *system.Save()* $c]} { incr n } }
+  return $n
+}
+
+test ic018-1 {SafeMode.enter persists the ReGa state with 'rega system.Save()' (fixed text, no request data) exactly once, before the reboot} -body {
+  set fs [mock::fs::create]
+  set r [call SafeMode.enter {_session_id_ AbCdEf1234 junk {; rm -rf /}} -fs $fs]
+  set out [list [saves $r] [dict get $r exec_calls]]
+  mock::fs::destroy $fs
+  set out
+} -result [list 1 [list {/sbin/reboot -d 2 2>/dev/null >/dev/null &}]]
+
+test ic018-2 {RecoveryMode.enter: system.Save() once; a failing Save is error 500 and ends the call before the flag file and the reboot} -body {
+  set fs [mock::fs::create]
+  set a [call RecoveryMode.enter {_session_id_ AbCdEf1234} -fs $fs -files {VERSION "PLATFORM=rpi4\n"}]
+  set b [call RecoveryMode.enter {_session_id_ AbCdEf1234} -fs $fs -files {VERSION "PLATFORM=rpi4\n"} -regafail {{*system.Save()*}}]
+  mock::fs::destroy $fs
+  list [saves $a] [lindex [err $b] 0] [llength [dict get $b exec_calls]]
+} -result {1 500 0}
+
+test ic018-3 {CCU.restartReGa runs the fixed restart command; its failure is ignored (frozen): the result is null} -body {
+  set r [call CCU.restartReGa {_session_id_ AbCdEf1234} -execfail {{*monit* boom}}]
+  list [lindex [err $r] 0] [regexp {"result": null} [dict get $r body]]
+} -result {none 1}
+
+test ic018-4 {the scripts are fixed text: request parameters never reach the ReGa script or the command line of these methods} -body {
+  set fs [mock::fs::create]
+  set r [call SafeMode.enter {_session_id_ AbCdEf1234 x {$(reboot)}} -fs $fs]
+  set all [join [concat [dict get $r rega_calls] [dict get $r exec_calls]] \n]
+  set n [string match {*$(reboot)*} $all]
+  mock::fs::destroy $fs
+  set n
+} -result 0
+
+cleanupTests

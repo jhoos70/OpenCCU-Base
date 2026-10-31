@@ -1,0 +1,90 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# CF011 Gateway configuration rewrite (BidCoS-RF / BidCoS-Wired; flow-model.md#cf011): ADMIN call
+# through the dispatcher -> read the old file, keep the header -> validate every element (CR/LF ->
+# 403) -> temporary file next to the target -> rename (RF numbering from 1, Wired from 0).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,system-admin,schema-harness
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+proc callraw {json args} { return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::ADMIN {*}$args]]] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc setreq {method ifaces} {
+  return "\{\"method\":\"$method\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"interfaces\":$ifaces\},\"id\":1\}"
+}
+set RFCONF "# rfd config\nListen Port = 2001\n\n\[Interface 1\]\nType = Lan Interface\nName = LAN GW\nSerial Number = OEQ1\n"
+set TWO {[{"type":"Lan Interface","userName":"GW1","serialNumber":"OEQ1","encryptionKey":"k1","ipAddress":"10.0.0.2"},{"type":"Lan Interface","userName":"GW2","serialNumber":"OEQ2","encryptionKey":"k2"}]}
+
+test cf011-1 {steps 1-5 (RF): the header up to the first interface section is kept, the sections are numbered from 1, the file is replaced through a temporary file} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf $RFCONF
+  set r [callraw [setreq BidCoS_RF.setConfigurationRF $TWO] -fs $fs]
+  set out [mock::fs::read $fs etc/config/rfd.conf]
+  set tmp [llength [glob -nocomplain -directory [file join $fs etc config] *.tmp]]
+  mock::fs::destroy $fs
+  list [result $r] [string match "# rfd config\nListen Port = 2001\n*" $out] [regexp {\[Interface 1\]} $out] [regexp {\[Interface 2\]} $out] [regexp {\[Interface 0\]} $out] $tmp
+} -result {true 1 1 1 0 0}
+
+test cf011-2 {step 4 (Wired): the sections are numbered from 0} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/hs485d.conf "# hs485d\n\[Interface 0\]\nType = HMW-LGW\nName = W\nSerial Number = W1\n"
+  set r [callraw [setreq BidCoS_Wired.setConfigurationWired {[{"type":"HMW-LGW","userName":"W1","serialNumber":"W1","encryptionKey":"k"}]}] -fs $fs]
+  set out [mock::fs::read $fs etc/config/hs485d.conf]
+  mock::fs::destroy $fs
+  list [result $r] [regexp {\[Interface 0\]} $out] [regexp {\[Interface 1\]} $out]
+} -result {true 1 0}
+
+test cf011-3 {step 3 error: CR or LF in userName, serialNumber, encryptionKey or ipAddress is 403 'invalid argument (interfaces)' and the file stays byte-identical} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf $RFCONF
+  set out {}
+  foreach field {userName serialNumber encryptionKey ipAddress} {
+    set el "\[\{\"type\":\"Lan Interface\",\"userName\":\"a\",\"serialNumber\":\"S\",\"encryptionKey\":\"k\",\"ipAddress\":\"1.1.1.1\",\"$field\":\"x\\r\\ny\"\}\]"
+    set r [callraw [setreq BidCoS_RF.setConfigurationRF $el] -fs $fs]
+    lappend out [lindex [err $r] 0]
+  }
+  set same [expr {[mock::fs::read $fs etc/config/rfd.conf] eq $RFCONF}]
+  mock::fs::destroy $fs
+  list $out $same
+} -result {{403 403 403 403} 1}
+
+test cf011-4 {error path: a malformed element or an unreadable source leaves the previous file untouched and answers false; no temp file stays} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf $RFCONF
+  set r [callraw [setreq BidCoS_RF.setConfigurationRF {["oops"]}] -fs $fs]
+  set same [expr {[mock::fs::read $fs etc/config/rfd.conf] eq $RFCONF}]
+  set tmp [llength [glob -nocomplain -directory [file join $fs etc config] *.tmp]]
+  mock::fs::destroy $fs
+  list [result $r] $same $tmp
+} -result {false 1 0}
+
+test cf011-5 {step 6: BidCoS.changeLanGatewayKey writes <lgwserial>.keychange write-then-rename; an lgwserial outside ^[A-Za-z0-9_-]{1,32}$ is 403 before any path is built} -body {
+  set fs [mock::fs::create]
+  set ok [callraw {{"method":"BidCoS.changeLanGatewayKey","params":{"_session_id_":"AbCdEf1234","lgwclass":"RF","lgwserial":"OEQ1","lgwip":"1.2.3.4","newkey":"n","curkey":"c"},"id":1}} -fs $fs]
+  set bad [callraw {{"method":"BidCoS.changeLanGatewayKey","params":{"_session_id_":"AbCdEf1234","lgwclass":"RF","lgwserial":"../x","lgwip":"1.2.3.4","newkey":"n","curkey":"c"},"id":1}} -fs $fs]
+  set out [list [result $ok] [file exists [file join $fs etc config OEQ1.keychange]] [lindex [err $bad] 0] [file exists [file join $fs etc x.keychange]]]
+  mock::fs::destroy $fs
+  set out
+} -result {true 1 403 0}
+
+test cf011-6 {error path: a USER session is denied (400) before any file access} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/rfd.conf $RFCONF
+  set r [callraw [setreq BidCoS_RF.setConfigurationRF $TWO] -fs $fs -sessions {{AbCdEf1234 2 1 U}}]
+  set same [expr {[mock::fs::read $fs etc/config/rfd.conf] eq $RFCONF}]
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $same
+} -result {400 1}
+
+cleanupTests

@@ -1,0 +1,65 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP003 acceptance[6], [7]: the per-sid limiter runs BEFORE the privilege lookup (getupl.hms). The
+# order is a pipeline property of homematic.cgi, so the test lives in the dispatcher tree and reads
+# the mock rega_script counter of the schema-harness.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set T0 1700000000
+set SESS {{AbCdEf1234 1 1000 Guest}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc listall {fs t} {
+  return [golden::call_raw {{"method":"Device.listAll","params":{"_session_id_":"AbCdEf1234","interface":"BidCos-RF"},"id":1}} \
+    [golden::prepare [list -candidate $::CAND -sessions $::SESS -fs $fs -now $t]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc getupls {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *StrValueByIndex* $c]} { incr n } }
+  return $n
+}
+proc seed {fs sid stamps} {
+  set d [file join $fs tmp webui-ratelimit]
+  file mkdir $d
+  set fd [open [file join $d sid-$sid] w]; puts $fd [join $stamps \n]; close $fd
+}
+
+test sp003-order-1 {rate_limit=true, sid AbCdEf1234 at 60 requests in 10 s: the 61st Device.listAll is error 429 and getupl.hms / rega_script are not called at all} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set r [listall $fs [expr {$T0 + 2}]]
+  list [err $r] [getupls $r] [llength [dict get $r rega_calls]]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {{429 {rate limit exceeded}} 0 0}
+
+test sp003-order-2 {rate_limit=false: the 61st request executes getupl.hms exactly once and is never 429} -setup {
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 60 $T0]
+} -body {
+  set r [listall $fs [expr {$T0 + 2}]]
+  list [err $r] [getupls $r]
+} -cleanup { mock::fs::destroy $fs } -result {none 1}
+
+test sp003-order-3 {below the limit the privilege lookup runs once per request (limiter first, lookup second)} -setup {
+  setconf {array set API_CONFIG {rate_limit true}}
+  set fs [mock::fs::create]
+  seed $fs AbCdEf1234 [lrepeat 59 $T0]
+} -body {
+  set r [listall $fs [expr {$T0 + 2}]]
+  list [err $r] [getupls $r]
+} -cleanup { clearconf; mock::fs::destroy $fs } -result {none 1}
+
+cleanupTests

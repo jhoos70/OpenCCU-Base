@@ -1,0 +1,154 @@
+{
+  "components": [
+    {
+      "name": "dispatcher",
+      "output_dir": ".migration/webui-api/generated/dispatcher",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/dispatcher && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/dispatcher && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "security-session",
+      "output_dir": ".migration/webui-api/generated/security-session",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/security-session && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/security-session && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "event-push",
+      "output_dir": ".migration/webui-api/generated/event-push",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/event-push && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/event-push && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "interface-gateway",
+      "output_dir": ".migration/webui-api/generated/interface-gateway",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/interface-gateway && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/interface-gateway && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "rega-model",
+      "output_dir": ".migration/webui-api/generated/rega-model",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/rega-model && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/rega-model && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "system-admin",
+      "output_dir": ".migration/webui-api/generated/system-admin",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/system-admin && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/system-admin && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "backup-cgis",
+      "output_dir": ".migration/webui-api/generated/backup-cgis",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/backup-cgis && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/backup-cgis && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "user-profile",
+      "output_dir": ".migration/webui-api/generated/user-profile",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/user-profile && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/user-profile && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "schema-harness",
+      "output_dir": ".migration/webui-api/generated/schema-harness",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/schema-harness && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/schema-harness && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    },
+    {
+      "name": "optional-gateway",
+      "output_dir": ".migration/webui-api/generated/optional-gateway",
+      "template": {
+        "use_existing": false,
+        "paths": [],
+        "notes": "No external template; mirror existing repo conventions (src/webui/www/api: methods/<ns>/<method>.tcl, eq3/ libs, backup/ CGIs) with tcltest files under tests/ and a tests/all.tcl runner. Staged output only; reviewed and copied into src/webui/ manually."
+      },
+      "verification": {
+        "install_command": null,
+        "build_command": "cd .migration/webui-api/generated/optional-gateway && find . -name '*.tcl' -o -name '*.cgi' | while read f; do echo \"set c [read [open {$f}]]; if {![info complete $c]} {puts {incomplete: $f}; exit 1}\" | tclsh8.6 || exit 1; done",
+        "test_command": "cd .migration/webui-api/generated/optional-gateway && tclsh8.6 tests/all.tcl",
+        "acceptance_command": null
+      }
+    }
+  ]
+}

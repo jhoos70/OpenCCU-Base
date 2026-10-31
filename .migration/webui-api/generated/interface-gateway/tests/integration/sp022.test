@@ -1,0 +1,58 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP022 NFR and integration coverage (spec.json#SP022 non_functional_requirements[0..5]),
+# boundary and error cases, golden re-run.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:interface-gateway {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER {{AbCdEf1234 2 1000 User}}
+set S {_session_id_ AbCdEf1234 interface BidCos-RF}
+
+test sp022-nfr0 {NFR0: refreshDeployedDeviceFirmwareList is true exactly when the executed result raises (status 1)} -body {
+  list [result [call Interface.refreshDeployedDeviceFirmwareList $S -xmlrpc {{refreshDeployedDeviceFirmwareList doesnotexist}}]] \
+       [result [call Interface.refreshDeployedDeviceFirmwareList $S -xmlrpc {{refreshDeployedDeviceFirmwareList pwd}}]] \
+       [result [call Interface.refreshDeployedDeviceFirmwareList $S -xmlrpc {{refreshDeployedDeviceFirmwareList return}}]]
+} -result {true false false}
+
+test sp022-nfr1 {NFR1: updateFirmware result other than exactly 1 is false (boolean, not a per-device array)} -body {
+  set out {}
+  foreach v {1 0 true 2 {}} { lappend out [result [call Interface.updateFirmware [concat $S {device D}] -xmlrpc [list [list updateFirmware $v]]]] }
+  set out
+} -result {true false false false false}
+
+test sp022-nfr2 {NFR2: v1 getSuppressedServiceMessages is double encoded (a quoted string containing JSON)} -body {
+  result [call Interface.getSuppressedServiceMessages [concat $S {channelAddress C:0}] -sessions $USER -xmlrpc {{getSuppressedServiceMessages {}}}]
+} -result {"[]"}
+
+test sp022-nfr3 {NFR3: suppressServiceMessages uses the XML-RPC token 'boolean' (not 'bool')} -body {
+  set r [call Interface.suppressServiceMessages [concat $S {channelAddress C:0 parameterId UNREACH suppress false}] -xmlrpc {{suppressServiceMessages 1}}]
+  lindex [lindex [dict get $r xmlrpc_calls] 0] 4
+} -result {boolean false}
+
+test sp022-nfr4 {NFR4: the service message count is not filtered by suppression} -body {
+  result [call Interface.getServiceMessageCount $S -sessions $GUEST -xmlrpc {{getServiceMessages {{a} {b}}} {getSuppressedServiceMessages {a}}}]
+} -result 2
+
+test sp022-nfr5 {NFR5: setLogLevel has no local range check (level 99 is forwarded)} -body {
+  set r [call Interface.setLogLevel [concat $S {level 99}] -xmlrpc {{logLevel 99}}]
+  list [result $r] [lindex [lindex [dict get $r xmlrpc_calls] 0] 2]
+} -result {99 {int 99}}
+
+test sp022-golden {golden re-run: the firmware, service message and log level methods replay byte-identical} -body {
+  golden::compare_all -candidate only:interface-gateway -only {Interface.updateFirmware Interface.refreshDeployedDeviceFirmwareList Interface.getServiceMessageCount Interface.suppressServiceMessages Interface.getSuppressedServiceMessages Interface.getLogLevel Interface.setLogLevel}
+} -result {}
+
+cleanupTests

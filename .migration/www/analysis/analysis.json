@@ -1,0 +1,559 @@
+{
+  "feature_name": "www",
+  "feature_description": "The root-level www/ directory is a committed, stale snapshot of the deployed CCU web root (Tcl CGIs, ReGa pages, JSON-RPC API, webui.js bundle, vendored JS/CSS, device images; 4,051 tracked entries incl. 24 dangling absolute symlinks). The shipped web root is produced by the CMake targets webui-assets and webui-www-source-assets (from src/webui/www and src/webui/rega/www) plus devicetypes-assets (st_values.cgi/js from src/devicetypes); www/ is only written by the manual 'make deploy' path and is read by no build, CI or test step.",
+  "control_flows": [
+    {
+      "id": "CF001",
+      "summary": "Staged web root assembly: copy src/webui/www and src/webui/rega/www into ${ROOTFS_DIR}/www and create the runtime symlinks",
+      "entry_point": {
+        "component": "src/webui/CMakeLists.txt",
+        "function": "webui-assets"
+      },
+      "affected_by_migration": true,
+      "migration_impact": "One of three producers of the shipped web root (with CF002 and CF007); its output must remain byte-identical after www/ is removed and is part of the manifest baseline for the before/after sha256 comparison."
+    },
+    {
+      "id": "CF002",
+      "summary": "Generation of webui.js, style.css and DEVDB.tcl from www_source, re-encoding to ISO-8859-1 and copying into the staged web root, then deleting the generator outputs",
+      "entry_point": {
+        "component": "src/webui/www_source/CMakeLists.txt",
+        "function": "webui-www-source-assets"
+      },
+      "affected_by_migration": true,
+      "migration_impact": "Replaces the tracked generated copies www/webui/webui.js, www/webui/style.css and www/config/devdescr/DEVDB.tcl; line structure and encoding must stay unchanged because OpenCCU rootfs patches target them."
+    },
+    {
+      "id": "CF003",
+      "summary": "make deploy: build and install a platform, then copy selected-install etc/firmware/www/opt/usr back into the repo tree",
+      "entry_point": {
+        "component": "Makefile",
+        "function": "deploy-%"
+      },
+      "affected_by_migration": true,
+      "migration_impact": "The only in-repo writer of ./www; must be changed to skip www (or redirect to build/) before www/ is deleted, otherwise it silently recreates the tree."
+    },
+    {
+      "id": "CF004",
+      "summary": "CI staged-package verification: build with DEPLOY_TO_REPO=OFF and assert staged webui.js, style.css and DEVDB.tcl are non-empty",
+      "entry_point": {
+        "component": ".github/workflows/ci.yml",
+        "function": "Verify staged package"
+      },
+      "affected_by_migration": true,
+      "migration_impact": "Already checks the generated staged copies, not the committed ones, so deleting www/ does not affect it; a new guard step against tracked www/ files and a manifest comparison are added here."
+    },
+    {
+      "id": "CF005",
+      "summary": "Install closure of the assets component: install ${ROOTFS_DIR}/www/ to www",
+      "entry_point": {
+        "component": "cmake/Components.cmake",
+        "function": "install(DIRECTORY ROOTFS_DIR/www)"
+      },
+      "affected_by_migration": false,
+      "migration_impact": "Consumes the staging tree, not the repo www/; unaffected by removal. tests/test-components.py only creates a temporary www/keep placeholder inside a temp rootfs."
+    },
+    {
+      "id": "CF006",
+      "summary": "Sibling OpenCCU Buildroot build: pin this repo by SHA, build the web root via src/webui, apply rootfs patches to the staged asset-rootfs and copy www into the target",
+      "entry_point": {
+        "component": "OpenCCU buildroot-external/package/openccu-base/openccu-base.mk",
+        "function": "openccu-base build"
+      },
+      "affected_by_migration": true,
+      "migration_impact": "Does not read repo www/; after cutover its OPENCCU_BASE_VERSION pin must be bumped and make check-openccu-base plus patch validation re-run."
+    },
+    {
+      "id": "CF007",
+      "summary": "devicetypes-assets copies st_values.cgi and st_values.js into the staged www/config, forced on whenever BUILD_WEBUI is ON",
+      "entry_point": {
+        "component": "src/devicetypes/CMakeLists.txt",
+        "function": "devicetypes-assets"
+      },
+      "affected_by_migration": true,
+      "migration_impact": "Third producer of the staged web root; the before/after manifest must cover it so st_values.* are accounted for when repo www/ is removed."
+    }
+  ],
+  "entities": [
+    {
+      "name": "CommittedWebRootCopy",
+      "description": "The tracked tree under www/ (4,051 entries) that duplicates and has drifted from the real web root sources; the object to be retired.",
+      "storage_location": "git: www/ (49 MB working tree)",
+      "attributes": [
+        {
+          "name": "tracked_entries",
+          "type": "int",
+          "nullable": false,
+          "constraints": "4051 per git ls-files www",
+          "description": "Number of tracked paths under www/"
+        },
+        {
+          "name": "symlink_entries",
+          "type": "int",
+          "nullable": false,
+          "constraints": "24, mode 120000, absolute targets /opt/hm/... /var/EULA.*",
+          "description": "Committed symlinks that dangle in any checkout"
+        },
+        {
+          "name": "differing_files",
+          "type": "int",
+          "nullable": false,
+          "constraints": "90 vs src/webui/www plus 49 vs src/webui/rega/www",
+          "description": "Files whose content differs from the source of record"
+        },
+        {
+          "name": "generated_files",
+          "type": "path[]",
+          "nullable": false,
+          "constraints": "webui.js, style.css, DEVDB.tcl, st_values.js (copy of src/devicetypes source)",
+          "description": "Build outputs and copies tracked in www/; licenseinfo.htm is a stale artifact with no in-repo producer"
+        }
+      ],
+      "relationships": [
+        "CommittedWebRootCopy.differing_files -> WebRootSource.files",
+        "CommittedWebRootCopy.generated_files -> GeneratedAsset.path"
+      ],
+      "related_specs": [
+        "SP001",
+        "SP002",
+        "SP003",
+        "SP005",
+        "SP006",
+        "SP009"
+      ]
+    },
+    {
+      "name": "WebRootSource",
+      "description": "Authoritative sources of the web root: src/webui/www (incl. Bootstrap 5, easymodes, api, tcl), src/webui/rega/www and src/webui/www_source generators.",
+      "storage_location": "git: src/webui/www, src/webui/rega/www, src/webui/www_source",
+      "attributes": [
+        {
+          "name": "files",
+          "type": "path[]",
+          "nullable": false,
+          "constraints": "Receives all current work (newest commit 2026-10-09)",
+          "description": "Source files copied verbatim into the staged web root"
+        }
+      ],
+      "relationships": [
+        "WebRootSource.files -> StagedWebRoot.files"
+      ],
+      "related_specs": [
+        "SP001",
+        "SP002"
+      ]
+    },
+    {
+      "name": "GeneratedAsset",
+      "description": "webui.js (concatenated, ISO-8859-1), style.css and DEVDB.tcl produced by create_*.tcl and utf82ansi.py, ignored by src/webui/www_source/.gitignore.",
+      "storage_location": "build tree, then ${ROOTFS_DIR}/www/webui and www/config/devdescr",
+      "attributes": [
+        {
+          "name": "path",
+          "type": "string",
+          "nullable": false,
+          "constraints": "www/webui/webui.js, www/webui/style.css, www/config/devdescr/DEVDB.tcl",
+          "description": "Destination path in the staged root"
+        },
+        {
+          "name": "encoding",
+          "type": "string",
+          "nullable": false,
+          "constraints": "ISO-8859-1 after utf82ansi.py",
+          "description": "Output encoding required by sibling patches"
+        }
+      ],
+      "relationships": [
+        "GeneratedAsset.path -> StagedWebRoot.files"
+      ],
+      "related_specs": [
+        "SP002",
+        "SP005"
+      ]
+    },
+    {
+      "name": "StagedWebRoot",
+      "description": "${ROOTFS_DIR}/www: the shipped web root that is installed as the assets component and consumed by OpenCCU.",
+      "storage_location": "build/<platform>/rootfs/www",
+      "attributes": [
+        {
+          "name": "files",
+          "type": "path[]",
+          "nullable": false,
+          "constraints": "Manifest and sha256 must be identical before and after cutover",
+          "description": "File list with checksums and symlink targets"
+        }
+      ],
+      "relationships": [],
+      "related_specs": [
+        "SP001",
+        "SP002",
+        "SP004",
+        "SP007",
+        "SP009"
+      ]
+    },
+    {
+      "name": "OpenCCUBasePin",
+      "description": "Sibling Buildroot package pin of this repository.",
+      "storage_location": "/home/standard/dev/OpenCCU/buildroot-external/package/openccu-base/openccu-base.mk (OPENCCU_BASE_VERSION)",
+      "attributes": [
+        {
+          "name": "OPENCCU_BASE_VERSION",
+          "type": "git SHA",
+          "nullable": false,
+          "constraints": "Currently 7d8dbddf1d5a...",
+          "description": "Commit of this repo that the sibling builds"
+        }
+      ],
+      "relationships": [
+        "OpenCCUBasePin.OPENCCU_BASE_VERSION -> StagedWebRoot.files"
+      ],
+      "related_specs": [
+        "SP007"
+      ]
+    }
+  ],
+  "external_systems": [
+    {
+      "name": "OpenCCU Buildroot packaging repo",
+      "type": "external-service",
+      "description": "Pins this repo by SHA, builds the web root through src/webui, applies 64 rootfs patches (41 on webui.js) to the staged asset-rootfs.",
+      "protocol": "git SHA pin + CMake",
+      "purpose": "Produce the CCU firmware image",
+      "endpoints_used": [
+        "scripts/update-openccu-base.sh",
+        "make check-openccu-base",
+        "rootfs-patches/stage_validation_rootfs.sh"
+      ],
+      "auth_pattern": "none",
+      "error_contract": "Patch application fails the Buildroot build if the generated webui.js changes shape."
+    },
+    {
+      "name": "GitHub Actions CI",
+      "type": "infrastructure",
+      "description": "Builds 4 platforms with -DDEPLOY_TO_REPO=OFF and verifies the staged package.",
+      "protocol": "CI workflow",
+      "purpose": "Verify staged output",
+      "endpoints_used": [
+        ".github/workflows/ci.yml"
+      ],
+      "auth_pattern": "none",
+      "error_contract": "Job fails if a staged artifact is empty or missing."
+    },
+    {
+      "name": "CMake with Tcl and Python",
+      "type": "framework",
+      "description": "CMake 3.20+ presets, tclsh for create_*.tcl generators and python3 for utf82ansi.py."
+    },
+    {
+      "name": "CCU runtime paths",
+      "type": "infrastructure",
+      "description": "/opt/hm/www, /etc/config/addons/www, /var/EULA.* and /tmp/EULA.* targets of the web root symlinks.",
+      "protocol": "filesystem symlink",
+      "purpose": "Link shared Tcl libraries and EULA files into the served tree",
+      "endpoints_used": [
+        "/opt/hm/www/tcl/eq3_old/*",
+        "/opt/hm/www/tcl/extern/cgi.tcl",
+        "/var/EULA.de",
+        "/var/EULA.en"
+      ],
+      "auth_pattern": "none",
+      "error_contract": "Committed absolute links dangle outside a device; CMake creates relative or /tmp targets in the staged tree."
+    },
+    {
+      "name": "ReGaHss (closed source)",
+      "type": "external-service",
+      "description": "Serves /rega and evaluates <% %> pages from the installed /www/rega; its binary references /licenseinfo.htm.",
+      "protocol": "HTTP 8181/8183, ReGa script",
+      "purpose": "Home automation logic engine consuming the staged web root",
+      "endpoints_used": [
+        "/rega/*",
+        "/licenseinfo.htm"
+      ],
+      "auth_pattern": "session string",
+      "error_contract": "Missing rega pages or licenseinfo.htm are served as errors; not controlled by this repo."
+    }
+  ],
+  "user_stories": [
+    {
+      "spec_id": "SP001",
+      "goal": "Build the shipped web root exclusively from src/webui sources, never from the committed www/",
+      "source": {
+        "file": "src/webui/CMakeLists.txt",
+        "line_start": 4,
+        "line_end": 34,
+        "function": "webui-assets"
+      },
+      "requirements": [
+        "GIVEN the webui-assets target WHEN it runs THEN src/webui/www is copied into ${ROOTFS_DIR}/www and src/webui/rega/www into ${ROOTFS_DIR}/www/rega",
+        "GIVEN the target WHEN it runs THEN it never references the repository-level www/ directory",
+        "GIVEN webui-assets WHEN it runs THEN it depends on webui-www-source-assets and webui-scripts-assets",
+        "GIVEN src/webui/www or src/webui/rega/www is missing WHEN webui-assets runs THEN copy_directory fails and the build step aborts without producing a staged web root"
+      ],
+      "edge_cases": [
+        "Repo www/ has 30 entries absent from src/webui/www: 24 symlinks plus DEVDB.tcl, st_values.cgi, st_values.js, style.css, webui.js and rega/licenseinfo.htm; the staged root gets them only via CMake link creation, generators or devicetypes-assets (SP009)",
+        "copy_directory overwrites existing staged files; src/webui/www has no rega/ folder, so rega/www adds files without overlap"
+      ],
+      "input_shape": {
+        "ROOTFS_DIR": "path, required CMake variable",
+        "CMAKE_CURRENT_SOURCE_DIR": "path = src/webui"
+      },
+      "output_shape": {
+        "${ROOTFS_DIR}/www": "directory tree, never null"
+      }
+    },
+    {
+      "spec_id": "SP002",
+      "goal": "Generate webui.js, style.css and DEVDB.tcl at build time and stage them in ISO-8859-1",
+      "source": {
+        "file": "src/webui/www_source/CMakeLists.txt",
+        "line_start": 1,
+        "line_end": 24,
+        "function": "webui-www-source-assets"
+      },
+      "requirements": [
+        "GIVEN the target WHEN it runs THEN create_webui_js.tcl, create_style_css.tcl and create_devdb_tcl.tcl are executed in www_source",
+        "GIVEN each generated file WHEN produced THEN utf82ansi.py converts it before copy_if_different into ${ROOTFS_DIR}/www/webui or www/config/devdescr",
+        "GIVEN the copies are done WHEN the target ends THEN generator outputs and tmp files are deleted from the source tree",
+        "GIVEN tclsh or python3 is unavailable or a create_*.tcl generator exits non-zero WHEN webui-www-source-assets runs THEN the target fails and no file is copied into the staged web root"
+      ],
+      "edge_cases": [
+        "st_values.js and devicetypes outputs are staged by devicetypes-assets (SP009), not by this target; www_source only removes its own intermediate copy",
+        "The generated www/webui/webui.js is 1.9 MB, 53,123 lines, ISO-8859-1, and sibling patches depend on its exact line structure"
+      ],
+      "input_shape": {
+        "OPENCCU_TCLSH_EXECUTABLE": "path, required",
+        "OPENCCU_PYTHON_EXECUTABLE": "path, required"
+      },
+      "output_shape": {
+        "webui.js": "file in staged www/webui, non-empty",
+        "style.css": "file in staged www/webui, non-empty",
+        "DEVDB.tcl": "file in staged www/config/devdescr, non-empty"
+      }
+    },
+    {
+      "spec_id": "SP003",
+      "goal": "Create runtime symlinks in the staged web root with relative or /tmp targets",
+      "source": {
+        "file": "src/webui/CMakeLists.txt",
+        "line_start": 8,
+        "line_end": 31,
+        "function": "webui-assets"
+      },
+      "requirements": [
+        "GIVEN the staged tree WHEN assets are built THEN www/cgi.tcl, common.tcl, once.tcl, session.tcl, user.tcl link into tcl/extern or tcl/eq3_old",
+        "GIVEN api/pda subtrees WHEN built THEN eq3/rega.tcl and eq3/session.tcl link to ../../tcl/eq3/*",
+        "GIVEN rega EULA files WHEN built THEN www/rega/EULA.de and EULA.en link to /tmp/EULA.de and /tmp/EULA.en and www/addons links to /etc/config/addons/www",
+        "GIVEN a link name already exists as a directory or a parent directory is missing WHEN create_symlink runs THEN the command fails and webui-assets aborts"
+      ],
+      "edge_cases": [
+        "Committed www/ links instead point to absolute /opt/hm/www/... and /var/EULA.* and dangle in every checkout and on Windows",
+        "Re-running create_symlink over an existing link in the staged tree is idempotent",
+        "Committed www/addons points to /opt/hm/etc/config/addons/www while CMake links www/addons to /etc/config/addons/www"
+      ],
+      "input_shape": {
+        "link_target": "string, relative or absolute path",
+        "link_name": "path under ${ROOTFS_DIR}/www"
+      },
+      "output_shape": {
+        "symlinks": "24 links (addons, 5 root, 8 config, 4 tools, 4 api/pda, 2 EULA)"
+      }
+    },
+    {
+      "spec_id": "SP004",
+      "goal": "Install the staged web root as the assets component",
+      "source": {
+        "file": "cmake/Components.cmake",
+        "line_start": 155,
+        "line_end": 157,
+        "function": "install(DIRECTORY)"
+      },
+      "requirements": [
+        "GIVEN a build WHEN the assets component is installed THEN ${ROOTFS_DIR}/www/ is installed to www",
+        "GIVEN tests/test-components.py WHEN it builds a temp rootfs THEN it creates www/keep inside that temp rootfs, not in the repository www/",
+        "GIVEN ${ROOTFS_DIR}/www/ does not exist WHEN the assets component is installed THEN install(DIRECTORY) fails, which is why tests/test-components.py creates www/keep"
+      ],
+      "edge_cases": [
+        "An empty staged www/ still installs (the test relies on a keep placeholder)",
+        "The install reads the staging tree, so deleting repo www/ does not change installed content"
+      ],
+      "input_shape": {
+        "ROOTFS_DIR": "path, required"
+      },
+      "output_shape": {
+        "install tree www/": "directory, component assets"
+      }
+    },
+    {
+      "spec_id": "SP005",
+      "goal": "Persist generated web root assets in the repository only through the deploy path, which has drifted",
+      "source": {
+        "file": "Makefile",
+        "line_start": 23,
+        "line_end": 32,
+        "function": "deploy-%"
+      },
+      "requirements": [
+        "GIVEN make deploy-<platform> WHEN run THEN selected-install etc, firmware, www, opt and usr are copied with cp -a into ./etc ./firmware ./www ./opt ./usr",
+        "GIVEN deploy WHEN run THEN bin and lib are copied into bin/<platform> and lib/<platform>",
+        "GIVEN no one runs make deploy WHEN sources change THEN repo www/ is not updated and drifts (90 files differ from src/webui/www, 49 from src/webui/rega/www)"
+      ],
+      "edge_cases": [
+        "Nonexistent $rootfs_dir/www is skipped silently by the [ -d ] test",
+        "cp -a of the staged tree writes generated webui.js, style.css and DEVDB.tcl into tracked www/ paths",
+        "Commit 1ba5c642 deleted incompatiblebrowser.html in both www/ and src/webui/www (and debug.htm from src/webui/rega/www), showing that edits have to be made twice"
+      ],
+      "input_shape": {
+        "PLATFORMS": "space separated list, default 4 platforms",
+        "platform": "string from % pattern"
+      },
+      "output_shape": {
+        "repo dirs": "bin/<platform>, lib/<platform>, etc, firmware, www, opt, usr overwritten"
+      }
+    },
+    {
+      "spec_id": "SP006",
+      "goal": "Keep generated outputs out of version control",
+      "source": {
+        "file": "src/webui/www_source/.gitignore",
+        "line_start": 1,
+        "line_end": 6
+      },
+      "requirements": [
+        "GIVEN DEVDB.tcl, devdescr.js, resource.js, st_values.js, style.css or webui.js in www_source WHEN git status runs THEN they are ignored",
+        "GIVEN www/config/devdescr/.gitignore WHEN present THEN it ignores everything except itself, yet DEVDB.tcl is tracked under www/"
+      ],
+      "edge_cases": [
+        "Files added before the ignore rule stay tracked (www/webui/webui.js, www/webui/style.css, DEVDB.tcl, st_values.js); www/rega/licenseinfo.htm is tracked but is not produced by any in-repo build (ReGaHss references /licenseinfo.htm and the sibling regenerates it), so it is a stale artifact, not a generator output",
+        "No automated guard prevents re-adding a second web root copy"
+      ],
+      "input_shape": {
+        "path": "git path pattern"
+      },
+      "output_shape": {
+        "ignored": "boolean per path"
+      }
+    },
+    {
+      "spec_id": "SP007",
+      "goal": "Verify the staged package output in CI without reading repository www/",
+      "source": {
+        "file": ".github/workflows/ci.yml",
+        "line_start": 199,
+        "line_end": 201,
+        "function": "Verify staged package"
+      },
+      "requirements": [
+        "GIVEN a platform build with DEPLOY_TO_REPO=OFF WHEN verification runs THEN test -s passes for stage www/webui/webui.js, www/webui/style.css and www/config/devdescr/DEVDB.tcl",
+        "GIVEN any of these staged files is empty or missing WHEN verification runs THEN the step fails",
+        "GIVEN tracked files exist under repo www/ WHEN CI runs THEN no step currently fails (no guard exists)"
+      ],
+      "edge_cases": [
+        "Platform matrix of 4 builds; BINARY_FORMAT grep applies only to bin/rfd and lib/tclrega.so",
+        "The check validates generated staged copies, not the committed ones, so it passes with or without repo www/"
+      ],
+      "input_shape": {
+        "TARGET_PLATFORM": "string, matrix value",
+        "BINARY_FORMAT": "string, matrix value"
+      },
+      "output_shape": {
+        "step result": "pass or fail"
+      }
+    },
+    {
+      "spec_id": "SP008",
+      "goal": "Document the repository layout, currently describing www/ as WebUI resources",
+      "source": {
+        "file": "README.md",
+        "line_start": 30,
+        "line_end": 30
+      },
+      "requirements": [
+        "GIVEN README.md WHEN a contributor reads the layout THEN www/ is described as 'WebUI and Tcl-based runtime resources'",
+        "GIVEN the README WHEN read THEN it does not state that src/webui is the only source or that make deploy writes www/"
+      ],
+      "edge_cases": [
+        "The sole documentation reference to www/ in the repository; no CONTRIBUTING guidance on the double-edit trap",
+        "cmake/README.md:33 and :100 also document make deploy and are in the plan scope"
+      ],
+      "input_shape": {
+        "README.md": "markdown text"
+      },
+      "output_shape": {
+        "line 30": "string describing www/"
+      }
+    },
+    {
+      "spec_id": "SP009",
+      "goal": "Stage st_values.cgi and st_values.js into the web root from src/devicetypes",
+      "source": {
+        "file": "src/devicetypes/CMakeLists.txt",
+        "line_start": 10,
+        "line_end": 12,
+        "function": "devicetypes-assets"
+      },
+      "requirements": [
+        "GIVEN the devicetypes-assets target WHEN it runs THEN src/devicetypes/st_values.cgi and st_values.js are copied with copy_if_different into ${ROOTFS_DIR}/www/config",
+        "GIVEN BUILD_WEBUI is ON WHEN cmake/Components.cmake configures THEN BUILD_DEVICETYPES is forced ON so these files are staged",
+        "GIVEN a source file is missing WHEN copy_if_different runs THEN the target fails"
+      ],
+      "edge_cases": [
+        "The tracked www/config/st_values.* copies are identical to the src/devicetypes sources, so they are plain sources, not generated outputs",
+        "The www_source target also deletes a generated st_values.js in www_source; that is unrelated to this copy",
+        "The sibling stage_validation_rootfs.sh builds devicetypes-assets too"
+      ],
+      "input_shape": {
+        "CMAKE_CURRENT_SOURCE_DIR": "path = src/devicetypes",
+        "ROOTFS_DIR": "path, required"
+      },
+      "output_shape": {
+        "www/config/st_values.cgi": "file in staged root",
+        "www/config/st_values.js": "file in staged root"
+      }
+    }
+  ],
+  "nfrs": [
+    {
+      "id": "NFR-001",
+      "category": "compatibility",
+      "requirement": "The staged web root generated by webui-assets, webui-www-source-assets and devicetypes-assets must remain file-for-file and byte-for-byte identical, excluding already merged source changes; webui.js line structure and ISO-8859-1 encoding are relied on by 41 sibling patches.",
+      "source": "src/webui/www_source/CMakeLists.txt:3-13; src/devicetypes/CMakeLists.txt:10-12",
+      "verification": "Record file list, sha256 sums and symlink targets of the staged tree before and after the cutover and diff them."
+    },
+    {
+      "id": "NFR-002",
+      "category": "compatibility",
+      "requirement": "tcl/eq3/rega.tcl is staged as a plain copy; the sibling prepare_patch_input.sh deliberately strips CRLF from the staged copy, so no CRLF contract is imposed on this repo by sibling patches.",
+      "source": "src/webui/CMakeLists.txt:6 (copy); sibling prepare_patch_input.sh:13,51-55",
+      "verification": "Diff the staged rega.tcl before and after cutover (must be identical) and run the sibling patch validation."
+    },
+    {
+      "id": "NFR-003",
+      "category": "data-integrity",
+      "requirement": "Committed symlinks use absolute targets (/opt/hm/www/..., /var/EULA.*), which dangle in checkouts and break on Windows; the staged tree must use relative or /tmp targets.",
+      "source": "src/webui/CMakeLists.txt:8-31",
+      "verification": "git ls-files -s www | awk '$1==120000' plus readlink; compare with staged symlink targets."
+    },
+    {
+      "id": "NFR-004",
+      "category": "security",
+      "requirement": "Security findings (default admin credentials in tcl/eq3_old/user.tcl:8-9, cp_software.cgi:493 request-driven exec, homematic.cgi:155 errorInfo leak) exist identically in www/ and src/webui/www; removal of www/ only removes duplicates.",
+      "source": "www/tcl/eq3_old/user.tcl:8-9",
+      "verification": "Re-run static analysis on src/webui/www after removal; findings must remain tracked in the webui-* features."
+    },
+    {
+      "id": "NFR-005",
+      "category": "scalability",
+      "requirement": "Repository weight: 49 MB working copy and 511 MiB pack, roughly 3,000 files duplicated verbatim; history is not rewritten.",
+      "source": "Repository root (git count-objects -vH, git ls-files www)",
+      "verification": "Compare git ls-files count and du of the working tree before and after."
+    }
+  ],
+  "evidence_gaps": [
+    "Whether third-party packagers or forks consume repo www/ (GitHub raw paths, archives) cannot be proven from the repositories; resolved by the Phase 0 maintainer check in the cutover plan.",
+    "The 90 differing files (52 outside config, 38 in config plus 11 only in www/config) and 49 rega differences were counted but not reviewed one by one for www/-only hot-fixes; resolved by the triage step in SDD specify/tasks.",
+    "The sibling repo (/home/standard/dev/OpenCCU) was not re-read during analysis; its consumption of src/webui rather than www/ is taken from the plan's verified evidence.",
+    "Whether tests or tooling in forks still invoke make deploy with the web root expected in ./www is unknown.",
+    "licenseinfo.htm is regenerated by the sibling (openccu-base.mk:210-212) per audit; the cutover plan should record that no in-repo producer exists."
+  ]
+}

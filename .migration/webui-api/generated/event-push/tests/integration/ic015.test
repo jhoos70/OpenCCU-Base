@@ -1,0 +1,69 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC015 event-push -> security-session: hmscript_runFromFile eq3/checksid.hms. Request:
+# _session_id_ validated ^@?[A-Za-z0-9]{1,12}@?$ (event_queue_path). Response: "true" | "false";
+# anything else ('' after a ReGa failure) means the subscriber is not retained.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,event-push
+set SESS {{AAA111 1 1000 A} {BBB222 1 1001 B}}
+proc call {method sid args} { return [golden::call $method [list _session_id_ $sid] -candidate $::CAND -sessions $::SESS {*}$args] }
+proc lst {fs} {
+  set f [file join $fs tmp event subscriber.list]
+  if {![file exists $f]} { return {} }
+  array set l [mock::fs::read $fs tmp/event/subscriber.list]
+  return [lsort [array names l]]
+}
+proc checks {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match {*var result = false;*} $c]} { incr n } }
+  return $n
+}
+
+test ic015-1 {subscribe checks every OTHER subscriber with eq3/checksid.hms using its id as _session_id_; "true" retains it} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list BBB222 {EVENT_COUNT 0}]
+  set r [call Event.subscribe AAA111 -fs $fs]
+  set out [list [lst $fs] [checks $r] [string match {*var _session_id_ = "BBB222";*} [join [dict get $r rega_calls] \n]]]
+  mock::fs::destroy $fs
+  set out
+} -result {{AAA111 BBB222} 1 1}
+
+test ic015-2 {a subscriber whose answer is 'false' is not retained, nor its queue file} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list GONE99 {EVENT_COUNT 0}]
+  mock::fs::write $fs tmp/event/GONE99 "{TYPE x DATA null}\n"
+  call Event.subscribe AAA111 -fs $fs
+  set out [list [lst $fs] [file exists [file join $fs tmp event GONE99]]]
+  mock::fs::destroy $fs
+  set out
+} -result {AAA111 0}
+
+test ic015-3 {an empty answer (ReGa failure) is not 'true': the other subscriber is not retained (fail-closed)} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/subscriber.list [list BBB222 {EVENT_COUNT 0}]
+  call Event.subscribe AAA111 -fs $fs -regafail {{*var result = false;*}}
+  set out [lst $fs]
+  mock::fs::destroy $fs
+  set out
+} -result {AAA111}
+
+proc event_queue_path_probe {id} {
+  set r [golden::tcl "source \[file join \$env(DOCUMENT_ROOT) api/eq3/common.tcl\]\nsource \[file join \$env(DOCUMENT_ROOT) api/eq3/event.tcl\]\nputs <\[event_queue_path [list $id]\]>" -candidate $::CAND]
+  regexp {<(.*)>} [dict get $r stdout] -> p
+  return $p
+}
+
+test ic015-4 {the request shape: ids outside ^@?[A-Za-z0-9]{1,12}@?$ never build a queue path} -body {
+  set out {}
+  foreach id {AAA111 @AbCdEf1234@ ../x a/b {} AAAAAAAAAAAAA} {
+    lappend out [expr {"" ne [event_queue_path_probe $id]}]
+  }
+  set out
+} -result {1 1 0 0 0 0}
+
+cleanupTests

@@ -1,0 +1,164 @@
+##
+# v2/router.tcl - the route table of /api/v2 (staged SP001, T138)
+#
+#   POST /api/v2/rpc        v2/rpc.tcl       v2_rpc_handle        (dispatcher)
+#   POST /api/v2/batch      v2/rpc.tcl       v2_batch_handle      (dispatcher)
+#   GET  /api/v2/schema     v2/schema.tcl    v2_schema_handle     (SP032 schema layer)
+#   GET  /api/v2/events     v2/events.tcl    v2_events_handle     (IC008, event-push)
+#   GET  /api/v2/model      v2/model.tcl     v2_model_handle      (IC009, rega-model)
+#   POST /api/v2/programs   v2/programs.tcl  v2_programs_handle   (IC010, rega-model)
+#   POST /api/v2/rooms      v2/rooms.tcl     v2_rooms_handle      (IC011, rega-model)
+#   POST /api/v2/functions  v2/rooms.tcl     v2_functions_handle  (IC011, rega-model)
+#   GET|PUT /api/v2/profile v2/profile.tcl   v2_profile_handle    (IC012, user-profile)
+#
+# The request path is taken from REQUEST_URI (query removed), else SCRIPT_NAME + PATH_INFO.
+# A wrong verb is HTTP 405 with the header Allow; an unknown route is HTTP 404; a route whose
+# provider file is not installed is also 404 (error 401 "route not found").
+# Every route requires the header X-Requested-With (anti-CSRF), a body route also Content-Type
+# application/json (executor_checkTransport).
+#
+# Provider handlers (IC008-IC012) run after the router has chosen the session id: the globals
+#   V2_SID    the session id of the request (header, else cookie in cookie_mode)
+#   V2_QUERY  the raw QUERY_STRING
+# are set, v2_body returns the request body, v2_requireLevel LEVEL ends the request with 400
+# (HTTP 401 without a session, 403 for a too low level) unless the session has the level, and the
+# handler answers with jsonrpc_response / jsonrpc_error (HTTP status per BD-04).
+##
+
+set V2_ROUTES {
+  /rpc       {POST rpc.tcl       v2_rpc_handle}
+  /batch     {POST rpc.tcl       v2_batch_handle}
+  /schema    {GET  schema.tcl    v2_schema_handle}
+  /events    {GET  events.tcl    v2_events_handle}
+  /model     {GET  model.tcl     v2_model_handle}
+  /programs  {POST programs.tcl  v2_programs_handle}
+  /rooms     {POST rooms.tcl     v2_rooms_handle}
+  /functions {POST rooms.tcl     v2_functions_handle}
+  /profile   {{GET PUT} profile.tcl v2_profile_handle}
+}
+
+##
+# Is the request addressed to /api/v2 ? Returns the path below /api/v2 ("/rpc", "" for the base)
+# or -1 for any other request.
+##
+proc router_v2Path { } {
+  global env
+  set path ""
+  if { [info exists env(REQUEST_URI)] && "" != $env(REQUEST_URI) } then {
+    set path [lindex [split $env(REQUEST_URI) "?"] 0]
+  } else {
+    set script ""
+    set info ""
+    catch { set script $env(SCRIPT_NAME) }
+    catch { set info $env(PATH_INFO) }
+    set path "$script$info"
+  }
+  if { [regexp {^/api/v2(/.*)?$} $path -> rest] } then {
+    return [string trimright $rest "/"]
+  }
+  return -1
+}
+
+proc v2_body { } {
+  global V2_BODY
+  if { ![info exists V2_BODY] } then { set V2_BODY [v2_readBody] }
+  return $V2_BODY
+}
+
+##
+# Ends the request unless the session of the request has at least the privilege level (NONE,
+# GUEST, USER, ADMIN)
+##
+proc v2_requireLevel { level } {
+  global V2_SID args
+  array set m [list LEVEL $level]
+  array set args [list _session_id_ $V2_SID]
+  array set method [array get m]
+  checkPrivilegeLevel method args
+}
+
+##
+# The numeric privilege level of the session of the request (0 = no or unknown session)
+##
+proc v2_sessionLevel { } {
+  global V2_SID
+  array set a [list _session_id_ $V2_SID]
+  set upl [string trim [hmscript_runFromFile "eq3/getupl.hms" a]]
+  if { ![regexp {^[0-9]+$} $upl] } then { return 0 }
+  scan $upl %d upl
+  return $upl
+}
+
+##
+# The ReGa user id of the session of the request ("" if there is none)
+##
+proc v2_sessionUid { } {
+  global V2_SID
+  array set a [list _session_id_ $V2_SID]
+  set script {var s = system.GetSessionVarStr(_session_id_); if (s) { Write(s.StrValueByIndex(";", 0)); }}
+  set uid [string trim [hmscript $script a]]
+  if { ![regexp {^[0-9]+$} $uid] } then { return "" }
+  return $uid
+}
+
+##
+# Answers a provider route with a plain JSON document (HTTP 200): the document is not a
+# JSON-RPC envelope
+##
+proc v2_respondJson { json } {
+  jsonrpc_v2Headers
+  puts "CONTENT-TYPE: application/json; charset=utf-8"
+  puts ""
+  puts -nonewline [encoding convertto utf-8 $json]
+}
+
+proc router_error { status code message {allow ""} } {
+  global API_HTTP_STATUS API_EXTRA_HEADERS JSONRPC
+  set API_HTTP_STATUS $status
+  set JSONRPC(ID_USED) 0
+  if { "" != $allow } then { set API_EXTRA_HEADERS [list "Allow: $allow"] }
+  jsonrpc_error $code $message
+}
+
+##
+# Serves one /api/v2 request
+##
+proc router_serve { path } {
+  global env V2_ROUTES V2_SID V2_QUERY JSONRPC DOCUMENT_API_DIR
+
+  if { ![dict exists $V2_ROUTES $path] } then { router_error 404 401 "route not found" }
+  lassign [dict get $V2_ROUTES $path] verbs file handler
+
+  set verb ""
+  catch { set verb $env(REQUEST_METHOD) }
+  if { $verb ni $verbs } then {
+    router_error 405 405 "method not allowed" [join $verbs ", "]
+  }
+
+  set hasBody [expr { $verb in {POST PUT} }]
+  executor_checkTransport $hasBody
+
+  # the handler file (the dispatcher's own, or the provider's)
+  if { 0 == [llength [info commands $handler]] } then {
+    set f [file join $DOCUMENT_API_DIR v2 $file]
+    if { ![file exists $f] } then { router_error 404 401 "route not found" }
+    uplevel #0 [list source $f]
+    if { 0 == [llength [info commands $handler]] } then { router_error 404 401 "route not found" }
+  }
+
+  if { "/rpc" ne $path && "/batch" ne $path } then {
+    # provider routes have no JSON-RPC request: the answers carry no id
+    set JSONRPC(ID_USED) 0
+    # the sid decides before the handler runs (401 without or with an unknown session)
+    set V2_SID [v2_header X-Session-Id]
+    if { "" == $V2_SID && [string is true -strict [api_config cookie_mode false]] } then { set V2_SID [v2_cookie hm_sid] }
+    set V2_QUERY ""
+    catch { set V2_QUERY $env(QUERY_STRING) }
+    # (an unknown session is rejected by v2_requireLevel of the handler: session level 0 = HTTP 401)
+    if { "" == $V2_SID } then {
+      set ::API_AUTH_STATE nosid
+      jsonrpc_error 400 "access denied (session level 0)"
+    }
+  }
+  $handler
+}

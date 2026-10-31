@@ -1,0 +1,104 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP009 - interface discovery (ipc_getInterfaces): contracts/behavioral-contracts.json#SP009
+# Staged eq3/ipc.tcl is overlaid on the legacy api tree (mock::compose) and run in a tclsh
+# subprocess with the bridges mocked; /var/tmp and /etc/config live in a temp fs root.
+set here [file dirname [file normalize [info script]]]
+source [file normalize [file join $here .. .. schema-harness tests helpers mocks.tcl]]
+source [file normalize [file join $here .. .. schema-harness tests helpers golden.tcl]]
+
+set XML "<interfaces>\n<ipc><name>BidCos-RF</name><url>xmlrpc_bin://127.0.0.1:2001</url><info>BidCos-RF</info></ipc>\n<ipc><name>HmIP-RF</name><url>http://127.0.0.1:2010</url><info>HmIP-RF</info></ipc>\n</interfaces>"
+set DRIVER {
+  source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+  source [file join $env(DOCUMENT_ROOT) api/eq3/ipc.tcl]
+  array set I [ipc_getInterfaces]
+  foreach n [lsort [array names I]] { puts "$n=$I($n)" }
+}
+proc ipc {args} { return [golden::tcl $::DRIVER -candidate only:interface-gateway {*}$args] }
+proc lines {r} { return [split [string trim [dict get $r body]] \n] }
+proc newfs {files} {
+  set fs [mock::fs::create]
+  dict for {rel c} $files { mock::fs::write $fs $rel $c }
+  return $fs
+}
+
+test sp009-1 {non-empty cache is returned without re-reading the XML (happy path)} -setup {
+  set fs [newfs [list var/tmp/api_ipc.cache {cached {PORT 7 URL u INFO i}} etc/config/InterfacesList.xml $XML]]
+  file mtime [file join $fs etc config InterfacesList.xml] 1000
+  file mtime [file join $fs var tmp api_ipc.cache] 2000
+} -body {
+  lines [ipc -fs $fs -interfaces 0]
+} -cleanup { mock::fs::destroy $fs } -result {{cached=PORT 7 URL u INFO i}}
+
+test sp009-2 {no cache: every <ipc> node becomes name -> PORT/URL/INFO (port is the first :digits) and the cache is written} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml $XML]]
+} -body {
+  set l [lines [ipc -fs $fs]]
+  list $l [file exists [file join $fs var tmp api_ipc.cache]]
+} -cleanup { mock::fs::destroy $fs } -result {{{BidCos-RF=PORT 2001 URL xmlrpc_bin://127.0.0.1:2001 INFO BidCos-RF} {HmIP-RF=PORT 2010 URL http://127.0.0.1:2010 INFO HmIP-RF}} 1}
+
+test sp009-3 {BIDCOS_SERVICE (config tool) adds the 'default' interface before the XML entries} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml $XML]]
+} -body {
+  lines [ipc -fs $fs -setenv {BIDCOS_SERVICE xmlrpc_bin://10.0.0.5:2002}]
+} -cleanup { mock::fs::destroy $fs } -result {{BidCos-RF=PORT 2001 URL xmlrpc_bin://127.0.0.1:2001 INFO BidCos-RF} {HmIP-RF=PORT 2010 URL http://127.0.0.1:2010 INFO HmIP-RF} {default=PORT 2002 URL xmlrpc_bin://10.0.0.5:2002 INFO {Allgemeine BidCoS-Schnittstelle}}}
+
+test sp009-4 {a URL without a port yields PORT 0} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml "<interfaces><ipc><name>X</name><url>local</url><info>x</info></ipc></interfaces>"]]
+} -body {
+  lines [ipc -fs $fs]
+} -cleanup { mock::fs::destroy $fs } -result {{X=PORT 0 URL local INFO x}}
+
+test sp009-4b {v1 boundary kept: a node starting at offset 0 is skipped ('0 < $node_start') and ends the scan} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml "<ipc><name>X</name><url>local</url><info>x</info></ipc>"]]
+} -body {
+  lines [ipc -fs $fs]
+} -cleanup { mock::fs::destroy $fs } -result {}
+
+test sp009-5 {unknown interface name: getInterfaceUrl of the backup CGI library raises UNKNOWN_INTERFACE (400 text response)} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml $XML]]
+} -body {
+  set r [golden::tcl {
+    proc loadFile {f} { return [file_load $f] }
+    source [file join $env(DOCUMENT_ROOT) api/eq3/common.tcl]
+    proc decodeUrl {s} { return $s }
+    set src [file_load [file join $env(DOCUMENT_ROOT) api/backup/common.tcl]]
+    # only the procedure under test, not the session/rega library includes
+    regexp {proc getInterfaceUrl.*?\n\}\n} $src proc_text
+    set IPC_INTERFACES_FILE /etc/config/InterfacesList.xml
+    eval $proc_text
+    puts [getInterfaceUrl BidCos-RF]
+    puts [catch {getInterfaceUrl nosuch} m]:$m
+  } -candidate only:interface-gateway -fs $fs]
+  lines $r
+} -cleanup { mock::fs::destroy $fs } -result {xmlrpc_bin://127.0.0.1:2001 1:UNKNOWN_INTERFACE}
+
+test sp009-6 {[TARGET] cache older than InterfacesList.xml is discarded, XML re-parsed, cache rewritten via temp file + rename} -setup {
+  set fs [newfs [list var/tmp/api_ipc.cache {stale {PORT 1 URL u INFO i}} etc/config/InterfacesList.xml $XML]]
+  file mtime [file join $fs var tmp api_ipc.cache] 1000
+  file mtime [file join $fs etc config InterfacesList.xml] 2000
+} -body {
+  set l [lines [ipc -fs $fs]]
+  set cache [mock::fs::read $fs var/tmp/api_ipc.cache]
+  set leftovers [glob -nocomplain -directory [file join $fs var tmp] *]
+  list $l [string match *BidCos-RF* $cache] [string match *stale* $cache] [llength $leftovers]
+} -cleanup { mock::fs::destroy $fs } -result {{{BidCos-RF=PORT 2001 URL xmlrpc_bin://127.0.0.1:2001 INFO BidCos-RF} {HmIP-RF=PORT 2010 URL http://127.0.0.1:2010 INFO HmIP-RF}} 1 0 1}
+
+test sp009-7 {[TARGET] missing InterfacesList.xml: list is empty, no cache file written, one syslog line 'interface list empty'} -setup {
+  set fs [newfs {}]
+} -body {
+  set r [ipc -fs $fs -interfaces 0]
+  set sys {}
+  foreach s [dict get $r syslog] { if {[string match {*interface list empty*} $s]} { lappend sys $s } }
+  list [string trim [dict get $r body]] [file exists [file join $fs var tmp api_ipc.cache]] [llength $sys]
+} -cleanup { mock::fs::destroy $fs } -result {{} 0 1}
+
+test sp009-8 {[TARGET] an empty InterfacesList.xml behaves like a missing one} -setup {
+  set fs [newfs [list etc/config/InterfacesList.xml ""]]
+} -body {
+  set r [ipc -fs $fs -interfaces 0]
+  list [string trim [dict get $r body]] [file exists [file join $fs var tmp api_ipc.cache]] [llength [dict get $r syslog]]
+} -cleanup { mock::fs::destroy $fs } -result {{} 0 1}
+
+cleanupTests

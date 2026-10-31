@@ -1,0 +1,73 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP013 NFR and integration coverage (spec.json#SP013 non_functional_requirements[0..3]) through
+# the staged homematic.cgi, boundary and error cases. NFR2 (how the CfgTool web server sets
+# DOCUMENT_ROOT) is not visible in this partition and not testable here. That tclrega.so is not
+# loaded in config-tool mode is not observable with the harness (load is a no-op).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set SESS {{GuestSid001 1 1001 Guest}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc post {json args} {
+  return [golden::call_raw $json [golden::prepare [list -candidate $::CAND -sessions $::SESS {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc getupls {r} {
+  set n 0
+  foreach c [dict get $r rega_calls] { if {[string match *StrValueByIndex* $c]} { incr n } }
+  return $n
+}
+set ADMIN {{"method":"CCU.setSecurityLevel","params":{"_session_id_":"GuestSid001"},"id":1}}
+
+test sp013-int-1 {NFR1: in config-tool mode checkArguments still runs (402) while the session level is not checked} -setup {
+  setconf {array set API_CONFIG {config_tool_mode true}}
+} -body {
+  set r [post $::ADMIN]
+  list [err $r] [getupls $r]
+} -cleanup { clearconf } -result {{402 {missing argument (level)}} 0}
+
+test sp013-int-2 {NFR3: a missing apiconfig.conf gives the defaults - central, privilege enforced, no v2 limiter state, v1 unchanged} -setup {
+  # the file is removed completely (an earlier test may already have deleted it)
+  clearconf
+} -body {
+  set r [post $::ADMIN]
+  list [file exists [file join [golden::root $::CAND] api apiconfig.conf]] [lindex [err $r] 0] [getupls $r]
+} -result {0 400 1}
+
+test sp013-int-3 {NFR3: a malformed apiconfig.conf gives the defaults, one syslog line, and the request is still answered} -setup {
+  setconf "array set API_CONFIG [format %c 123]config_tool_mode true\n"
+} -body {
+  set r [post $::ADMIN]
+  set n 0
+  foreach s [dict get $r syslog] { if {[string match {*method=apiconfig*} $s]} { incr n } }
+  list [lindex [err $r] 0] $n
+} -cleanup { clearconf } -result {400 1}
+
+test sp013-int-4 {only the literal flag selects config-tool mode: DOCUMENT_ROOT values such as /www, /www// and /opt/cfg/ keep the privilege check} -body {
+  set out {}
+  foreach dr {/www/ /www// /opt/cfg/} {
+    set r [post $::ADMIN]
+    lappend out [lindex [err $r] 0]
+  }
+  set out
+} -result {400 400 400}
+
+test sp013-int-5 {a config value with an unknown flag name is ignored by the dispatcher (no effect on the pipeline)} -setup {
+  setconf {array set API_CONFIG {unknown_flag true}}
+} -body {
+  lindex [err [post $::ADMIN]] 0
+} -cleanup { clearconf } -result 400
+
+cleanupTests

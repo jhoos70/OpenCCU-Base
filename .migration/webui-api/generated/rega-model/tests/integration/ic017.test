@@ -1,0 +1,49 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# IC017 rega-model -> security-session: hmscript script args_array. Request: script = fixed
+# HomeMatic Script text, args = a whitelisted array. Response: STDOUT, '' when rega_script fails
+# (mapped per method to null, an empty string or 500).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+set SESS {{AbCdEf1234 8 1000 Admin}}
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+
+test ic017-1 {the script is fixed server-side text; the args become 'var <name> = "<escaped>";' declarations in front of it} -body {
+  set r [call Device.getReGaIDByAddress {_session_id_ AbCdEf1234 address NEQ1}]
+  set s [lindex [dict get $r rega_calls] end]
+  list [string match {var address = "NEQ1";*} $s] [string match {*string devId = "noDeviceFound";*} $s]
+} -result {1 1}
+
+test ic017-2 {only whitelisted names are declared (the session id of a GUEST method is declared, an unknown name is not)} -body {
+  set r [call Device.getReGaIDByAddress {_session_id_ AbCdEf1234 address NEQ1 extra x}]
+  set s [lindex [dict get $r rega_calls] end]
+  list [string match {*var extra*} $s] [string match {*var _session_id_ = "AbCdEf1234";*} $s]
+} -result {0 1}
+
+test ic017-3 {STDOUT '' after a rega_script failure is mapped per method: empty JSON string (getReGaIDByAddress), [] (listAll), null/200 elsewhere} -body {
+  list [result [call Device.getReGaIDByAddress {_session_id_ AbCdEf1234 address NEQ1} -regafail {*noDeviceFound*}]] \
+    [result [call Device.listAll {_session_id_ AbCdEf1234} -regafail {*EnumIDs()*}]] \
+    [lindex [err [call Device.get {_session_id_ AbCdEf1234 id 1} -regafail {{*Write("ID *}}]] 0]
+} -result {{""} {[]} 501}
+
+test ic017-4 {the failure is logged once with the correlation id and without the script text of the client} -body {
+  set r [call Device.listAll {_session_id_ AbCdEf1234} -regafail {*EnumIDs()*}]
+  set n 0
+  foreach s [dict get $r syslog] { if {[string match {*cid=*method=hmscript*rega_script failed*} $s]} { incr n } }
+  set n
+} -result 1
+
+cleanupTests

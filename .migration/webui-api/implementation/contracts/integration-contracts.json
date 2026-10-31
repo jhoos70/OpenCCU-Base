@@ -1,0 +1,5647 @@
+{
+  "feature": "webui-api",
+  "authority": "target-architecture.md",
+  "locked_values": {
+    "decision_refs": "research.md BD-01..BD-14",
+    "locked_by": "blueprint",
+    "http_status_v2": {
+      "100|102|103": 400,
+      "no_or_invalid_sid": 401,
+      "400_sid_valid_level_too_low": 403,
+      "401": 404,
+      "402|403": 422,
+      "405_content_type": 415,
+      "405_missing_x_requested_with": 403,
+      "200|500": 500,
+      "500_reason_PATH_NOT_ALLOWED": 403,
+      "500_reason_NAME_EXISTS": 409,
+      "501-507|599|601-604": 502,
+      "Session.login 501": 401,
+      "Session.login 503": 503,
+      "batch_over_limit": 413,
+      "per_sid_rate_limit": 429,
+      "wrong_http_verb": 405,
+      "note": "The JSON-RPC error envelope is always present in the body; error.reason is an additive v2-only field.",
+      "login_ip_rate_limit": 429
+    },
+    "error_codes": {
+      "new": {
+        "403": "invalid argument (<name>) - schema/validator violation",
+        "405": "strict mode: Content-Type application/json and X-Requested-With required",
+        "429": "rate limit exceeded"
+      },
+      "kept": [
+        "100",
+        "102",
+        "103",
+        "200",
+        "400",
+        "401",
+        "402",
+        "500",
+        "501",
+        "503",
+        "501-507",
+        "599",
+        "601-604"
+      ],
+      "unused": [
+        "101",
+        "201",
+        "202",
+        "203",
+        "300"
+      ],
+      "texts": {
+        "access_denied": "access denied (\"<LEVEL>\" needed, session level <upl>)",
+        "internal": "internal error (ref: <correlation id>)",
+        "path_not_allowed": "path not allowed",
+        "name_exists": "name already exists (<name>)",
+        "invalid_argument": "invalid argument (<name>)",
+        "rate_limited": "rate limit exceeded"
+      }
+    },
+    "headers": {
+      "session": "X-Session-Id",
+      "anti_csrf": "X-Requested-With (any non-empty value; clients send XMLHttpRequest)",
+      "correlation_response": "X-Correlation-Id",
+      "rate_limit_response": "Retry-After",
+      "allow_on_405": "Allow",
+      "precedence": "X-Session-Id > cookie hm_sid (cookie_mode only) > params._session_id_ (v1 only); a mismatch with params._session_id_ logs one syslog line"
+    },
+    "cookie": {
+      "name": "hm_sid",
+      "attributes": "HttpOnly; SameSite=Strict; Path=/api; Secure when env HTTPS is set",
+      "max_age": null,
+      "enabled_by": "cookie_mode (default false)"
+    },
+    "correlation_id": {
+      "format": "16 lowercase hex chars from 8 bytes of /dev/urandom",
+      "regex": "^[0-9a-f]{16}$",
+      "syslog": "logger -t webui-api -p daemon.err 'cid=<id> method=<name> uid=<uid|-> code=<code> errorInfo=<single line, newlines as \\n>'"
+    },
+    "config": {
+      "file": "src/webui/www/api/apiconfig.conf",
+      "format": "Tcl: array set API_CONFIG {key value ...}",
+      "defaults_preserve_v1": true,
+      "flags": {
+        "strict_mode": "false",
+        "config_tool_mode": "false",
+        "v2_enabled": "false",
+        "cookie_mode": "false",
+        "allowed_origin": "(absent: no Access-Control-* headers)",
+        "rate_limit": "false (opt-in; true enables per-IP Session.login limiter and per-sid request limiter on v1; always enforced on /api/v2 and when strict_mode=true)",
+        "sid_shape_strict": "false (true enforces the sid shape validator; EG-8 gated, not released until the runtime trace confirms the key format)"
+      },
+      "limits": {
+        "batch_limit": 20,
+        "per_sid_limit": 60,
+        "per_sid_window_seconds": 10,
+        "login_ip_limit": 10,
+        "login_ip_window_seconds": 60,
+        "model_default_limit": 100,
+        "model_max_limit": 500,
+        "long_poll_default_seconds": 25,
+        "long_poll_max_seconds": 55,
+        "event_lock_stale_seconds": 10,
+        "download_timeout_seconds": 300,
+        "event_limit": 64
+      }
+    },
+    "validators": {
+      "sid": "^@?[A-Za-z0-9]{10}@?$ (gated by EG-8 until runtime-traced)",
+      "event_queue_sid": "^@?[A-Za-z0-9]{1,12}@?$ (gated by EG-8)",
+      "serial": "^[A-Za-z0-9_-]{1,32}$",
+      "lgwserial": "^[A-Za-z0-9_-]{1,32}$",
+      "lan_gateway_key": "^[0-9A-Fa-f]{32}$",
+      "language": "^[a-z]{2}$",
+      "dataId": "^[A-Za-z0-9_.-]{1,64}$",
+      "tweak_key": "^[A-Za-z0-9_.-]{1,64}$",
+      "testId": "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$",
+      "correlation_id": "^[0-9a-f]{16}$",
+      "control_characters": "reject U+0000-U+001F except tab, LF, CR in every string parameter"
+    },
+    "path_allow_lists": {
+      "CCU.createFile": [
+        "/etc/config/userAckSecurityHint",
+        "/etc/config/firewallConfigured",
+        "/etc/config/fieldTestActive",
+        "/etc/config/legacyAPIMigrationAccepted"
+      ],
+      "CCU.existsFile": [
+        "/etc/config/userAckSecurityHint",
+        "/etc/config/firewallConfigured",
+        "/etc/config/fieldTestActive",
+        "/etc/config/showDiagramDatapoints",
+        "/media/sd-mmcblk0/measurement",
+        "/etc/config/legacyAPIMigrationAccepted"
+      ],
+      "CCU.createFile_patterns": [],
+      "CCU.existsFile_patterns": [
+        "^/etc/config/userprofiles/userAckInstallWizardId_[0-9]{1,10}$",
+        "^/etc/config/userprofiles/userAckInstallWizard_[^/\\x00]{1,200}$"
+      ],
+      "backup_files": [],
+      "matching": "exact string match against the exact lists, no normalisation, configuration only; the *_patterns lists are anchored full-string expressions with a fixed prefix and no '/' or NUL in the variable part, applied to existsFile only (EG-3 resolved and corrected 2026-10-20; EG-1 resolved 2026-10-20: backup_files stays empty)"
+    },
+    "profile_v2": {
+      "attributes": [
+        "userId",
+        "userName",
+        "firstName",
+        "hasPassword",
+        "isNoExpert",
+        "language"
+      ],
+      "language_file_key": "ReGa UserFirstName (same key as User.getLanguage)",
+      "get": "GUEST+ own profile; ?userId= ADMIN only",
+      "put": "USER+ own language; ADMIN any user"
+    },
+    "event_payload": {
+      "type": "datapoint.changed",
+      "data": {
+        "address": "string",
+        "datapoint": "string",
+        "value": "string"
+      },
+      "producer": "gated by EG-2"
+    },
+    "timeouts_ms": {
+      "cgi_request_budget": 60000,
+      "rega_script": 30000,
+      "login_htm": 5000,
+      "xmlrpc": 20000,
+      "long_poll_max": 55000,
+      "download_firmware": 305000,
+      "basis": "blueprint targets used by the mock harness; not enforceable inside tclrega.so/tclrpc.so (EG-24); lighttpd timeouts are external (EG-21)"
+    },
+    "rate_limit": {
+      "flag": "rate_limit",
+      "default": false,
+      "active_when": "rate_limit=true OR strict_mode=true OR request on /api/v2",
+      "client_ip_source": "REMOTE_ADDR (X-Forwarded-For ignored)",
+      "login_ip": {
+        "limit": 10,
+        "window_seconds": 60,
+        "scope": "Session.login only, per client IP"
+      },
+      "per_sid": {
+        "limit": 60,
+        "window_seconds": 10,
+        "scope": "every request carrying a sid; requests without sid are not counted"
+      },
+      "over_limit_v1": "JSON-RPC error 429 'rate limit exceeded', HTTP 200 (BD-14)",
+      "over_limit_v2": "HTTP 429 + Retry-After (integer seconds 1..window) with the same JSON-RPC error body",
+      "counter_store": "/tmp/webui-ratelimit/{login-<ip>,sid-<sid>} timestamp files replaced by write-to-temp-then-rename; limiter failure is fail-open with a syslog line",
+      "default_behaviour": "rate_limit=false on the v1 path: no counter access, no 429, v1 responses unchanged (NFR-045)"
+    },
+    "rate_limit_response_note": "429 + Retry-After on v2 for both per-sid and per-IP login limits"
+  },
+  "plan_integration_systems_covered": {
+    "XML-RPC hs485d (TCP 2000) and rfd (TCP 2001; 32000/32001 in container deployments)": "Interface processes via tclrpc.so (rfd, hs485d, HmIPServer, crRFD)",
+    "ReGaHss script engine (HTTP 8181/8183, 1998)": "ReGaHss (closed source, via tclrega.so)",
+    "login.htm redirect login at 127.0.0.1 (basis of Session.login)": "ReGaHss web login (login.htm / pages/index.htm)",
+    "/tmp/event/* file queue and /var/tmp/api_ipc.cache": "Local filesystem state",
+    "Sibling OpenCCU packaging repo (SHA pin, rootfs patches)": "OpenCCU packaging repository (external, SHA pin, rootfs patches, lighttpd config)"
+  },
+  "systems": [
+    {
+      "name": "ReGaHss (closed source, via tclrega.so)",
+      "plan_constraint_system": "ReGaHss script engine (HTTP 8181/8183, 1998)",
+      "protocol": "in-process Tcl extension (tclrega.so) calling the ReGa script interface",
+      "adapter_component": "security-session (hmscript ACL) used by rega-model, user-profile, system-admin",
+      "base_url_config": "n/a (in-process); ReGaHss script ports 8181 (HTTP), 8183 (HTTPS) and 1998 are unchanged and used only by tclrega.so",
+      "auth": {
+        "type": "none",
+        "config_key": "session id is passed only as a validated script variable (_session_id_)"
+      },
+      "endpoints": [
+        {
+          "method": "CALL",
+          "path": "rega_script <script>",
+          "request_shape": {
+            "script": "string, HomeMatic Script; params prefixed as `var <name> = \"<escaped>\";` for whitelisted ARGUMENTS only"
+          },
+          "response_shape": {
+            "STDOUT": "string (Tcl-list-style output)"
+          },
+          "error_responses": [
+            {
+              "status": "Tcl error",
+              "meaning": "rega_script raised: hmscript_run returns '' and logs cid; privilege and session callers treat '' as denied",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "CALL",
+          "path": "rega_exec <script> (tcl/eq3/rega.tcl, backup CGIs)",
+          "request_shape": {
+            "script": "string"
+          },
+          "response_shape": {
+            "stdout": "string"
+          },
+          "error_responses": [
+            {
+              "status": "Tcl error",
+              "meaning": "session_isValid treats any failure as invalid (fail-closed)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "SCRIPT",
+          "path": "eq3/getupl.hms",
+          "request_shape": {
+            "_session_id_": "string, validated against the sid shape before interpolation"
+          },
+          "response_shape": {
+            "upl": "integer 0|1|2|8; empty or non-integer => denied (upl 0)"
+          },
+          "error_responses": [
+            {
+              "status": "''",
+              "meaning": "empty STDOUT => upl 0 => error 400",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "SCRIPT",
+          "path": "eq3/checksid.hms (replaces the non-existent common/checksid.hms)",
+          "request_shape": {
+            "_session_id_": "string"
+          },
+          "response_shape": {
+            "valid": "\"true\" | \"false\""
+          },
+          "error_responses": [
+            {
+              "status": "''",
+              "meaning": "empty => treated as not valid",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "SCRIPT",
+          "path": "fixed v2 scripts: bulk model sections, program edit, room/function edit",
+          "request_shape": {
+            "section|program id|room id": "validated ids from the request",
+            "operation": "enum from the fixed operation set"
+          },
+          "response_shape": {
+            "STDOUT": "JSON text built server-side"
+          },
+          "error_responses": [
+            {
+              "status": "''",
+              "meaning": "empty => 500 error 200 with correlation id",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "gated by EG-6 for mutations; read-only model first"
+        },
+        {
+          "method": "CALL",
+          "path": "system.GetSessionVarStr / SetSessionVar / ClearSessionID, dom.GetObject, ID_SYSTEM_VARIABLES, ID_PROGRAMS, ID_ROOMS, ID_FUNCTIONS (script-level)",
+          "request_shape": {
+            "object id|name": "string"
+          },
+          "response_shape": {
+            "value": "string | object"
+          },
+          "error_responses": [
+            {
+              "status": "null object",
+              "meaning": "closed-source semantics unverified (EG-24)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "rega_script raises on failure; hmscript_run returns '' and logs the failure with the correlation id; callers fail closed"
+    },
+    {
+      "name": "ReGaHss web login (login.htm / pages/index.htm)",
+      "plan_constraint_system": "login.htm redirect login at 127.0.0.1 (basis of Session.login)",
+      "protocol": "HTTP/1.1 form POST (Tcl http package) to loopback",
+      "adapter_component": "security-session",
+      "base_url_config": "constants LOGIN_URL=http://127.0.0.1/login.htm and RENEW_URL=http://127.0.0.1/pages/index.htm in tcl/eq3/session.tcl (unchanged, not configurable)",
+      "auth": {
+        "type": "form-credentials",
+        "config_key": "tbUsername / tbPassword fields from Session.login params; never logged"
+      },
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "http://127.0.0.1/login.htm",
+          "request_shape": {
+            "tbUsername": "string",
+            "tbPassword": "string",
+            "encoding": "application/x-www-form-urlencoded"
+          },
+          "response_shape": {
+            "status": "302 with Location: ...sid=@<10 chars>@... | 503",
+            "Location": "string"
+          },
+          "error_responses": [
+            {
+              "status": 503,
+              "meaning": "ReGa too busy => JSON-RPC 503 'service not available'",
+              "retry": false
+            },
+            {
+              "status": "no sid in Location",
+              "meaning": "=> JSON-RPC 501 'invalid credentials or too many sessions'",
+              "retry": false
+            },
+            {
+              "status": "connection error",
+              "meaning": "Tcl error => 200 'internal error (ref: <cid>)'",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "http://127.0.0.1/pages/index.htm?sid=@<sid>@",
+          "request_shape": {
+            "sid": "string, validated"
+          },
+          "response_shape": {
+            "status": "200 (body ignored; renews the 900 s session)"
+          },
+          "error_responses": [
+            {
+              "status": "connection error",
+              "meaning": "ignored, logged",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "503 => 503; no sid => 501; v2 HTTP mapping 503 -> 503, 501 -> 401; login attempts limited to 10 per 60 s per client IP"
+    },
+    {
+      "name": "Interface processes via tclrpc.so (rfd, hs485d, HmIPServer, crRFD)",
+      "plan_constraint_system": "XML-RPC hs485d (TCP 2000) and rfd (TCP 2001; 32000/32001 in container deployments)",
+      "protocol": "XML-RPC over HTTP via tclrpc.so",
+      "adapter_component": "interface-gateway",
+      "base_url_config": "per interface name from /etc/config/InterfacesList.xml (<ipc><name/><url/><info/></ipc>), cached in /var/tmp/api_ipc.cache; ports 2000 (hs485d), 2001 (rfd), 32000/32001 (containers) unchanged",
+      "auth": {
+        "type": "none",
+        "config_key": "loopback only; privilege enforced by methods.conf LEVEL before dispatch"
+      },
+      "endpoints": [
+        {
+          "method": "XML-RPC",
+          "path": "getDeviceDescription",
+          "request_shape": {
+            "address": "string"
+          },
+          "response_shape": {
+            "description": "struct TYPE, ADDRESS, PARAMSETS, VERSION, FLAGS, CHILDREN|PARENT, INDEX, ..."
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "listDevices",
+          "request_shape": {},
+          "response_shape": {
+            "devices": "array<struct device description>"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "listTeams",
+          "request_shape": {},
+          "response_shape": {
+            "teams": "array<struct>"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "addDevice",
+          "request_shape": {
+            "serialNumber": "string"
+          },
+          "response_shape": {
+            "device": "struct device description"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "deleteDevice",
+          "request_shape": {
+            "address": "string",
+            "flags": "int"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "replaceDevice",
+          "request_shape": {
+            "addressOld": "string",
+            "addressNew": "string"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getParamset",
+          "request_shape": {
+            "address": "string",
+            "paramsetKey": "string (MASTER|VALUES|<peer>)"
+          },
+          "response_shape": {
+            "paramset": "struct name->value"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "putParamset",
+          "request_shape": {
+            "address": "string",
+            "paramsetKey": "string",
+            "paramset": "struct name->typed value"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getParamsetDescription",
+          "request_shape": {
+            "address": "string",
+            "paramsetKey": "string"
+          },
+          "response_shape": {
+            "description": "struct name->parameter description"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getParamsetId",
+          "request_shape": {
+            "address": "string",
+            "paramsetType": "string"
+          },
+          "response_shape": {
+            "id": "string"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getValue",
+          "request_shape": {
+            "address": "string",
+            "valueKey": "string"
+          },
+          "response_shape": {
+            "value": "typed scalar"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "setValue",
+          "request_shape": {
+            "address": "string",
+            "valueKey": "string",
+            "value": "[type value] (int|double|bool|string)"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "determineParameter",
+          "request_shape": {
+            "address": "string",
+            "paramsetKey": "string",
+            "parameterId": "string"
+          },
+          "response_shape": {
+            "result": "struct"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "reportValueUsage",
+          "request_shape": {
+            "address": "string",
+            "valueId": "string",
+            "refCounter": "int"
+          },
+          "response_shape": {
+            "result": "bool"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getLinks",
+          "request_shape": {
+            "address": "string",
+            "flags": "int"
+          },
+          "response_shape": {
+            "links": "array<struct SENDER, RECEIVER, FLAGS, NAME, DESCRIPTION>"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "addLink",
+          "request_shape": {
+            "sender": "string",
+            "receiver": "string",
+            "name": "string",
+            "description": "string"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "removeLink",
+          "request_shape": {
+            "sender": "string",
+            "receiver": "string"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getLinkInfo",
+          "request_shape": {
+            "sender": "string",
+            "receiver": "string"
+          },
+          "response_shape": {
+            "info": "struct NAME, DESCRIPTION"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "setLinkInfo",
+          "request_shape": {
+            "sender": "string",
+            "receiver": "string",
+            "name": "string",
+            "description": "string"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getLinkPeers",
+          "request_shape": {
+            "address": "string"
+          },
+          "response_shape": {
+            "peers": "array<string>"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "activateLinkParamset",
+          "request_shape": {
+            "address": "string",
+            "peerAddress": "string",
+            "longPress": "bool"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "setTeam",
+          "request_shape": {
+            "channelAddress": "string",
+            "teamAddress": "string"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "setInstallMode",
+          "request_shape": {
+            "on": "bool",
+            "time": "int seconds (optional, default 30 from the method)"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "setInstallModeWithWhitelist",
+          "request_shape": {
+            "on": "bool",
+            "time": "int",
+            "whitelist": "array<struct ADDRESS, KEY, KEY_MODE>"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getInstallMode",
+          "request_shape": {},
+          "response_shape": {
+            "remainingTime": "int seconds"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "searchDevices",
+          "request_shape": {},
+          "response_shape": {
+            "count": "int"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getKeyMissmatchDevice",
+          "request_shape": {
+            "reset": "bool"
+          },
+          "response_shape": {
+            "serial": "string"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "clearConfigCache",
+          "request_shape": {
+            "address": "string"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "restoreConfigToDevice",
+          "request_shape": {
+            "address": "string"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "updateFirmware",
+          "request_shape": {
+            "device": "string"
+          },
+          "response_shape": {
+            "result": "array|bool"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "refreshDeployedDeviceFirmwareList",
+          "request_shape": {},
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getServiceMessages",
+          "request_shape": {},
+          "response_shape": {
+            "messages": "array<array>"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "suppressServiceMessages",
+          "request_shape": {
+            "channel": "string",
+            "parameter": "string",
+            "suppress": "boolean"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getSuppressedServiceMessages",
+          "request_shape": {
+            "channel": "string"
+          },
+          "response_shape": {
+            "parameters": "array<string>"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "logLevel",
+          "request_shape": {
+            "level": "int (optional; omitted = read)"
+          },
+          "response_shape": {
+            "level": "int"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "listBidcosInterfaces",
+          "request_shape": {},
+          "response_shape": {
+            "gateways": "array<struct ADDRESS, DESCRIPTION, CONNECTED, DEFAULT, ...>"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "setBidcosInterface",
+          "request_shape": {
+            "deviceId": "string",
+            "interfaceId": "string",
+            "roaming": "bool"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "rssiInfo",
+          "request_shape": {},
+          "response_shape": {
+            "rssiInfo": "struct"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getLGWStatus",
+          "request_shape": {},
+          "response_shape": {
+            "status": "struct"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "init",
+          "request_shape": {
+            "url": "string",
+            "interfaceId": "string"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "getMetadata",
+          "request_shape": {
+            "objectId": "string",
+            "dataId": "string"
+          },
+          "response_shape": {
+            "value": "any"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "setMetadata",
+          "request_shape": {
+            "objectId": "string",
+            "dataId": "string",
+            "value": "any"
+          },
+          "response_shape": {
+            "result": "none"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "XML-RPC",
+          "path": "system.listMethods",
+          "request_shape": {},
+          "response_shape": {
+            "methods": "array<string>"
+          },
+          "error_responses": [
+            {
+              "status": -1,
+              "meaning": "XML-RPC general error -> 501",
+              "retry": false
+            },
+            {
+              "status": -2,
+              "meaning": "unknown device or channel -> 502 (JSON-RPC 502)",
+              "retry": false
+            },
+            {
+              "status": -5,
+              "meaning": "unknown argument or value -> 505",
+              "retry": false
+            },
+            {
+              "status": -6,
+              "meaning": "operation not supported -> 506",
+              "retry": false
+            },
+            {
+              "status": -10,
+              "meaning": "transmission pending in HmIP Legacy API -> 507",
+              "retry": true
+            },
+            {
+              "status": 1,
+              "meaning": "Tcl error in xmlrpc call -> 601",
+              "retry": false
+            },
+            {
+              "status": "other",
+              "meaning": "unmapped status -> 599",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 20000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "checkXmlRpcStatus: 1..4 -> 601..604, -1..-6 -> 501..506, -10 -> 507, other -> 599; fault text logged with correlation id, never returned"
+    },
+    {
+      "name": "lighttpd CGI environment",
+      "protocol": "CGI/1.1",
+      "adapter_component": "dispatcher",
+      "base_url_config": "n/a (web server maps /api/ to src/webui/www/api; v2 routes are added in the external OpenCCU repo, EG-21)",
+      "auth": {
+        "type": "none",
+        "config_key": "web-server level none; auth is the ReGa sid"
+      },
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/homematic.cgi (v1, frozen)",
+          "request_shape": {
+            "headers": "Content-Type: any (application/json required when strict_mode=true) , X-Requested-With (required when strict_mode=true)",
+            "body": {
+              "id": "any JSON value (optional; echoed)",
+              "method": "string, registry name (case-sensitive)",
+              "params": "object; _session_id_ required for non-NONE methods"
+            }
+          },
+          "response_shape": {
+            "id": "echo (omitted when absent in request)",
+            "version": "\"1.1\"",
+            "result": "any JSON | null",
+            "error": "null | {name:\"JSONRPCError\", code:integer, message:string, reason?:string (v2 only)}"
+          },
+          "error_responses": [
+            {
+              "status": 200,
+              "meaning": "every outcome is HTTP 200; error.code carries 100/102/103/200/400/401/402/403/405/429/5xx/6xx",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/homematic.cgi",
+          "request_shape": {
+            "query": "sid? (optional)"
+          },
+          "response_shape": {
+            "body": "text/html reduced page; method list only with a valid sid"
+          },
+          "error_responses": [
+            {
+              "status": 200,
+              "meaning": "reduced page without method names when unauthenticated",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "GET|POST",
+          "path": "/api/backup/<binfile|textfile|tarfile|links|paramset|run-script|login|logout|version>.cgi",
+          "request_shape": {
+            "query": "sid, file|interface|address per CGI",
+            "body": "run-script.cgi: script text"
+          },
+          "response_shape": {
+            "body": "file stream | text | JSON dump | 404 when removed"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "HTTP/1.0 400 Bad Request text/plain (invalid session, path not allowed, internal)",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "CGI removed (EG-1: deferred by decision 2026-10-20, removal in a later release; not emitted now)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "EG-1 resolved 2026-10-20: ADMIN (upl 8) + empty allow-list + fail-closed stays; not removed now, deprecation announced, removal in a later release"
+        },
+        {
+          "method": "ENV",
+          "path": "REQUEST_METHOD, CONTENT_LENGTH, CONTENT_TYPE, HTTP_X_REQUESTED_WITH, HTTP_X_SESSION_ID, HTTP, DOCUMENT_ROOT, QUERY_STRING",
+          "request_shape": {
+            "CONTENT_LENGTH": "integer; exactly this many characters are read"
+          },
+          "response_shape": {
+            "effect": "selects POST/GET pipeline; DOCUMENT_ROOT no longer selects central mode (SP013)"
+          },
+          "error_responses": [
+            {
+              "status": "missing REQUEST_METHOD",
+              "meaning": "Tcl error before any output",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "'HTTP/1.0 400 Bad Request' header text from put_error relies on lighttpd interpretation; effective status not verifiable from source"
+    },
+    {
+      "name": "Local filesystem state",
+      "plan_constraint_system": "/tmp/event/* file queue and /var/tmp/api_ipc.cache",
+      "protocol": "POSIX file I/O",
+      "adapter_component": "event-push (queue), interface-gateway (ipc cache), security-session (legacy SESSIONS.dat)",
+      "base_url_config": "fixed paths: EVENT_DIRECTORY=/tmp/event, EVENT_SUBSCRIBER_LIST_FILE=/tmp/event/subscriber.list, EVENT_LOCK_FILE=/tmp/event/lock, IPC_CACHE_FILE=/var/tmp/api_ipc.cache",
+      "auth": {
+        "type": "none",
+        "config_key": "CGI process uid / file permissions"
+      },
+      "endpoints": [
+        {
+          "method": "FILE",
+          "path": "/tmp/event/<sid>",
+          "request_shape": {
+            "append": "one line per event: {TYPE <t> DATA <json>}\\n",
+            "sid": "validated ^@?[A-Za-z0-9]{1,12}@?$"
+          },
+          "response_shape": {
+            "read": "Event.poll reads and truncates"
+          },
+          "error_responses": [
+            {
+              "status": "lock busy",
+              "meaning": "poll returns [], subscribe returns false",
+              "retry": true
+            },
+            {
+              "status": "invalid sid",
+              "meaning": "refused, no path built",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "poll is client-driven"
+          }
+        },
+        {
+          "method": "FILE",
+          "path": "/tmp/event/subscriber.list",
+          "request_shape": {
+            "content": "Tcl array id -> {EVENT_COUNT n}; written write-then-rename"
+          },
+          "response_shape": {
+            "read": "array"
+          },
+          "error_responses": [
+            {
+              "status": "missing",
+              "meaning": "created empty at startup (event.tcl:48-51)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "FILE",
+          "path": "/tmp/event/lock",
+          "request_shape": {
+            "create": "O_EXCL; content = owner pid; stale after 10 s"
+          },
+          "response_shape": {
+            "result": "1 acquired | 0 busy"
+          },
+          "error_responses": [
+            {
+              "status": "stale lock",
+              "meaning": "removed after event_lock_stale_seconds=10",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "FILE",
+          "path": "/var/tmp/api_ipc.cache",
+          "request_shape": {
+            "content": "serialized INTERFACE_LIST"
+          },
+          "response_shape": {
+            "read": "array name -> {PORT URL INFO}"
+          },
+          "error_responses": [
+            {
+              "status": "older than InterfacesList.xml",
+              "meaning": "cache invalidated and rebuilt (mtime compare)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "FILE",
+          "path": "/etc/config/InterfacesList.xml, /var/SESSIONS.dat, /etc/config/USERS.dat, /VERSION, /var/status/<serial>.connstat, /etc/config/<serial>.keychange, /etc/config/userprofiles/<name>.lang",
+          "request_shape": {
+            "paths": "fixed, serial/name validated (BD-10)"
+          },
+          "response_shape": {
+            "content": "text/XML/Tcl list"
+          },
+          "error_responses": [
+            {
+              "status": "unreadable",
+              "meaning": "file_load returns ''; callers map to empty/false",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "as-is silent failures (file_load returns '', file_save ignores errors); target: write-then-rename and syslog entry with correlation id"
+    },
+    {
+      "name": "tar (external binary)",
+      "protocol": "CLI (Tcl command pipeline)",
+      "adapter_component": "backup-cgis",
+      "base_url_config": "n/a (PATH lookup of tar)",
+      "auth": {
+        "type": "none",
+        "config_key": "CGI process identity"
+      },
+      "endpoints": [
+        {
+          "method": "EXEC",
+          "path": "tar -cf - -- <allow-listed path>",
+          "request_shape": {
+            "argv": "list: tar, -cf, -, --, <path exactly in backup_files allow-list>"
+          },
+          "response_shape": {
+            "stdout": "binary tar stream"
+          },
+          "error_responses": [
+            {
+              "status": "non-zero exit",
+              "meaning": "Tcl error => put_error 400 generic text, cid logged",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "failures raise Tcl errors -> backup put_error (HTTP 400 text) with correlation id; unreachable while the allow-list is empty or the CGI is removed"
+    },
+    {
+      "name": "Tcl runtime with HomeMatic package, http, cgi.tcl",
+      "protocol": "library (package require HomeMatic, http, cgi.tcl)",
+      "adapter_component": "dispatcher",
+      "base_url_config": "n/a (in-process)",
+      "auth": {
+        "type": "none",
+        "config_key": "CGI process identity"
+      },
+      "endpoints": [
+        {
+          "method": "PKG",
+          "path": "package require HomeMatic (hmscript.tcl:8)",
+          "request_shape": {
+            "package": "HomeMatic (not in repository; stubbed by the harness, EG-19)"
+          },
+          "response_shape": {
+            "commands": "rega_script, rega_exec"
+          },
+          "error_responses": [
+            {
+              "status": "package not found",
+              "meaning": "Tcl error at startup => no response (lighttpd 500)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PKG",
+          "path": "package require http (Session.login, session.tcl)",
+          "request_shape": {
+            "command": "::http::geturl, ::http::formatQuery, ::http::code, ::http::cleanup"
+          },
+          "response_shape": {
+            "result": "token array"
+          },
+          "error_responses": [
+            {
+              "status": "socket error",
+              "meaning": "Tcl error => 200 internal error (ref)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "failures raise Tcl errors -> sanitised error 200 with correlation id"
+    },
+    {
+      "name": "crypttool",
+      "protocol": "exec / pipe",
+      "adapter_component": "system-admin",
+      "base_url_config": "n/a (binary /bin/crypttool)",
+      "auth": {
+        "type": "none",
+        "config_key": "CGI process identity"
+      },
+      "endpoints": [
+        {
+          "method": "EXEC",
+          "path": "crypttool -g",
+          "request_shape": {
+            "argv": [
+              "crypttool",
+              "-g"
+            ]
+          },
+          "response_shape": {
+            "exit": "0 | non-zero",
+            "stdout": "key material (never returned)"
+          },
+          "error_responses": [
+            {
+              "status": "non-zero",
+              "meaning": "createKeyFile fails => error 200 internal (ref)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "EXEC",
+          "path": "crypttool -v -t 0",
+          "request_shape": {
+            "argv": [
+              "crypttool",
+              "-v",
+              "-t",
+              "0"
+            ]
+          },
+          "response_shape": {
+            "exit": "0 = key set"
+          },
+          "error_responses": [
+            {
+              "status": "non-zero",
+              "meaning": "isKeySet maps to true/false as in v1 (frozen)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "EXEC",
+          "path": "crypttool -v -t 3 -k <key>",
+          "request_shape": {
+            "argv": [
+              "crypttool",
+              "-v",
+              "-t",
+              "3",
+              "-k",
+              "<key ^[0-9A-Fa-f]{32}$ in v2>"
+            ]
+          },
+          "response_shape": {
+            "exit": "0 = valid"
+          },
+          "error_responses": [
+            {
+              "status": "non-zero",
+              "meaning": "validateKey => false",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "key stays on argv (EG-16 residual)"
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "non-zero exit is turned into boolean false (validateKey) or true (isKeySet), frozen in v1"
+    },
+    {
+      "name": "hm_deldev event producer",
+      "protocol": "file append into /tmp/event (via event_fire)",
+      "adapter_component": "event-push",
+      "base_url_config": "n/a (src/webui/rega/bin/hm_deldev:17 sources eq3/event.tcl)",
+      "auth": {
+        "type": "none",
+        "config_key": "process identity of the ReGa-side caller"
+      },
+      "endpoints": [
+        {
+          "method": "CALL",
+          "path": "event_fire delete <json>",
+          "request_shape": {
+            "type": "string 'delete'",
+            "data": "json_toString-encoded device description"
+          },
+          "response_shape": {
+            "effect": "line appended to every subscriber queue below EVENT_LIMIT 64"
+          },
+          "error_responses": [
+            {
+              "status": "lock busy",
+              "meaning": "event dropped silently (best-effort)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "DATA built with json_toString (valid JSON for any device name); failures logged via logger"
+    },
+    {
+      "name": "Tcl md5 package",
+      "protocol": "library",
+      "adapter_component": "system-admin",
+      "base_url_config": "n/a (in-process)",
+      "auth": {
+        "type": "none",
+        "config_key": "CGI process identity"
+      },
+      "endpoints": [
+        {
+          "method": "PKG",
+          "path": "md5::md5 (createkeyfile.tcl:18-19)",
+          "request_shape": {
+            "data": "string"
+          },
+          "response_shape": {
+            "digest": "hex string"
+          },
+          "error_responses": [
+            {
+              "status": "package missing",
+              "meaning": "Tcl error => 200 internal error (ref)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 1000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "failures raise Tcl errors -> sanitised error 200 with correlation id"
+    },
+    {
+      "name": "monit",
+      "protocol": "CLI /usr/bin/monit",
+      "adapter_component": "system-admin / user-profile (User.restart*)",
+      "base_url_config": "n/a",
+      "auth": {
+        "type": "none",
+        "config_key": "process identity of the CGI"
+      },
+      "endpoints": [
+        {
+          "method": "EXEC",
+          "path": "monit restart <lighttpd|ReGaHss|sshd>",
+          "request_shape": {
+            "argv": [
+              "/usr/bin/monit",
+              "restart",
+              "<service from fixed enum>"
+            ]
+          },
+          "response_shape": {
+            "exit": "0"
+          },
+          "error_responses": [
+            {
+              "status": "non-zero",
+              "meaning": "restartLighttpd propagates (200 internal error ref); restartReGa/sshd swallow it (frozen v1)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "restartLighttpd stays synchronous (EG-15)"
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "restartlighttpd propagates exec failure (200); restartReGa/sshd swallow it"
+    },
+    {
+      "name": "S62HMServer init script",
+      "protocol": "CLI /etc/init.d/S62HMServer via nohup in background",
+      "adapter_component": "user-profile (User.start/stop/restartHmIPServer)",
+      "base_url_config": "n/a",
+      "auth": {
+        "type": "none",
+        "config_key": "process identity of the CGI"
+      },
+      "endpoints": [
+        {
+          "method": "EXEC",
+          "path": "S62HMServer <start|stop|restart>",
+          "request_shape": {
+            "argv": [
+              "nohup",
+              "/etc/init.d/S62HMServer",
+              "<start|stop|restart>"
+            ],
+            "background": true
+          },
+          "response_shape": {
+            "response": "true (always)"
+          },
+          "error_responses": [
+            {
+              "status": "any",
+              "meaning": "none; always responds true (frozen v1)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 1000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "none; always responds true"
+    },
+    {
+      "name": "libsecuritylevel.tcl (/lib)",
+      "protocol": "Tcl source",
+      "adapter_component": "system-admin",
+      "base_url_config": "n/a (source /lib/libsecuritylevel.tcl)",
+      "auth": {
+        "type": "none",
+        "config_key": "n/a"
+      },
+      "endpoints": [
+        {
+          "method": "PROC",
+          "path": "SEC_getsecuritylevel",
+          "request_shape": {},
+          "response_shape": {
+            "level": "truthy/falsy or integer, mapped to schema value"
+          },
+          "error_responses": [
+            {
+              "status": "raise",
+              "meaning": "Tcl error => 200 internal error (ref)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 2000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PROC",
+          "path": "SEC_setsecuritylevel <level>",
+          "request_shape": {
+            "level": "validated enum from schema"
+          },
+          "response_shape": {
+            "rc": "truthy => true"
+          },
+          "error_responses": [
+            {
+              "status": "falsy",
+              "meaning": "false",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 2000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PROC",
+          "path": "SEC_getAuthEnabled",
+          "request_shape": {},
+          "response_shape": {
+            "enabled": "truthy/falsy"
+          },
+          "error_responses": [
+            {
+              "status": "raise",
+              "meaning": "Tcl error => 200",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 2000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PROC",
+          "path": "SEC_setAuthEnabled <bool>",
+          "request_shape": {
+            "enabled": "bool"
+          },
+          "response_shape": {
+            "rc": "truthy"
+          },
+          "error_responses": [
+            {
+              "status": "falsy",
+              "meaning": "false",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 2000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "truthy/falsy return mapped to true/false"
+    },
+    {
+      "name": "libfirewall.tcl / setfirewall.tcl",
+      "protocol": "Tcl source",
+      "adapter_component": "system-admin",
+      "base_url_config": "n/a (source /lib/libfirewall.tcl, /bin/setfirewall.tcl)",
+      "auth": {
+        "type": "none",
+        "config_key": "n/a"
+      },
+      "endpoints": [
+        {
+          "method": "PROC",
+          "path": "Firewall_loadConfiguration",
+          "request_shape": {},
+          "response_shape": {
+            "globals": "Firewall_IPS, Firewall_USER_PORTS, Firewall_SERVICES, Firewall_MODE"
+          },
+          "error_responses": [
+            {
+              "status": "raise",
+              "meaning": "Tcl error => 200",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PROC",
+          "path": "Firewall_saveConfiguration",
+          "request_shape": {
+            "globals": "as above"
+          },
+          "response_shape": {
+            "effect": "firewall.conf rewritten write-then-rename"
+          },
+          "error_responses": [
+            {
+              "status": "raise",
+              "meaning": "Tcl error => 200; previous file unchanged",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PROC",
+          "path": "Firewall_setMode <MOST_OPEN|RESTRICTIVE>",
+          "request_shape": {
+            "mode": "enum"
+          },
+          "response_shape": {
+            "effect": "mode set; never prints to stdout (target)"
+          },
+          "error_responses": [
+            {
+              "status": "invalid mode",
+              "meaning": "403 invalid argument (mode) before the call; logged to syslog",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PROC",
+          "path": "Firewall_set_service_access <service> <full|restricted|none>",
+          "request_shape": {
+            "service": "string",
+            "access": "enum"
+          },
+          "response_shape": {
+            "effect": "updates Firewall_SERVICES"
+          },
+          "error_responses": [
+            {
+              "status": "unknown service",
+              "meaning": "ignored (frozen)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PROC",
+          "path": "Firewall_configureFirewall",
+          "request_shape": {},
+          "response_shape": {
+            "effect": "applies rules"
+          },
+          "error_responses": [
+            {
+              "status": "raise",
+              "meaning": "Tcl error => 200",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "SOURCE",
+          "path": "/bin/setfirewall.tcl",
+          "request_shape": {},
+          "response_shape": {
+            "effect": "loads and applies the firewall configuration after SSH toggle"
+          },
+          "error_responses": [
+            {
+              "status": "raise",
+              "meaning": "Tcl error => 200",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 30000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "setMode prints a message to stdout on invalid mode (as-is; target logs to syslog); other errors raise Tcl errors"
+    },
+    {
+      "name": "SNMP user helper scripts",
+      "protocol": "CLI",
+      "adapter_component": "system-admin",
+      "base_url_config": "n/a (/bin/setSNMPUser.sh, /bin/unsetSNMPUser.sh)",
+      "auth": {
+        "type": "none",
+        "config_key": "credentials as arguments (documented residual risk, EG-16)"
+      },
+      "endpoints": [
+        {
+          "method": "EXEC",
+          "path": "setSNMPUser.sh <usr> <pass>",
+          "request_shape": {
+            "argv": [
+              "--",
+              "/bin/setSNMPUser.sh",
+              "<usr>",
+              "<pass>"
+            ]
+          },
+          "response_shape": {
+            "exit": "0 = ok",
+            "msg": "output text"
+          },
+          "error_responses": [
+            {
+              "status": "non-zero",
+              "meaning": "error text returned in {msg}; firewall not saved",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "EXEC",
+          "path": "unsetSNMPUser.sh",
+          "request_shape": {
+            "argv": [
+              "--",
+              "/bin/unsetSNMPUser.sh"
+            ]
+          },
+          "response_shape": {
+            "exit": "0 = ok"
+          },
+          "error_responses": [
+            {
+              "status": "non-zero",
+              "meaning": "error text returned in {msg}",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 10000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "non-zero exit -> error text returned in {msg}"
+    },
+    {
+      "name": "mkpasswd / sed / /etc/config/shadow",
+      "protocol": "CLI",
+      "adapter_component": "system-admin",
+      "base_url_config": "n/a",
+      "auth": {
+        "type": "none",
+        "config_key": "file permissions"
+      },
+      "endpoints": [
+        {
+          "method": "EXEC",
+          "path": "mkpasswd -m sha512 -s",
+          "request_shape": {
+            "stdin": "password (never argv)",
+            "argv": [
+              "mkpasswd",
+              "-m",
+              "sha512",
+              "-s"
+            ]
+          },
+          "response_shape": {
+            "stdout": "crypt hash"
+          },
+          "error_responses": [
+            {
+              "status": "non-zero",
+              "meaning": "error 200 internal (ref)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "FILE",
+          "path": "/etc/config/shadow",
+          "request_shape": {
+            "write": "write-then-rename of the line for the fixed user"
+          },
+          "response_shape": {
+            "effect": "hash replaced"
+          },
+          "error_responses": [
+            {
+              "status": "write failure",
+              "meaning": "previous file byte-identical; false",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "sed output returned in {msg} (v1); mkpasswd failure -> error 200 with correlation id"
+    },
+    {
+      "name": "Homematic update servers",
+      "protocol": "HTTPS via wget --https-only",
+      "adapter_component": "system-admin",
+      "base_url_config": "derived from /VERSION major: 3 -> ccu3-update.homematic.com, 2 -> update.homematic.com (constants in downloadFirmware.tcl; not configurable)",
+      "auth": {
+        "type": "none",
+        "config_key": "device serial and version in the query string"
+      },
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "https://ccu3-update.homematic.com/firmware/download",
+          "request_shape": {
+            "query": "cmd=download&version=<VERSION>&serial=<board_serial>&lang=de&product=HM-CCU3"
+          },
+          "response_shape": {
+            "file": "/tmp/fup.tgz (tarball)"
+          },
+          "error_responses": [
+            {
+              "status": "wget exit != 0",
+              "meaning": "response false, text in /tmp/dwnld.error",
+              "retry": false
+            },
+            {
+              "status": "timeout 300 s",
+              "meaning": "wget terminated, /tmp/dwnld.error='timeout', response false",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 305000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "https://update.homematic.com/firmware/download",
+          "request_shape": {
+            "query": "cmd=download&version=<VERSION>&serial=<board_serial>&lang=de&product=HM-CCU2"
+          },
+          "response_shape": {
+            "file": "/tmp/fup.tgz"
+          },
+          "error_responses": [
+            {
+              "status": "wget exit != 0",
+              "meaning": "response false",
+              "retry": false
+            },
+            {
+              "status": "timeout 300 s",
+              "meaning": "as above",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 305000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "wget exit != 0 or timeout => response false, text to /tmp/dwnld.error; exactly one response document"
+    },
+    {
+      "name": "Linux system files and tools",
+      "protocol": "filesystem/CLI",
+      "adapter_component": "system-admin",
+      "base_url_config": "n/a (fixed paths)",
+      "auth": {
+        "type": "none",
+        "config_key": "CGI process uid"
+      },
+      "endpoints": [
+        {
+          "method": "FILE",
+          "path": "/etc/config/{sshEnabled,httpsRedirectEnabled,userAckSecurityHint,firewallConfigured,fieldTestActive,showDiagramDatapoints,safemode,color.map,hss_led_info.conf,rfd.conf,hs485d.conf}",
+          "request_shape": {
+            "op": "touch|rm|write-then-rename with argument lists (no shell)",
+            "path": "fixed or exact-match allow-listed"
+          },
+          "response_shape": {
+            "effect": "flag/config state"
+          },
+          "error_responses": [
+            {
+              "status": "failure",
+              "meaning": "syslog + false or error 200 (ref)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 5000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "EXEC",
+          "path": "/sbin/reboot -d 2 (background; SafeMode.enter and RecoveryMode.enter, the latter after writing /usr/local/.recoveryMode)",
+          "request_shape": {
+            "argv": [
+              "/sbin/reboot",
+              "-d",
+              "2"
+            ]
+          },
+          "response_shape": {
+            "effect": "reboot in 2 s"
+          },
+          "error_responses": [
+            {
+              "status": "n/a",
+              "meaning": "fire-and-forget; success reported before reboot",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 1000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "FILE",
+          "path": "/VERSION, /var/board_serial, /sys/module/plat_eq3ccu2/parameters/board_serial",
+          "request_shape": {
+            "op": "read (no shell pipeline)"
+          },
+          "response_shape": {
+            "content": "VERSION=<x.y.z>, serial"
+          },
+          "error_responses": [
+            {
+              "status": "unreadable",
+              "meaning": "empty value; request continues (frozen)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 1000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "exec failures raise Tcl errors -> error 200 with correlation id, unless wrapped in catch (then logged to syslog)"
+    },
+    {
+      "name": "OpenCCU packaging repository (external, SHA pin, rootfs patches, lighttpd config)",
+      "plan_constraint_system": "Sibling OpenCCU packaging repo (SHA pin, rootfs patches)",
+      "protocol": "build/packaging (git patches against src/webui/www)",
+      "adapter_component": "schema-harness (CI check)",
+      "base_url_config": "n/a (build-time); SHA pin and patch set owned by the external repository",
+      "auth": {
+        "type": "none",
+        "config_key": "n/a (build-time)"
+      },
+      "endpoints": [
+        {
+          "method": "PATCH",
+          "path": "patch set against src/webui/www",
+          "request_shape": {
+            "constraint": "files patched downstream keep ISO-8859-1/CRLF (tcl/eq3/rega.tcl); new/edited files UTF-8"
+          },
+          "response_shape": {
+            "check": "git apply --check exits 0"
+          },
+          "error_responses": [
+            {
+              "status": "patch no longer applies",
+              "meaning": "CI job api-tree-equality/patch-check fails; merge blocked",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 600000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "ROUTE",
+          "path": "lighttpd route /api/v2/* (external, EG-21)",
+          "request_shape": {
+            "routes": "/api/v2/rpc, /batch, /schema, /model, /events, /programs, /rooms, /functions, /profile -> homematic.cgi dispatcher"
+          },
+          "response_shape": {
+            "effect": "v2 reachable"
+          },
+          "error_responses": [
+            {
+              "status": "route missing",
+              "meaning": "v2 unreachable; v2 acceptance verified with the CGI-level harness only",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 0,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "coordination only, no change in this repo"
+        },
+        {
+          "method": "CONFIG",
+          "path": "lighttpd throttling and /api/backup/ exposure (external)",
+          "request_shape": {
+            "limits": "coordinated with dispatcher per_sid_limit"
+          },
+          "response_shape": {
+            "effect": "request throttling"
+          },
+          "error_responses": [
+            {
+              "status": "absent",
+              "meaning": "dispatcher limits still apply",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 0,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "Patch that no longer applies fails the CI check (git apply --check); coordination required for SHA pin"
+    },
+    {
+      "name": "nextGen React UI (inbound consumer, out of scope)",
+      "protocol": "HTTP same-origin, JSON-RPC 1.1 (v1) and JSON (v2)",
+      "direction": "inbound",
+      "adapter_component": "dispatcher (+ rega-model, event-push, user-profile for their routes)",
+      "base_url_note": "omitted by design: AQ6 same-origin via reverse proxy, AQ7 not applicable; clients use relative paths and no Access-Control-* headers are sent",
+      "auth": {
+        "type": "session-id",
+        "config_key": "X-Session-Id header (v2) or params._session_id_ (v1); optional HttpOnly SameSite=Strict cookie hm_sid when cookie_mode=true; X-Requested-With required on v2"
+      },
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/homematic.cgi",
+          "request_shape": {
+            "body": {
+              "id": "any JSON value (optional; echoed)",
+              "method": "string, registry name (case-sensitive)",
+              "params": "object of method arguments"
+            }
+          },
+          "response_shape": {
+            "id": "echo (omitted when absent in request)",
+            "version": "\"1.1\"",
+            "result": "any JSON | null",
+            "error": "null | {name:\"JSONRPCError\", code:integer, message:string, reason?:string (v2 only)}"
+          },
+          "error_responses": [
+            {
+              "status": 200,
+              "meaning": "v1: HTTP 200 for every outcome, error.code in body",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/rpc",
+          "request_shape": {
+            "headers": {
+              "Content-Type": "application/json (required, else 415)",
+              "X-Requested-With": "non-empty (required, else 403)",
+              "X-Session-Id": "sid string (^@?[A-Za-z0-9]{10}@?$); optional for Session.login and LEVEL NONE methods"
+            },
+            "body": {
+              "id": "any JSON value (optional; echoed)",
+              "method": "string, registry name (case-sensitive)",
+              "params": "object of method arguments"
+            }
+          },
+          "response_shape": {
+            "id": "echo (omitted when absent in request)",
+            "version": "\"1.1\"",
+            "result": "any JSON | null",
+            "error": "null | {name:\"JSONRPCError\", code:integer, message:string, reason?:string (v2 only)}",
+            "HTTP": "200 on success; mapped status on error (BD-04)"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/batch",
+          "request_shape": {
+            "headers": {
+              "Content-Type": "application/json (required, else 415)",
+              "X-Requested-With": "non-empty (required, else 403)",
+              "X-Session-Id": "sid string (^@?[A-Za-z0-9]{10}@?$); optional for Session.login and LEVEL NONE methods"
+            },
+            "body": "array<{id?, method, params}>, 1..20 elements"
+          },
+          "response_shape": {
+            "body": "array<JSON-RPC envelope>, same order and length; element failure isolated"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/schema",
+          "request_shape": {
+            "headers": {
+              "X-Session-Id": "GUEST or higher",
+              "X-Requested-With": "non-empty"
+            }
+          },
+          "response_shape": {
+            "version": "string",
+            "methods": "array of exactly 179 {name, level (NONE|GUEST|USER|ADMIN), info, params (JSON Schema object), result (JSON Schema | null)}"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/model",
+          "request_shape": {
+            "headers": {
+              "X-Session-Id": "GUEST or higher",
+              "X-Requested-With": "non-empty"
+            },
+            "query": {
+              "sections": "comma list of devices|channels|rooms|functions|sysvars|programs|datapoints (default: all but datapoints)",
+              "limit": "integer 1..500, default 100",
+              "offset": "integer >= 0, default 0"
+            }
+          },
+          "response_shape": {
+            "<section>": "{total:int, offset:int, limit:int, items:array<object with real JSON booleans>}"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "limit 0 or above 500: error 403 invalid argument (limit)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/events",
+          "request_shape": {
+            "headers": {
+              "X-Session-Id": "valid",
+              "X-Requested-With": "non-empty"
+            },
+            "query": {
+              "timeout": "integer seconds 1..55, default 25"
+            }
+          },
+          "response_shape": {
+            "body": "array<{type:string, data:object}>; [] after timeout; datapoint.changed data {address, datapoint, value}"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "long-poll holds the CGI up to 55 s; SSE only through the gated optional gateway"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/programs",
+          "request_shape": {
+            "headers": {
+              "Content-Type": "application/json (required, else 415)",
+              "X-Requested-With": "non-empty (required, else 403)",
+              "X-Session-Id": "sid string (^@?[A-Za-z0-9]{10}@?$); optional for Session.login and LEVEL NONE methods"
+            },
+            "body": {
+              "id": "string, required",
+              "isActive": "boolean (operation set provisional until EG-6)"
+            }
+          },
+          "response_shape": {
+            "id": "string",
+            "isActive": "boolean"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "unknown program id",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "unknown body key (for example script)",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "USER or higher; GUEST gets 403; gated by EG-6"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/rooms",
+          "request_shape": {
+            "headers": {
+              "Content-Type": "application/json (required, else 415)",
+              "X-Requested-With": "non-empty (required, else 403)",
+              "X-Session-Id": "sid string (^@?[A-Za-z0-9]{10}@?$); optional for Session.login and LEVEL NONE methods"
+            },
+            "body": {
+              "id": "string, required",
+              "addChannels": "array<string> optional",
+              "removeChannels": "array<string> optional"
+            }
+          },
+          "response_shape": {
+            "id": "string",
+            "channelIds": "array<string>"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "unknown room id",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "ADMIN for membership edits; USER gets 403; gated by EG-6"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/functions",
+          "request_shape": {
+            "headers": {
+              "Content-Type": "application/json (required, else 415)",
+              "X-Requested-With": "non-empty (required, else 403)",
+              "X-Session-Id": "sid string (^@?[A-Za-z0-9]{10}@?$); optional for Session.login and LEVEL NONE methods"
+            },
+            "body": {
+              "id": "string, required",
+              "addChannels": "array<string> optional",
+              "removeChannels": "array<string> optional"
+            }
+          },
+          "response_shape": {
+            "id": "string",
+            "channelIds": "array<string>"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "unknown function id",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          },
+          "note": "same shape as rooms for Subsection; gated by EG-6"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/profile",
+          "request_shape": {
+            "headers": {
+              "X-Session-Id": "GUEST or higher",
+              "X-Requested-With": "non-empty"
+            },
+            "query": {
+              "userId": "string, ADMIN only"
+            }
+          },
+          "response_shape": {
+            "userId": "string",
+            "userName": "string",
+            "firstName": "string",
+            "hasPassword": "boolean",
+            "isNoExpert": "boolean",
+            "language": "string ^[a-z]{2}$ | null"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v2/profile",
+          "request_shape": {
+            "headers": {
+              "Content-Type": "application/json (required, else 415)",
+              "X-Requested-With": "non-empty (required, else 403)",
+              "X-Session-Id": "sid string (^@?[A-Za-z0-9]{10}@?$); optional for Session.login and LEVEL NONE methods"
+            },
+            "body": {
+              "language": "string ^[a-z]{2}$ optional",
+              "userId": "string optional, ADMIN only"
+            }
+          },
+          "response_shape": {
+            "language": "string"
+          },
+          "error_responses": [
+            {
+              "status": 400,
+              "meaning": "code 100/102/103 invalid request",
+              "retry": false
+            },
+            {
+              "status": 401,
+              "meaning": "missing/invalid sid",
+              "retry": false
+            },
+            {
+              "status": 403,
+              "meaning": "sid valid, level too low (code 400) or X-Requested-With missing",
+              "retry": false
+            },
+            {
+              "status": 404,
+              "meaning": "code 401 method not found",
+              "retry": false
+            },
+            {
+              "status": 405,
+              "meaning": "wrong HTTP verb (Allow header)",
+              "retry": false
+            },
+            {
+              "status": 413,
+              "meaning": "batch over batch_limit (20)",
+              "retry": false
+            },
+            {
+              "status": 415,
+              "meaning": "Content-Type not application/json",
+              "retry": false
+            },
+            {
+              "status": 422,
+              "meaning": "code 402/403 missing or invalid argument",
+              "retry": false
+            },
+            {
+              "status": 429,
+              "meaning": "per-sid limit exceeded (Retry-After); always enforced on /api/v2",
+              "retry": true
+            },
+            {
+              "status": 500,
+              "meaning": "code 200/500 internal error with correlation id",
+              "retry": false
+            },
+            {
+              "status": 502,
+              "meaning": "XML-RPC mapped 501-507/599/601-604",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "retry_guidance": "GET endpoints are idempotent and retryable; 429 honours Retry-After; POST rpc retry depends on the method (idempotent reads only)",
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "v1: HTTP 200 + error.code; v2: real HTTP status (BD-04) + same JSON-RPC error body"
+    },
+    {
+      "name": "GitHub Actions CI (x86_64, tclsh + mocks)",
+      "protocol": "CI pipeline",
+      "adapter_component": "schema-harness",
+      "base_url_config": "n/a (.github/workflows/ci.yml)",
+      "auth": {
+        "type": "repository-token",
+        "config_key": "CI-provided GITHUB_TOKEN"
+      },
+      "endpoints": [
+        {
+          "method": "JOB",
+          "path": "tcl-contract-tests",
+          "request_shape": {
+            "trigger": "every pull_request",
+            "command": "tclsh src/webui/tests/api/all.tcl",
+            "mocks": "rega_script, rega_exec, xmlrpc, package HomeMatic (EG-19)"
+          },
+          "response_shape": {
+            "result": "tcltest summary; golden fixtures for the 133 client-used methods; every dispatcher branch 100/102/103/200/400/401/402 invoked"
+          },
+          "error_responses": [
+            {
+              "status": "failing fixture",
+              "meaning": "blocks merge",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 600000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        },
+        {
+          "method": "JOB",
+          "path": "api-tree-equality",
+          "request_shape": {
+            "trigger": "every pull_request",
+            "check": "www/api removed, or byte-equal to src/webui/www/api"
+          },
+          "response_shape": {
+            "result": "0 differing files (28 differ today)"
+          },
+          "error_responses": [
+            {
+              "status": "difference",
+              "meaning": "blocks merge",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 60000,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "Q7 (D008) rejects circuit breakers: bridges are in-process or loopback, no remote service is called. Failure handling is fail-closed per call."
+      },
+      "error_contract": "Any failing fixture blocks merge"
+    },
+    {
+      "name": "Optional persistent gateway (gated, Phase 6)",
+      "protocol": "FastCGI / reverse proxy over local socket",
+      "gated": true,
+      "gate": "Phase 6 measurement (NFR-052, EG-18); not built unless approved",
+      "adapter_component": "optional-gateway",
+      "base_url_config": "lighttpd route to a local unix socket (external, EG-21); absent => CGI long-poll fallback",
+      "auth": {
+        "type": "session-id",
+        "config_key": "sid validated by the same Security & Session layer; local socket only"
+      },
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v2/events (SSE, Accept: text/event-stream)",
+          "request_shape": {
+            "headers": {
+              "X-Session-Id": "valid",
+              "X-Requested-With": "non-empty"
+            }
+          },
+          "response_shape": {
+            "stream": "text/event-stream: data: {type, data}"
+          },
+          "error_responses": [
+            {
+              "status": 401,
+              "meaning": "invalid sid",
+              "retry": false
+            },
+            {
+              "status": 503,
+              "meaning": "gateway down => lighttpd route disabled, clients fall back to long-poll",
+              "retry": true
+            }
+          ],
+          "timeout_ms": 0,
+          "retry_policy": {
+            "max_attempts": 3,
+            "backoff": "exponential (client EventSource reconnect)"
+          }
+        },
+        {
+          "method": "CACHE",
+          "path": "UPL cache per sid",
+          "request_shape": {
+            "sid": "string",
+            "ttl_seconds": "short TTL, value set by the Phase 6 decision"
+          },
+          "response_shape": {
+            "upl": "0|1|2|8"
+          },
+          "error_responses": [
+            {
+              "status": "miss",
+              "meaning": "fall through to getupl.hms",
+              "retry": false
+            }
+          ],
+          "timeout_ms": 0,
+          "retry_policy": {
+            "max_attempts": 1,
+            "backoff": "none",
+            "note": "no automatic retry; callers fail closed or surface the error"
+          }
+        }
+      ],
+      "circuit_breaker": {
+        "adopted": false,
+        "threshold": null,
+        "window_ms": null,
+        "reason": "gated option; if adopted, falls back by disabling the lighttpd route (rollback 8.3)"
+      },
+      "error_contract": "Disabling the lighttpd route falls back to CGI long-poll"
+    }
+  ],
+  "internal_contracts": [
+    {
+      "id": "IC001",
+      "consumer_component": "dispatcher",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP003",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "checkPrivilegeLevel method_array args_array",
+      "request_shape": {
+        "method(LEVEL)": "NONE|GUEST|USER|ADMIN",
+        "args(_session_id_)": "string (v2: taken from X-Session-Id)"
+      },
+      "response_shape": {
+        "returns": "normally; error 400 access denied (\"<LEVEL>\" needed, session level <upl>) via jsonrpc_error (exits)"
+      },
+      "error_responses": [
+        {
+          "status": 400,
+          "meaning": "level too low or fail-closed upl (v2 HTTP 403, or 401 when no valid sid)"
+        }
+      ]
+    },
+    {
+      "id": "IC002",
+      "consumer_component": "dispatcher",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP007",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "session_isValid sid",
+      "request_shape": {
+        "sid": "string ^@?[A-Za-z0-9]{10}@?$"
+      },
+      "response_shape": {
+        "returns": "literal true | false"
+      },
+      "error_responses": [
+        {
+          "status": "false",
+          "meaning": "treated as not authenticated (401 on v2)"
+        }
+      ]
+    },
+    {
+      "id": "IC003",
+      "consumer_component": "dispatcher",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP006",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "hmscript_whitelist declared_arguments args_array",
+      "request_shape": {
+        "declared_arguments": "list from the corrected registry",
+        "args": "array"
+      },
+      "response_shape": {
+        "returns": "array containing only declared names, control characters rejected"
+      },
+      "error_responses": [
+        {
+          "status": 403,
+          "meaning": "invalid argument (<name>)"
+        }
+      ]
+    },
+    {
+      "id": "IC004",
+      "consumer_component": "dispatcher",
+      "provider_component": "interface-gateway",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP016",
+      "transport": "in-process Tcl",
+      "method": "TCL-SOURCE",
+      "path": "source methods/interface/dispatch.tcl (METHOD_FILE interface/<name>.tcl)",
+      "request_shape": {
+        "args(interface)": "string, name in INTERFACE_LIST",
+        "method(METHOD_FILE)": "string"
+      },
+      "response_shape": {
+        "result": "JSON document via jsonrpc_response"
+      },
+      "error_responses": [
+        {
+          "status": 500,
+          "meaning": "unknown interface (<name>)"
+        },
+        {
+          "status": "501-507|599|601-604",
+          "meaning": "XML-RPC status mapping"
+        }
+      ]
+    },
+    {
+      "id": "IC005",
+      "consumer_component": "dispatcher",
+      "provider_component": "rega-model",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP025",
+      "transport": "in-process Tcl",
+      "method": "TCL-SOURCE",
+      "path": "source methods/<device|channel|sysvar|program|room|subsection|rega>/<script>.tcl",
+      "request_shape": {
+        "args": "declared ARGUMENTS only"
+      },
+      "response_shape": {
+        "result": "JSON document via jsonrpc_response"
+      },
+      "error_responses": [
+        {
+          "status": 200,
+          "meaning": "internal error (ref: <cid>)"
+        }
+      ]
+    },
+    {
+      "id": "IC006",
+      "consumer_component": "dispatcher",
+      "provider_component": "system-admin",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP035",
+      "transport": "in-process Tcl",
+      "method": "TCL-SOURCE",
+      "path": "source methods/<ccu|bidcosrf|bidcoswired|safemode|firewall>/<script>.tcl",
+      "request_shape": {
+        "args": "validated against schema (allow-lists, patterns of BD-10)"
+      },
+      "response_shape": {
+        "result": "JSON document via jsonrpc_response"
+      },
+      "error_responses": [
+        {
+          "status": 403,
+          "meaning": "invalid argument (<name>)"
+        },
+        {
+          "status": 500,
+          "meaning": "path not allowed"
+        }
+      ]
+    },
+    {
+      "id": "IC007",
+      "consumer_component": "dispatcher",
+      "provider_component": "user-profile",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP033",
+      "transport": "in-process Tcl",
+      "method": "TCL-SOURCE",
+      "path": "source methods/<user|system|webui>/<script>.tcl",
+      "request_shape": {
+        "args": "declared ARGUMENTS only"
+      },
+      "response_shape": {
+        "result": "JSON document via jsonrpc_response (v1 JS expressions kept; v2 strict JSON)"
+      },
+      "error_responses": [
+        {
+          "status": 200,
+          "meaning": "internal error (ref: <cid>)"
+        }
+      ]
+    },
+    {
+      "id": "IC008",
+      "consumer_component": "dispatcher",
+      "provider_component": "event-push",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP029",
+      "transport": "CGI route (lighttpd -> dispatcher -> provider script, same process)",
+      "method": "GET",
+      "path": "/api/v2/events",
+      "request_shape": {
+        "query.timeout": "integer 1..55, default 25",
+        "X-Session-Id": "valid sid"
+      },
+      "response_shape": {
+        "body": "array<{type, data}>"
+      },
+      "error_responses": [
+        {
+          "status": 401,
+          "meaning": "invalid sid"
+        },
+        {
+          "status": 422,
+          "meaning": "timeout out of range (403 invalid argument (timeout))"
+        }
+      ]
+    },
+    {
+      "id": "IC009",
+      "consumer_component": "dispatcher",
+      "provider_component": "rega-model",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP044",
+      "transport": "CGI route (lighttpd -> dispatcher -> provider script, same process)",
+      "method": "GET",
+      "path": "/api/v2/model",
+      "request_shape": {
+        "query": "sections, limit (1..500, default 100), offset"
+      },
+      "response_shape": {
+        "body": "{<section>:{total, offset, limit, items}}"
+      },
+      "error_responses": [
+        {
+          "status": 401,
+          "meaning": "no valid sid; no ReGa script executed"
+        },
+        {
+          "status": 422,
+          "meaning": "limit 0 or above 500"
+        }
+      ]
+    },
+    {
+      "id": "IC010",
+      "consumer_component": "dispatcher",
+      "provider_component": "rega-model",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP042",
+      "transport": "CGI route (lighttpd -> dispatcher -> provider script, same process)",
+      "method": "POST",
+      "path": "/api/v2/programs",
+      "request_shape": {
+        "body": {
+          "id": "string",
+          "isActive": "boolean"
+        }
+      },
+      "response_shape": {
+        "body": {
+          "id": "string",
+          "isActive": "boolean"
+        }
+      },
+      "error_responses": [
+        {
+          "status": 403,
+          "meaning": "GUEST"
+        },
+        {
+          "status": 404,
+          "meaning": "unknown id"
+        },
+        {
+          "status": 422,
+          "meaning": "unknown key"
+        }
+      ],
+      "note": "gated by EG-6"
+    },
+    {
+      "id": "IC011",
+      "consumer_component": "dispatcher",
+      "provider_component": "rega-model",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP043",
+      "transport": "CGI route (lighttpd -> dispatcher -> provider script, same process)",
+      "method": "POST",
+      "path": "/api/v2/rooms | /api/v2/functions",
+      "request_shape": {
+        "body": {
+          "id": "string",
+          "addChannels": "array<string>",
+          "removeChannels": "array<string>"
+        }
+      },
+      "response_shape": {
+        "body": {
+          "id": "string",
+          "channelIds": "array<string>"
+        }
+      },
+      "error_responses": [
+        {
+          "status": 403,
+          "meaning": "USER"
+        },
+        {
+          "status": 404,
+          "meaning": "unknown id"
+        }
+      ],
+      "note": "gated by EG-6"
+    },
+    {
+      "id": "IC012",
+      "consumer_component": "dispatcher",
+      "provider_component": "user-profile",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP033",
+      "transport": "CGI route (lighttpd -> dispatcher -> provider script, same process)",
+      "method": "GET|PUT",
+      "path": "/api/v2/profile",
+      "request_shape": {
+        "GET": "query userId (ADMIN)",
+        "PUT": {
+          "language": "^[a-z]{2}$"
+        }
+      },
+      "response_shape": {
+        "body": {
+          "userId": "string",
+          "userName": "string",
+          "firstName": "string",
+          "hasPassword": "boolean",
+          "isNoExpert": "boolean",
+          "language": "string"
+        }
+      },
+      "error_responses": [
+        {
+          "status": 401,
+          "meaning": "invalid sid"
+        },
+        {
+          "status": 403,
+          "meaning": "other user's profile without ADMIN"
+        },
+        {
+          "status": 422,
+          "meaning": "invalid language"
+        }
+      ]
+    },
+    {
+      "id": "IC013",
+      "consumer_component": "rega-model",
+      "provider_component": "interface-gateway",
+      "consumer_spec_id": "SP027",
+      "provider_spec_id": "SP016",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "ipc interface resolution + xmlrpc (Device.hasLinksOrPrograms)",
+      "request_shape": {
+        "interface": "name in INTERFACE_LIST",
+        "address": "string"
+      },
+      "response_shape": {
+        "links": "array<struct>"
+      },
+      "error_responses": [
+        {
+          "status": "501-507|599",
+          "meaning": "XML-RPC mapping"
+        }
+      ]
+    },
+    {
+      "id": "IC014",
+      "consumer_component": "backup-cgis",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP010",
+      "provider_spec_id": "SP007",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "session_isValid sid",
+      "request_shape": {
+        "sid": "string @<10>@ (12 chars) from query"
+      },
+      "response_shape": {
+        "returns": "literal true | false"
+      },
+      "error_responses": [
+        {
+          "status": "false",
+          "meaning": "fail-closed: put_error 400"
+        }
+      ]
+    },
+    {
+      "id": "IC015",
+      "consumer_component": "event-push",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP008",
+      "provider_spec_id": "SP007",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "hmscript_runFromFile eq3/checksid.hms",
+      "request_shape": {
+        "_session_id_": "string, validated ^@?[A-Za-z0-9]{1,12}@?$"
+      },
+      "response_shape": {
+        "returns": "\"true\" | \"false\""
+      },
+      "error_responses": [
+        {
+          "status": "''",
+          "meaning": "subscriber not retained"
+        }
+      ]
+    },
+    {
+      "id": "IC016",
+      "consumer_component": "dispatcher",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP031",
+      "transport": "in-process Tcl",
+      "method": "TCL-SOURCE",
+      "path": "source methods/session/{login,logout,renew,setSessionVar}.tcl",
+      "request_shape": {
+        "login": {
+          "username": "string",
+          "password": "string"
+        },
+        "others": {
+          "_session_id_": "string"
+        }
+      },
+      "response_shape": {
+        "login": "sid string (inner id)",
+        "others": "boolean"
+      },
+      "error_responses": [
+        {
+          "status": 501,
+          "meaning": "invalid credentials or too many sessions"
+        },
+        {
+          "status": 503,
+          "meaning": "service not available"
+        },
+        {
+          "status": 400,
+          "meaning": "logout without valid session"
+        }
+      ]
+    },
+    {
+      "id": "IC017",
+      "consumer_component": "rega-model",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP025",
+      "provider_spec_id": "SP006",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "hmscript script args_array",
+      "request_shape": {
+        "script": "fixed HomeMatic Script text",
+        "args": "whitelisted array"
+      },
+      "response_shape": {
+        "STDOUT": "string; '' on rega_script failure"
+      },
+      "error_responses": [
+        {
+          "status": "''",
+          "meaning": "mapped per method to null, empty string or 500"
+        }
+      ]
+    },
+    {
+      "id": "IC018",
+      "consumer_component": "system-admin",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP034",
+      "provider_spec_id": "SP006",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "rega system.Save() / hmscript_runInline (SafeMode.enter, RecoveryMode.enter, restartReGa)",
+      "request_shape": {
+        "script": "fixed text"
+      },
+      "response_shape": {
+        "STDOUT": "string"
+      },
+      "error_responses": [
+        {
+          "status": "''",
+          "meaning": "ignored (frozen)"
+        }
+      ]
+    },
+    {
+      "id": "IC019",
+      "consumer_component": "dispatcher",
+      "provider_component": "security-session",
+      "consumer_spec_id": "SP001",
+      "provider_spec_id": "SP015",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "unauthenticated_allow_list_check method_name",
+      "request_shape": {
+        "method": "string"
+      },
+      "response_shape": {
+        "allowed": "true for the 9 allow-listed LEVEL NONE methods"
+      },
+      "error_responses": [
+        {
+          "status": "other NONE entry",
+          "meaning": "CI check fails"
+        }
+      ]
+    },
+    {
+      "id": "IC020",
+      "consumer_component": "security-session",
+      "provider_component": "dispatcher",
+      "consumer_spec_id": "SP007",
+      "provider_spec_id": "SP005",
+      "transport": "in-process Tcl",
+      "method": "TCL-PROC",
+      "path": "jsonrpc_error code message (logging with correlation id)",
+      "request_shape": {
+        "code": "integer",
+        "message": "string"
+      },
+      "response_shape": {
+        "effect": "one JSON-RPC document, exit"
+      },
+      "error_responses": [
+        {
+          "status": 200,
+          "meaning": "generic internal error (ref: <cid>)"
+        }
+      ]
+    }
+  ],
+  "internal_contracts_note": "Transport is in-process Tcl (proc call or source) or the lighttpd CGI route handled in the same process; base_url_config is omitted everywhere (AQ6/AQ7). No frontend->backend entry: the React UI is out of scope; its endpoints are listed under systems[] (inbound consumer)."
+}

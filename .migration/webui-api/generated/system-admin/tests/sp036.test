@@ -1,0 +1,124 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP036 - SSH management (CCU.setSSH, CCU.getSSHState, CCU.setSSHPassword):
+# contracts/behavioral-contracts.json#SP036
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set S {_session_id_ AbCdEf1234}
+set USER {{AbCdEf1234 2 1000 User}}
+set FWOK "set fd \[open /tmp/firewall.reloaded w\]; puts \$fd done; close \$fd"
+set SHADOW "daemon:*:19000:0:99999:7:::\nroot:\$6\$old\$oldhash:19000:0:99999:7:::\nadmin:\$6\$x\$y:19000:0:99999:7:::\n"
+set HASH {$6$saltsalt$abcdefghijklmnopqrstuvwxyzABCDEF0123456789./abcdefghijklmnopqrstuvwxyzABCDEF0123456789./abcdefghijklmnopqrs}
+
+test sp036-0 {the staged method scripts of SP036 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {setssh getsshstate setsshpassword} {
+    set p [file join $gen system-admin methods ccu $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp036-1 {CCU.setSSH mode 'true' creates the flag with 'touch --' (argument list), sources /bin/setfirewall.tcl, result null} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.setSSH [concat $S {mode true}] -fs $fs -files [list bin/setfirewall.tcl $FWOK]]
+  set fw [file exists [file join $fs tmp firewall.reloaded]]
+  mock::fs::destroy $fs
+  list [result $r] [dict get $r exec_calls] $fw
+} -result [list null [list {touch -- /etc/config/sshEnabled}] 1]
+
+test sp036-2 {CCU.setSSH: any mode other than the exact string 'true' removes the flag} -body {
+  set out {}
+  foreach m {false TRUE 1 {} yes} {
+    set r [call CCU.setSSH [list _session_id_ AbCdEf1234 mode $m] -files [list bin/setfirewall.tcl $FWOK]]
+    lappend out [lindex [dict get $r exec_calls] 0]
+  }
+  lsort -unique $out
+} -result [list {rm -- /etc/config/sshEnabled}]
+
+test sp036-3 {CCU.setSSH: a failing /bin/setfirewall.tcl is the v1 internal error 200 after the flag already changed} -body {
+  set r [call CCU.setSSH [concat $S {mode true}] -files [list bin/setfirewall.tcl "error firewall-broken"]]
+  list [lindex [err $r] 0] [llength [dict get $r exec_calls]]
+} -result {200 1}
+
+test sp036-4 {CCU.getSSHState: 1 if /etc/config/sshEnabled exists, else 0} -body {
+  set fs [mock::fs::create]
+  set a [result [call CCU.getSSHState $S -fs $fs]]
+  mock::fs::write $fs etc/config/sshEnabled ""
+  set b [result [call CCU.getSSHState $S -fs $fs]]
+  mock::fs::destroy $fs
+  list $a $b
+} -result {0 1}
+
+test sp036-5 {[TARGET] CCU.setSSHPassword: the password goes to 'mkpasswd -m sha512 -s' on stdin only, root's hash in /etc/config/shadow is replaced via write-then-rename, {"msg":"noError"}} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/shadow $SHADOW
+  set r [call CCU.setSSHPassword [concat $S {passwd -nS3cret}] -fs $fs -exec [list [list {mkpasswd*} $HASH]]]
+  set sh [mock::fs::read $fs etc/config/shadow]
+  set left [lsort [lmap f [glob -nocomplain -directory [file join $fs etc config] *] {file tail $f}]]
+  mock::fs::destroy $fs
+  set cmd [lindex [dict get $r exec_calls] 0]
+  set before [lrange $cmd 0 [expr {[lsearch -exact $cmd <<] - 1}]]
+  list [result $r] $sh [string match *nS3cret* $before] [lrange $cmd 0 4] $left
+} -result [list {{"msg":"noError"}} "daemon:*:19000:0:99999:7:::\nroot:$HASH:19000:0:99999:7:::\nadmin:\$6\$x\$y:19000:0:99999:7:::\n" 0 {mkpasswd -m sha512 -s <<} {InterfacesList.xml shadow}]
+
+test sp036-6 {[TARGET] mkpasswd failing: /etc/config/shadow stays byte-identical, error 200 with a correlation id, the password appears nowhere} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/shadow $SHADOW
+  set r [call CCU.setSSHPassword [concat $S {passwd Sup3rSecret}] -fs $fs -execfail {{{mkpasswd*} {mkpasswd: not found}}}]
+  set same [expr {[mock::fs::read $fs etc/config/shadow] eq $SHADOW}]
+  mock::fs::destroy $fs
+  set e [err $r]
+  set sys [join [dict get $r syslog] " "]
+  list [lindex $e 0] [regexp {^internal error \(ref: [0-9a-f]{16}\)$} [lindex $e 1]] $same [string match *Sup3rSecret* [dict get $r stdout]] [string match *Sup3rSecret* $sys]
+} -result {200 1 1 0 0}
+
+test sp036-7 {[TARGET] a missing shadow file or one without a root: line answers {"msg":"shadow update failed"} and nothing is written} -body {
+  set fs [mock::fs::create]
+  set a [call CCU.setSSHPassword [concat $S {passwd pw}] -fs $fs -exec [list [list {mkpasswd*} $HASH]]]
+  set existsA [file exists [file join $fs etc config shadow]]
+  mock::fs::write $fs etc/config/shadow "daemon:*:1:::::\n"
+  set b [call CCU.setSSHPassword [concat $S {passwd pw}] -fs $fs -exec [list [list {mkpasswd*} $HASH]]]
+  set sameB [expr {[mock::fs::read $fs etc/config/shadow] eq "daemon:*:1:::::\n"}]
+  mock::fs::destroy $fs
+  list [result $a] $existsA [result $b] $sameB
+} -result [list {{"msg":"shadow update failed"}} 0 {{"msg":"shadow update failed"}} 1]
+
+test sp036-8 {[TARGET] a hash that could damage the shadow structure (colon, newline, wrong shape) is rejected: shadow unchanged, error 200 with reference} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/shadow $SHADOW
+  set out {}
+  foreach bad [list {a:b:c} "\$6\$s\$h\nroot::0:::::" {} {plain}] {
+    set r [call CCU.setSSHPassword [concat $S {passwd pw}] -fs $fs -exec [list [list {mkpasswd*} $bad]]]
+    lappend out [lindex [err $r] 0] [expr {[mock::fs::read $fs etc/config/shadow] eq $SHADOW}]
+  }
+  mock::fs::destroy $fs
+  lsort -unique $out
+} -result {1 200}
+
+test sp036-9 {ADMIN only: a USER session is denied (400) for the three methods, nothing is executed} -body {
+  set codes {}; set n 0
+  foreach {m extra} {CCU.setSSH {mode true} CCU.getSSHState {} CCU.setSSHPassword {passwd x}} {
+    set r [call $m [concat $S $extra] -sessions $USER]
+    lappend codes [lindex [err $r] 0]
+    incr n [llength [dict get $r exec_calls]]
+  }
+  list $codes $n
+} -result {{400 400 400} 0}
+
+cleanupTests

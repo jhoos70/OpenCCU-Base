@@ -1,0 +1,116 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP037 - CCU.downloadFirmware: contracts/behavioral-contracts.json#SP037
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+proc call {method params args} { return [golden::call $method $params -candidate only:system-admin {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc setconf {key value} {
+  set f [file join [golden::root only:system-admin] api apiconfig.conf]
+  set fd [open $f w]
+  puts $fd "array set API_CONFIG \{$key [list $value]\}"
+  close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root only:system-admin] api apiconfig.conf] }
+set S {_session_id_ AbCdEf1234}
+set USER {{AbCdEf1234 2 1000 User}}
+# a wget that "writes" the downloaded file (the temp file named in the -O argument)
+set WGET_OK {{*wget*} {} {set fd [open [lindex $cmd end-1] w]; puts -nonewline $fd FIRMWARE; close $fd}}
+set V3 [list VERSION "VERSION=3.75.6.20240316\n" board var/board_serial "OEQ1234567\n"]
+
+test sp037-0 {the staged method script of SP037 exists and is complete Tcl} -body {
+  set p [file join $gen system-admin methods ccu downloadFirmware.tcl]
+  if {![file exists $p]} { return missing }
+  set fd [open $p r]; set c [read $fd]; close $fd
+  info complete $c
+} -result 1
+
+test sp037-1 {major version 3: serial from /var/board_serial, CCU3 URL, wget -q --https-only into a temp file, atomic rename to /tmp/fup.tgz, true} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=3.75.6.20240316\n" var/board_serial "OEQ1234567\n"] -exec [list $WGET_OK]]
+  set cmd [lindex [dict get $r exec_calls] 0]
+  set fw [expr {[file exists [file join $fs tmp fup.tgz]] ? [mock::fs::read $fs tmp/fup.tgz] : "MISSING"}]
+  set left [lsort [glob -nocomplain -directory [file join $fs tmp] fup*]]
+  mock::fs::destroy $fs
+  list [result $r] [lrange $cmd 4 7] [lindex $cmd end] $fw [llength $left]
+} -result [list true {wget -q --https-only -O} {https://ccu3-update.homematic.com/firmware/download?cmd=download&version=3.75.6.20240316&serial=OEQ1234567&lang=de&product=HM-CCU3} FIRMWARE 1]
+
+test sp037-2 {major version 2: serial from /sys/module/plat_eq3ccu2/parameters/board_serial, update.homematic.com, product HM-CCU2} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=2.61.7\n" sys/module/plat_eq3ccu2/parameters/board_serial "ABC123\n"] -exec [list $WGET_OK]]
+  set cmd [lindex [dict get $r exec_calls] 0]
+  mock::fs::destroy $fs
+  list [result $r] [lindex $cmd end]
+} -result [list true {https://update.homematic.com/firmware/download?cmd=download&version=2.61.7&serial=ABC123&lang=de&product=HM-CCU2}]
+
+test sp037-3 {wget fails: the error text is written to /tmp/dwnld.error, the answer is false and contains neither the error nor the URL} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=3.75.6.20240316\n" var/board_serial "OEQ1234567\n"] -execfail {{{*wget*} {wget: unable to resolve host}}}]
+  set errfile [expr {[file exists [file join $fs tmp dwnld.error]] ? [mock::fs::read $fs tmp/dwnld.error] : "MISSING"}]
+  set fup [file exists [file join $fs tmp fup.tgz]]
+  mock::fs::destroy $fs
+  list [result $r] [string match {*unable to resolve host*} $errfile] $fup [string match *OEQ1234567* [dict get $r stdout]]
+} -result {false 1 0 0}
+
+test sp037-4 {[TARGET] an unknown major version: exactly one response document 'false', no wget, nothing appended to /tmp/test} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=9.1\n"]]
+  set docs [regexp -all {"version": "1.1"} [dict get $r stdout]]
+  set test [file exists [file join $fs tmp test]]
+  mock::fs::destroy $fs
+  list [result $r] $docs [dict get $r exec_calls] $test
+} -result {false 1 {} 0}
+
+test sp037-5 {[TARGET] wget running into the download timeout (300 s default, exit status 124 of timeout): /tmp/dwnld.error gets 'timeout', answer false, the CGI is bounded by timeout + 5 s} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=3.75.6.20240316\n" var/board_serial "OEQ1\n"] -execfail {{{*wget*} {child process exited abnormally} {CHILDSTATUS 4242 124}}}]
+  set errfile [expr {[file exists [file join $fs tmp dwnld.error]] ? [mock::fs::read $fs tmp/dwnld.error] : "MISSING"}]
+  mock::fs::destroy $fs
+  set cmd [lindex [dict get $r exec_calls] 0]
+  list [result $r] [string trim $errfile] [lrange $cmd 0 4]
+} -result {false timeout {timeout -k 5 300 wget}}
+
+test sp037-6 {[TARGET] the timeout comes from the configuration (download_timeout_seconds)} -setup {
+  setconf download_timeout_seconds 120
+} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=3.75.6.20240316\n" var/board_serial "OEQ1\n"] -exec [list $WGET_OK]]
+  mock::fs::destroy $fs
+  lrange [lindex [dict get $r exec_calls] 0] 0 3
+} -cleanup { clearconf } -result {timeout -k 5 120}
+
+test sp037-7 {[TARGET] a previous /tmp/fup.tgz is replaced only on success: a failed download leaves it untouched} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/fup.tgz OLDFIRMWARE
+  call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=3.75.6.20240316\n" var/board_serial "OEQ1\n"] -execfail {{{*wget*} failed}}
+  set a [mock::fs::read $fs tmp/fup.tgz]
+  call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=3.75.6.20240316\n" var/board_serial "OEQ1\n"] -exec [list $WGET_OK]
+  set b [mock::fs::read $fs tmp/fup.tgz]
+  mock::fs::destroy $fs
+  list $a $b
+} -result {OLDFIRMWARE FIRMWARE}
+
+test sp037-8 {[TARGET] version and serial are no shell pipeline input: values that are not plain tokens end with false and no wget} -body {
+  set fs [mock::fs::create]
+  set r [call CCU.downloadFirmware $S -fs $fs -files [list VERSION "VERSION=3.75;rm -rf /\n" var/board_serial "OEQ1&x=1\n"] -exec [list $WGET_OK]]
+  mock::fs::destroy $fs
+  list [result $r] [dict get $r exec_calls]
+} -result {false {}}
+
+test sp037-9 {ADMIN only: a USER session is denied (400), nothing runs} -body {
+  set r [call CCU.downloadFirmware $S -sessions $USER -exec [list $WGET_OK]]
+  list [lindex [err $r] 0] [dict get $r exec_calls]
+} -result {400 {}}
+
+cleanupTests

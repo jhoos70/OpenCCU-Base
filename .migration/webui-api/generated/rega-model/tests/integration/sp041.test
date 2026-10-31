@@ -1,0 +1,56 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP041 NFR and integration coverage (spec.json#SP041 non_functional_requirements[0..5]), boundary
+# and error cases and the golden re-run of the SysVar mutation fixtures through the staged scripts.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+set USER {{AbCdEf1234 2 1000 User}}
+
+test sp041-nfr1 {NFR1: a chnID that does not resolve leaves the variable unbound - the script has no error path for it} -body {
+  set r [call SysVar.createBool {_session_id_ AbCdEf1234 name V init_val true internal 0 chnID 99999} -sessions $USER -rega {{*CreateObject* {{"name":"V","id":"1","value":"true" }}}}]
+  set s [lindex [dict get $r rega_calls] end]
+  list [result $r] [string match {*var chnID = "99999";*} $s] [string match {*if (channel)*sv.Channel(chnID);*} $s]
+} -result [list {{"name":"V","id":"1","value":"true" }} 1 1]
+
+test sp041-nfr4 {NFR4 (frozen v1): setFloat does not validate or quote the value - arbitrary text is echoed raw when ReGa answers true} -body {
+  result [call SysVar.setFloat {_session_id_ AbCdEf1234 name T value 12abc} -sessions $USER -rega {{*State(value)* true}}]
+} -result 12abc
+
+test sp041-nfr5 {NFR5: deleteSysVarByName resolves the name over all ReGa objects (dom.GetObject(name)) and removes the id from the system-variable collection} -body {
+  set s [lindex [dict get [call SysVar.deleteSysVarByName {_session_id_ AbCdEf1234 name Anything} -sessions $USER] rega_calls] end]
+  list [string match {*object sysVar = dom.GetObject(name);*} $s] [string match {*oSysVars.Remove(sysVar.ID());*} $s]
+} -result {1 1}
+
+test sp041-err1 {error case: names are matched against ^[A-Za-z0-9_\-.:]+$ - quotes, spaces, newlines and empty names are refused before the ReGa script} -body {
+  set out {}
+  foreach n [list {a"b} {a b} "a\nb" {a;b} {}] {
+    set r [call SysVar.createBool [list _session_id_ AbCdEf1234 name $n init_val true internal 0 chnID -1] -sessions $USER]
+    lappend out [lindex [err $r] 0]
+  }
+  set out
+} -result {1 1 1 1 1}
+
+test sp041-err2 {error case: a name with a control character is error 403 centrally (before the script's own check)} -body {
+  set body "\{\"method\":\"SysVar.deleteSysVarByName\",\"params\":\{\"_session_id_\":\"AbCdEf1234\",\"name\":\"a\\u0001\"\},\"id\":1\}"
+  err [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::USER]]]
+} -result {403 {invalid argument (name)}}
+
+test sp041-golden {golden re-run: the SysVar mutation fixtures replay byte-identical through the staged scripts (v1 path)} -body {
+  golden::compare_all -candidate only:rega-model -only {SysVar.createBool SysVar.createFloat SysVar.createEnum SysVar.setBool SysVar.setFloat SysVar.setEnum SysVar.deleteSysVarByName}
+} -result {}
+
+cleanupTests

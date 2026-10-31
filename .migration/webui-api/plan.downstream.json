@@ -1,0 +1,207 @@
+{
+  "schema_version": "2.0",
+  "feature_name": "webui-api",
+  "migration_goal": {
+    "goal": "Harden, specify and extend the JSON-RPC API behind a stable compatibility contract so the nextGen UI can be built on it, without changing the device-facing bridges.",
+    "description": "Deliver a versioned API surface (v1 = today's /api/homematic.cgi contract, frozen and hardened; v2 = additive endpoints for push events, schema, batch, program/room editing and profile management), close the privilege and injection gaps found in the assessment, and make the contract testable. The Tcl implementation is retained as the executor of bridge logic (tclrpc.so, tclrega.so, /dev/eq3loop-adjacent scripts); a thin gateway in front is an option evaluated in the Decision, not a prerequisite."
+  },
+  "source_stack": {
+    "languages": [
+      "Tcl (CGI, bridges), ISO-8859-1 sources",
+      "HomeMatic script (.hms)"
+    ],
+    "frameworks": [
+      "Custom JSON-RPC envelope (jsonrpc.tcl)",
+      "Custom JSON parser (json.tcl)",
+      "cgi.tcl (extern)",
+      "tclrpc.so",
+      "tclrega.so"
+    ],
+    "infrastructure": [
+      "lighttpd CGI",
+      "ReGaHss session store",
+      "GitHub Actions CI (x86_64)",
+      "CMake/Make",
+      "OpenCCU Buildroot packaging"
+    ]
+  },
+  "target_stack": {
+    "languages": [
+      "Tcl retained for method scripts (UTF-8 conversion for new/edited files)",
+      "Optional gateway in a language already available in the build (C++ per repo toolchain, or Tcl)",
+      "JSON Schema / OpenAPI-style spec as data"
+    ],
+    "frameworks": [
+      "Same bridges (tclrpc.so, tclrega.so)",
+      "Single JSON serializer replacing hand-built strings",
+      "Schema-validated params",
+      "JSON-RPC 1.1 retained as v1"
+    ],
+    "infrastructure": [
+      "Unchanged lighttpd, ReGaHss, CMake, OpenCCU packaging",
+      "CI job running Tcl contract tests (tclsh + mock xmlrpc/rega_script)",
+      "Optional FastCGI/reverse-proxy gateway"
+    ]
+  },
+  "scope": {
+    "mode": "targeted",
+    "include": [
+      "src/webui/www/api/homematic.cgi, methods.conf, eq3/* (jsonrpc, json, common, ipc, hmscript, event, .hms files)",
+      "src/webui/www/api/methods/** (183 scripts, 19 namespaces)",
+      "src/webui/www/api/backup/*.cgi and backup/common.tcl",
+      "src/webui/www/tcl/eq3/{rega,session}.tcl, tcl/eq3_old/{session,user,common,once}.tcl (session and privilege aspects only)",
+      "Removal of the stale www/api copy (or CI check that it equals src/webui/www/api)",
+      "New: contract tests, machine-readable method schema, event producer, batch and edit endpoints"
+    ],
+    "exclude": [
+      "Closed-source bin/ReGaHss, hs485d/rfd XML-RPC servers and tclrpc.so/tclrega.so internals (consumed as-is)",
+      "eq3configd, crypttool, hss_led, kernel modules (own features; their findings are tracked there)",
+      "www/config/easymodes and ReGa-rendered pages (rega/www), except where they call into the API",
+      "lighttpd configuration and OpenCCU rootfs patches (external repository; only coordinated)",
+      "JS client code (owned by webui-* features), other than adapting homematic.js/jsonrpc.js error handling in coordination"
+    ],
+    "critical_components": [
+      "homematic.cgi dispatcher and checkPrivilegeLevel (single enforcement point for 180 methods)",
+      "api/backup/binfile.cgi, textfile.cgi, tarfile.cgi, run-script.cgi",
+      "methods/ccu/{createfile,existsfile,setsshpassword,setssh,downloadFirmware}.tcl, methods/rega/runscript.tcl",
+      "api/eq3/hmscript.tcl (variable injection) and tcl/eq3/session.tcl",
+      "methods/event/* and eq3/event.tcl (basis for push)"
+    ],
+    "boundaries": [
+      "Method names, parameter names, _session_id_ in body, JSON-RPC 1.1 envelope and HTTP 200 + error.code stay the v1 default; stricter behaviour (real HTTP status codes, header-based sid) is opt-in via Accept/header or a v2 path.",
+      "No change to ports and protocols towards rfd/hs485d/ReGa.",
+      "Do not edit www/ directly; src/webui/www is the source of record.",
+      "The classic UI and the nextGen React UI coexist long-term: v1 stays frozen and in service; new capabilities are additive (v2). The BFF/gateway decision is open and owned by this feature."
+    ]
+  },
+  "constraints": {
+    "unchanged": [
+      "POST /api/homematic.cgi JSON-RPC 1.1 request/response envelope, method names and parameter names of the 133 methods with in-repo clients (and, by default, all 180).",
+      "Four-level privilege model NONE/GUEST/USER/ADMIN (0/1/2/8) sourced from the ReGa session string \"<uid>;<upl>\"; sid format @...@ accepted by the legacy UI (tcl/eq3/session.tcl:77-79 requires 12 chars).",
+      "Session lifetime semantics (900 s timeout, renew via page hit).",
+      "Interface.* parameter interface resolved from InterfacesList.xml; XML-RPC fault to error code mapping 501-507/599.",
+      "Config-tool (non-central) mode keeps working for CfgTool until that feature is assessed; privilege bypass there must be made explicit (opt-in flag) rather than inferred from DOCUMENT_ROOT."
+    ],
+    "integration": {
+      "systems": [
+        "XML-RPC hs485d (TCP 2000) and rfd (TCP 2001; 32000/32001 in container deployments)",
+        "ReGaHss script engine (HTTP 8181/8183, 1998)",
+        "login.htm redirect login at 127.0.0.1 (basis of Session.login)",
+        "/tmp/event/* file queue and /var/tmp/api_ipc.cache",
+        "Sibling OpenCCU packaging repo (SHA pin, rootfs patches)"
+      ]
+    }
+  },
+  "risks": [
+    {
+      "description": "Arbitrary file read and unauthorised ReGa script execution by any valid session through legacy backup CGIs; if lighttpd still maps /api/backup/ a GUEST user can read credential files",
+      "severity": "high",
+      "mitigation": "Verify exposure; require ADMIN (session_upl >= 8) and an allow-list of paths, or remove the CGIs (confirm no caller in repo, www_source, OpenCCU patches)"
+    },
+    {
+      "description": "CCU.createFile (GUEST) exec touch on caller path; CCU.existsFile filesystem oracle; ~26 scripts use exec with request data (setsshpassword.tcl:11-13, downloadFirmware.tcl:24)",
+      "severity": "high",
+      "mitigation": "Raise to ADMIN or replace by fixed-purpose methods (path allow-list, -- guard, no shell pipelines); audit all exec scripts and add argument validators"
+    },
+    {
+      "description": "Unsanitised param injection into ReGa scripts (hmscript defines a variable for every request param; inconsistent escaping and asserts)",
+      "severity": "high",
+      "mitigation": "Whitelist params to the method's declared ARGUMENTS before hmscript; central type validation from schema; unify escape routines; add fuzz tests"
+    },
+    {
+      "description": "No CSRF/Content-Type/CORS policy, sid in JSON body and in URLs (legacy UI), predictable-class session ids",
+      "severity": "high",
+      "mitigation": "Require Content-Type: application/json plus custom header (e.g. X-Requested-With) in v1 strict mode; HttpOnly SameSite cookie option; CSPRNG sid from /dev/urandom; same-origin only (no Access-Control-*) unless explicitly configured"
+    },
+    {
+      "description": "No tests; methods.conf is the only specification, shapes are hand-built strings, so hardening can silently break the 133 live client call sites and OpenCCU patches",
+      "severity": "high",
+      "mitigation": "Characterisation tests per method (mock bridges) before any change; golden JSON fixtures for the 133 used methods; CI job in GitHub Actions"
+    },
+    {
+      "description": "Event.subscribe uses non-existent common/checksid.hms; stale-subscriber cleanup likely drops other subscribers' queues",
+      "severity": "medium",
+      "mitigation": "One-line fix to eq3/checksid.hms; add regression test; verify at runtime before and after"
+    },
+    {
+      "description": "Error leakage of errorInfo and internal paths; HTTP 200 for every error hampers clients and proxies",
+      "severity": "medium",
+      "mitigation": "Log errorInfo server-side (syslog) and return generic message plus correlation id; add opt-in real HTTP status codes"
+    },
+    {
+      "description": "Source of truth drift: www/api differs from src/webui/www/api in 28 files and both are tracked; a fix applied to one tree does not reach the other",
+      "severity": "medium",
+      "mitigation": "Make src/webui/www the single edited tree; delete or generate www/api; CI diff check; coordinate with OpenCCU SHA pin"
+    },
+    {
+      "description": "Gaps (push, program/room editing, batch) require ReGa script writing for object-model mutations; ReGa semantics are closed-source and undocumented",
+      "severity": "medium",
+      "mitigation": "Prototype each new method against a live ReGa; reuse ReGa.runScript patterns behind fixed scripts, never client-supplied script text; start with read-only schema and batch"
+    },
+    {
+      "description": "Performance: tclsh spawn, registry parse, ReGa privilege lookup on every request; batch and polling would multiply load on a small device",
+      "severity": "medium",
+      "mitigation": "Cache registry (precompiled array), cache user level per sid for short TTL, batch endpoint, long-poll/SSE via gateway if a persistent process is accepted"
+    },
+    {
+      "description": "Encoding: ISO-8859-1 sources versus UTF-8 JSON; CRLF dependency of rega.tcl in OpenCCU patches",
+      "severity": "low",
+      "mitigation": "Keep encodings of patched files; convert only files not patched downstream; add round-trip tests with non-Latin-1 text"
+    }
+  ],
+  "success_criteria": [
+    "All 133 client-used methods keep name, parameter set and result shape (verified by golden-fixture tests); the remaining 47 are either kept, deprecated with a documented removal path, or removed after confirming no consumer.",
+    "binfile/textfile/tarfile.cgi and run-script.cgi either removed or restricted to ADMIN with path allow-list; CCU.createFile/existsFile no longer GUEST-accessible with arbitrary paths; no request-controlled path reaches exec without validation.",
+    "Session.logout requires a valid session; no unauthenticated method discloses internals beyond an explicit allow-list; GET /api/homematic.cgi help page is authenticated or reduced.",
+    "No response contains errorInfo or filesystem paths; correlation id logged instead.",
+    "Strict mode enforces Content-Type and anti-CSRF header; session ids are generated from a CSPRNG with at least 128 bits (or a documented compatible scheme).",
+    "Event.subscribe uses the correct checksid script (regression test in CI); at least one real event producer for datapoint changes (push) exists, or SSE/long-poll is delivered.",
+    "Machine-readable schema (params and results) published for every method and used for central validation; batch/multicall available.",
+    "Program and room editing and profile endpoints available with ADMIN/USER gating and tests.",
+    "www/api no longer drifts (single source or enforced equality in CI).",
+    "CI runs Tcl API tests on every PR; test coverage of the dispatcher and the 133 used methods at 100% of methods invoked at least once.",
+    "Security model equivalent or stronger; all existing functionality migrated; zero regression in OpenCCU packaging build (patch set still applies)."
+  ],
+  "focus_areas": [
+    "Privilege gaps and file/exec exposure: backup CGIs, run-script.cgi, createfile.tcl, existsfile.tcl, setsshpassword.tcl, downloadFirmware.tcl, Session.logout, config-tool bypass.",
+    "Dispatcher hardening: Content-Type, CSRF header, error sanitisation, param whitelisting, sid generation, CORS stance, Cache-Control, chunked body handling.",
+    "Contract capture and test harness: characterisation/golden tests with mocked xmlrpc and rega_script; schema for params and results; fix swapped 102/103 messages and overloaded 5xx handling.",
+    "Latent bug fixes: Event.subscribe common/checksid.hms path, _session_id_ missing from ARGUMENTS (ReGa.getAllDatapoints, Session.setSessionVar), 400 message text.",
+    "Drift removal: make src/webui/www/api authoritative, eliminate or auto-generate www/api; sync with OpenCCU SHA pin.",
+    "Gap closure for nextGen UI: push events (datapoint change producers, SSE/long-poll), batch, program and room/function editing, profile endpoints, a bulk read model replacing ReGa.getAllDatapoints loop.",
+    "Decision gate for gateway: after phases 0-2, measure request latency and device load; adopt a persistent gateway only if cost/benefit supports it (wrap incrementally, retain Tcl executors)."
+  ],
+  "modules": [
+    {
+      "name": "webui-api",
+      "role": "primary",
+      "source": "index.json",
+      "doc_file": "modules/webui-api.md"
+    },
+    {
+      "name": "webui-* (SPA shell, ise/config/webui JS)",
+      "role": "affected",
+      "source": "index.json"
+    },
+    {
+      "name": "www",
+      "role": "affected",
+      "source": "index.json"
+    },
+    {
+      "name": "src-feature--rfd / hs485d (XML-RPC 2001/2000)",
+      "role": "dependency",
+      "source": "index.json"
+    },
+    {
+      "name": "bin-feature (ReGaHss, closed source)",
+      "role": "dependency",
+      "source": "index.json"
+    },
+    {
+      "name": "OpenCCU packaging repo (external)",
+      "role": "affected",
+      "source": "user"
+    }
+  ]
+}

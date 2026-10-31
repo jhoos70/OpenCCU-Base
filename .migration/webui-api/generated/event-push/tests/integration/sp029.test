@@ -1,0 +1,78 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP029 NFR and integration coverage (spec.json#SP029 non_functional_requirements[0..4]), boundary
+# and error cases and the golden re-run of the Event.* fixtures through the staged scripts. The
+# datapoint.changed producer (acceptance[8]) is gated by EG-2 (T187/T188).
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname [file dirname $here]]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,event-push
+set SESS {{AAA111 1 1000 A} {BBB222 1 1001 B}}
+proc call {method sid args} { return [golden::call $method [list _session_id_ $sid] -candidate $::CAND -sessions $::SESS {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc rd {fs rel} { if {[file exists [file join $fs {*}[split $rel /]]]} { return [mock::fs::read $fs $rel] }; return MISSING }
+
+test sp029-nfr1 {NFR1 (frozen v1): event data is inserted verbatim - an unescaped device name with a quote makes Event.poll invalid JSON} -body {
+  set fs [mock::fs::create]
+  call Event.subscribe AAA111 -fs $fs
+  mock::fs::write $fs tmp/event/AAA111 "{TYPE delete DATA {\"de\"v\"}}\n"
+  set r [call Event.poll AAA111 -fs $fs]
+  mock::fs::destroy $fs
+  result $r
+} -result {[{"type":"delete" ,"data":"de"v"}]}
+
+test sp029-nfr2 {NFR2: sourcing event.tcl creates /tmp/event and the empty subscriber list} -body {
+  set fs [mock::fs::create]
+  file delete -force [file join $fs tmp event]
+  call Event.poll AAA111 -fs $fs
+  set out [list [file isdirectory [file join $fs tmp event]] [file exists [file join $fs tmp event subscriber.list]]]
+  mock::fs::destroy $fs
+  set out
+} -result {1 1}
+
+test sp029-nfr3 {NFR3: Event.subscribe never deadlocks on its own lock - the 'init' event of the new subscriber is queued after the lock release} -body {
+  set fs [mock::fs::create]
+  set r [call Event.subscribe AAA111 -fs $fs]
+  set out [list [result $r] [rd $fs tmp/event/AAA111] [file exists [file join $fs tmp event lock]]]
+  mock::fs::destroy $fs
+  set out
+} -result [list true "{TYPE init DATA null}\n" 0]
+
+test sp029-err1 {error case: a session id that is not a valid queue name (path components) is error 403 and never builds a path outside /tmp/event} -body {
+  set fs [mock::fs::create]
+  set out {}
+  foreach sid {../../etc/x a/b AAAAAAAAAAAAAAAAAAAA} {
+    set r [golden::call Event.subscribe [list _session_id_ $sid] -candidate $::CAND -sessions [list [list $sid 1 1000 x]] -fs $fs]
+    lappend out [lindex [err $r] 0]
+  }
+  set left [lsort [glob -nocomplain -directory [file join $fs tmp] *]]
+  mock::fs::destroy $fs
+  list $out [llength [glob -nocomplain -directory [file join $fs etc] x*]]
+} -result {{403 403 403} 0}
+
+test sp029-err2 {error case: a stale lock (older than event_lock_stale_seconds) is reclaimed, a fresh one is not} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs tmp/event/lock 4711
+  set a [call Event.unsubscribe AAA111 -fs $fs -now [clock seconds]]
+  file mtime [file join $fs tmp event lock] [expr {[clock seconds] - 100}]
+  call Event.subscribe AAA111 -fs $fs -now [clock seconds]
+  set b [call Event.unsubscribe AAA111 -fs $fs -now [clock seconds]]
+  mock::fs::destroy $fs
+  list [result $a] [result $b]
+} -result {false true}
+
+test sp029-golden {golden re-run: the Event.* fixtures (error-free paths) replay through the staged scripts} -body {
+  golden::compare_all -candidate only:event-push -only {Event.poll Event.unsubscribe}
+} -result {}
+
+cleanupTests

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "collected_at": "2026-10-09T16:15:00Z",
+  "mode": "optional",
+  "sources": [
+    {
+      "id": "src-001",
+      "kind": "related_repository_docs",
+      "title": "OpenCCU",
+      "locator": {
+        "path": "/home/standard/dev/OpenCCU",
+        "outside_project_root": true,
+        "docs_path": "/home/standard/dev/OpenCCU/.migration/docs"
+      },
+      "retrieval_status": "retrieved",
+      "summary": "Sibling Buildroot packaging repo; deep-explore docs read (not source). Key: 41 rootfs patches on webui.js depend on exact Base output; branding overlay; port contract.",
+      "relevant_to": [
+        "overview",
+        "integration"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "related_repositories": [
+    "/home/standard/dev/OpenCCU"
+  ],
+  "user_constraints": [
+    "Changes to src/webui bundle layout/line structure and www/tcl/eq3/rega.tcl line endings break OpenCCU rootfs patches (see summary.md)"
+  ],
+  "critical_flows": [],
+  "unclarified": [
+    "Sibling repository source not read; patch-level details unverified.",
+    "Overlay merge decision for nextGen UI undecided."
+  ]
+}

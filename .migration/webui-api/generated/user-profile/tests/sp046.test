@@ -1,0 +1,129 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# SP046 - WebUI colour theme (WebUI.getColors NONE, WebUI.setWebUIColors USER): v1 results frozen,
+# the colour map is rewritten atomically. contracts/behavioral-contracts.json#SP046
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+testConstraint unixNotRoot [expr {[info exists ::tcl_platform(user)] && $::tcl_platform(user) ne "root"}]
+
+set CAND only:dispatcher,security-session,user-profile
+proc call {method params args} { return [golden::call $method $params -candidate $::CAND {*}$args] }
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc result {r} {
+  if {[regexp {"result": (.*),"error": null\}$} [string trim [dict get $r body]] -> j]} { return $j }
+  return "ERR:[err $r]"
+}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+# the system colour map below the document root of the composed tree
+proc sysmap {text} {
+  set d [file join [golden::root $::CAND] webui]
+  file mkdir $d
+  set fd [open [file join $d color.map] w]; puts -nonewline $fd $text; close $fd
+}
+proc nosysmap {} { file delete -force [file join [golden::root $::CAND] webui] }
+set USER {{AbCdEf1234 2 1000 User}}
+set SYSMAP "active                  #3678c9\nattention               red\nbackground\t#ffffff\n"
+set P {_session_id_ AbCdEf1234 key attention color #192c6e cpFile 0}
+
+test sp046-0 {the staged method scripts of SP046 exist and are complete Tcl} -body {
+  set bad {}
+  foreach f {getcolors setwebuicolor} {
+    set p [file join $gen user-profile methods webui $f.tcl]
+    if {![file exists $p]} { lappend bad $f; continue }
+    set fd [open $p r]; set c [read $fd]; close $fd
+    if {![info complete $c]} { lappend bad $f }
+  }
+  set bad
+} -result {}
+
+test sp046-1 {acceptance[0],NFR4: getColors loads the system map and lets /etc/config/color.map override matching keys; the result is an object of JSON strings} -setup {
+  sysmap $::SYSMAP
+} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/color.map "attention  #ff0000\nextra \"q\"\n"
+  set r [call WebUI.getColors {} -sessions {} -fs $fs]
+  mock::fs::destroy $fs
+  set j [result $r]
+  list [regexp {"active":"#3678c9"} $j] [regexp {"attention":"#ff0000"} $j] [regexp {"background":"#ffffff"} $j] [regexp {"extra":"q"} $j]
+} -cleanup { nosysmap } -result {1 1 1 1}
+
+test sp046-2 {acceptance[1]: neither colour file readable gives {}} -setup { nosysmap } -body {
+  result [call WebUI.getColors {} -sessions {}]
+} -result {{}}
+
+test sp046-3 {NFR3: in config-tool mode (central false) the user override file is ignored} -setup {
+  sysmap $::SYSMAP
+  setconf {array set API_CONFIG {config_tool_mode true}}
+} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/color.map "attention  #ff0000\n"
+  set r [call WebUI.getColors {} -sessions {} -fs $fs]
+  mock::fs::destroy $fs
+  regexp {"attention":"red"} [result $r]
+} -cleanup { clearconf; nosysmap } -result 1
+
+test sp046-4 {acceptance[2],[4],NFR1: setWebUIColors seeds /etc/config/color.map from the system map when absent, replaces the line of the key, writes atomically (no initial blank line, no temp file left) and answers true} -setup {
+  sysmap $::SYSMAP
+} -body {
+  set fs [mock::fs::create]
+  set r [call WebUI.setWebUIColors $::P -sessions $::USER -fs $fs]
+  set content [mock::fs::read $fs etc/config/color.map]
+  set left [lsort [lmap f [glob -directory [file join $fs etc config] *] {file tail $f}]]
+  mock::fs::destroy $fs
+  list [result $r] $content [expr {"color.map" in $left}] [llength [lsearch -all -inline -glob $left *.tmp]]
+} -cleanup { nosysmap } -result [list true "active                  #3678c9\nattention  #192c6e\nbackground\t#ffffff\n" 1 0]
+
+test sp046-5 {acceptance[2]: a line is replaced when its first token equals the key (split by space, or by tab and '?')} -setup {
+  sysmap $::SYSMAP
+} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/color.map "a x\nb\ty\nc?z\nattention  old\n"
+  call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key b color #000 cpFile 0} -sessions $::USER -fs $fs
+  call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key c color #111 cpFile 0} -sessions $::USER -fs $fs
+  set content [mock::fs::read $fs etc/config/color.map]
+  mock::fs::destroy $fs
+  set content
+} -cleanup { nosysmap } -result "a x\nb  #000\nc  #111\nattention  old\n"
+
+test sp046-6 {NFR0,NFR2: an unknown key adds no line and answers true; the color is not validated and written as it is} -setup {
+  sysmap $::SYSMAP
+} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/color.map "attention  red\n"
+  set a [call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key nokey color #123 cpFile 0} -sessions $::USER -fs $fs]
+  set b [call WebUI.setWebUIColors {_session_id_ AbCdEf1234 key attention color not-a-color cpFile 0} -sessions $::USER -fs $fs]
+  set content [mock::fs::read $fs etc/config/color.map]
+  mock::fs::destroy $fs
+  list [result $a] [result $b] $content
+} -cleanup { nosysmap } -result [list true true "attention  not-a-color\n"]
+
+test sp046-7 {acceptance[3],NFR5 [TARGET]: /etc/config read-only - internal error 200, the original color.map is unchanged and no temp file is left} -constraints unixNotRoot -setup {
+  sysmap $::SYSMAP
+} -body {
+  set fs [mock::fs::create]
+  mock::fs::write $fs etc/config/color.map "attention  red\n"
+  file attributes [file join $fs etc config] -permissions 0555
+  set r [call WebUI.setWebUIColors $::P -sessions $::USER -fs $fs -interfaces 0]
+  set content [mock::fs::read $fs etc/config/color.map]
+  set left [lsort [lmap f [glob -directory [file join $fs etc config] *] {file tail $f}]]
+  file attributes [file join $fs etc config] -permissions 0755
+  mock::fs::destroy $fs
+  list [lindex [err $r] 0] $content $left
+} -cleanup { nosysmap } -result {200 {attention  red
+} color.map}
+
+test sp046-8 {privilege: getColors needs no session, setWebUIColors needs USER (GUEST -> 400); the injection-prone key/color are escaped (no ReGa script involved)} -body {
+  list [lindex [err [call WebUI.setWebUIColors $::P -sessions {{AbCdEf1234 1 1000 Guest}}]] 0] [lindex [err [call WebUI.getColors {} -sessions {}]] 0]
+} -result {400 none}
+
+cleanupTests

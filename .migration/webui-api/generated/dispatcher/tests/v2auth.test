@@ -1,0 +1,111 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# v2 authentication (v2/auth.tcl, IC002, BD-05): the sid comes from the header X-Session-Id, which
+# wins over params._session_id_ and the cookie hm_sid (mismatch is logged); the cookie is only
+# read and set when cookie_mode is on (HttpOnly; SameSite=Strict; Path=/api, plus Secure when HTTPS
+# is set, no Max-Age); X-Requested-With is the anti-CSRF header; session_isValid (security-session)
+# classifies unknown sessions.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session
+set SESS {{AbCdEf1234 8 1000 Admin} {GuestSid001 1 1001 Guest}}
+proc setconf {text} {
+  set f [file join [golden::root $::CAND] api apiconfig.conf]
+  set fd [open $f w]; puts $fd $text; close $fd
+}
+proc clearconf {} { file delete -force [file join [golden::root $::CAND] api apiconfig.conf] }
+proc rpc {body args} {
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::SESS -setenv {REQUEST_URI /api/v2/rpc} \
+    -header {X-Requested-With XMLHttpRequest} -files {var/ids "SerialNumber=ABC123\n"} {*}$args]]]
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list $c $m] }
+  return none
+}
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+set ADMINCALL {{"method":"CCU.getSerial","params":{},"id":1}}
+
+test v2auth-1 {the header X-Session-Id wins over params._session_id_ (an ADMIN session in the header beats a GUEST sid in params); the mismatch is logged} -body {
+  set r [rpc {{"method":"CCU.getSerial","params":{"_session_id_":"GuestSid001"},"id":1}} -header {X-Session-Id AbCdEf1234}]
+  set mismatch 0
+  foreach s [dict get $r syslog] { if {[string match {*session id*mismatch*} $s]} { incr mismatch } }
+  list [status $r] [lindex [err $r] 0] $mismatch
+} -result {200 none 1}
+
+test v2auth-2 {params._session_id_ alone is accepted on v2 when no header is sent; an equal header and params value is not a mismatch} -body {
+  set a [rpc {{"method":"CCU.getSerial","params":{"_session_id_":"AbCdEf1234"},"id":1}}]
+  set b [rpc {{"method":"CCU.getSerial","params":{"_session_id_":"AbCdEf1234"},"id":1}} -header {X-Session-Id AbCdEf1234}]
+  set m 0
+  foreach s [dict get $b syslog] { if {[string match {*mismatch*} $s]} { incr m } }
+  list [status $a] [status $b] $m
+} -result {200 200 0}
+
+test v2auth-3 {without any sid a non-NONE method is HTTP 401; a guest session on an ADMIN method is HTTP 403; an unknown session is HTTP 401} -body {
+  set a [rpc $::ADMINCALL]
+  set b [rpc $::ADMINCALL -header {X-Session-Id GuestSid001}]
+  set c [rpc $::ADMINCALL -header {X-Session-Id Unknown0001}]
+  list [status $a] [lindex [err $a] 0] [status $b] [lindex [err $b] 0] [status $c]
+} -result {401 400 403 400 401}
+
+test v2auth-4 {the cookie hm_sid is ignored unless cookie_mode is true} -body {
+  set a [rpc $::ADMINCALL -header {Cookie hm_sid=AbCdEf1234}]
+  setconf {array set API_CONFIG {cookie_mode true}}
+  set b [rpc $::ADMINCALL -header {Cookie hm_sid=AbCdEf1234}]
+  clearconf
+  list [status $a] [status $b]
+} -result {401 200}
+
+test v2auth-5 {cookie_mode: the header wins over the cookie and the mismatch is logged} -body {
+  setconf {array set API_CONFIG {cookie_mode true}}
+  set r [rpc $::ADMINCALL -header {Cookie hm_sid=GuestSid001} -header {X-Session-Id AbCdEf1234}]
+  clearconf
+  set m 0
+  foreach s [dict get $r syslog] { if {[string match {*mismatch*} $s]} { incr m } }
+  list [status $r] $m
+} -result {200 1}
+
+test v2auth-6 {cookie_mode: Session.login answers with Set-Cookie hm_sid=<inner sid>; HttpOnly; SameSite=Strict; Path=/api (no Max-Age, no Secure without HTTPS)} -body {
+  setconf {array set API_CONFIG {cookie_mode true}}
+  set r [rpc {{"method":"Session.login","params":{"username":"Admin","password":"x"},"id":1}} -sessions {} \
+    -http {{{HTTP/1.1 302 Found} {Location http://x/i.htm?sid=@AbCdEf1234@}}}]
+  clearconf
+  regexp {Set-Cookie: ([^\r\n]*)} [dict get $r headers] -> cookie
+  list $cookie [string match *Max-Age* $cookie] [status $r]
+} -result {{hm_sid=AbCdEf1234; HttpOnly; SameSite=Strict; Path=/api} 0 200}
+
+test v2auth-7 {cookie_mode: HTTPS adds Secure} -body {
+  setconf {array set API_CONFIG {cookie_mode true}}
+  set r [rpc {{"method":"Session.login","params":{"username":"Admin","password":"x"},"id":1}} -sessions {} \
+    -http {{{HTTP/1.1 302 Found} {Location http://x/i.htm?sid=@AbCdEf1234@}}} -setenv {REQUEST_URI /api/v2/rpc HTTPS on}]
+  clearconf
+  regexp {Set-Cookie: ([^\r\n]*)} [dict get $r headers] -> cookie
+  set cookie
+} -result {hm_sid=AbCdEf1234; HttpOnly; SameSite=Strict; Path=/api; Secure}
+
+test v2auth-8 {without cookie_mode no Set-Cookie header is sent on login (the sid is returned in the JSON result only)} -body {
+  set r [rpc {{"method":"Session.login","params":{"username":"Admin","password":"x"},"id":1}} -sessions {} \
+    -http {{{HTTP/1.1 302 Found} {Location http://x/i.htm?sid=@AbCdEf1234@}}}]
+  list [string match -nocase *set-cookie* [dict get $r headers]] [string trim [dict get $r body]]
+} -result {0 {{"id": 1,"version": "1.1","result": "AbCdEf1234","error": null}}}
+
+test v2auth-9 {anti-CSRF: a v2 request without X-Requested-With is HTTP 403, with an empty value too} -body {
+  set body $::ADMINCALL
+  set a [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::SESS -setenv {REQUEST_URI /api/v2/rpc} -header {X-Session-Id AbCdEf1234}]]]
+  set b [golden::call_raw $body [golden::prepare [list -candidate $::CAND -sessions $::SESS -setenv {REQUEST_URI /api/v2/rpc} -header {X-Session-Id AbCdEf1234} -header {X-Requested-With {}}]]]
+  list [status $a] [status $b]
+} -result {403 403}
+
+test v2auth-10 {v1 is untouched: the header X-Session-Id and the cookie are ignored on /api/homematic.cgi} -body {
+  set r [golden::call_raw {{"method":"CCU.getSerial","params":{},"id":1}} [golden::prepare [list -candidate $::CAND -sessions $::SESS \
+    -header {X-Session-Id AbCdEf1234} -header {Cookie hm_sid=AbCdEf1234}]]]
+  err $r
+} -result {402 {missing argument (_session_id_)}}
+
+cleanupTests

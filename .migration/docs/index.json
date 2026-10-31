@@ -1,0 +1,637 @@
+{
+  "repository": {
+    "path": "/home/standard/dev/OpenCCU-Base",
+    "name": "OpenCCU-Base"
+  },
+  "scan": {
+    "timestamp": "2026-10-09T16:09:23.946Z",
+    "tier": "large",
+    "filesScanned": 9793,
+    "directoriesScanned": 769,
+    "sourceFilesScanned": 9537
+  },
+  "project": {
+    "name": "OpenCCU-Base",
+    "path": "/home/standard/dev/OpenCCU-Base",
+    "description": "Base system of the OpenCCU HomeMatic central: native radio/wired daemons, Tcl extensions and Tcl/JS web UI."
+  },
+  "modules": [
+    {
+      "name": "root",
+      "path": ".",
+      "summary": "Top-level CMake/Make build entry and README.",
+      "doc_file": "modules/root.md",
+      "statistics": {
+        "file_count": 5
+      }
+    },
+    {
+      "name": ".github",
+      "path": ".github",
+      "summary": "CI workflows.",
+      "doc_file": "modules/.github.md",
+      "statistics": {
+        "file_count": 2
+      }
+    },
+    {
+      "name": "bin",
+      "path": "bin",
+      "summary": "Prebuilt binaries per architecture (ReGaHss, hs485d, ...).",
+      "doc_file": "modules/bin.md",
+      "statistics": {
+        "file_count": 47
+      }
+    },
+    {
+      "name": "build-tools",
+      "path": "build-tools",
+      "summary": "bidcos-devicetype-strip awk XML stripper.",
+      "doc_file": "modules/build-tools.md",
+      "statistics": {
+        "file_count": 1
+      }
+    },
+    {
+      "name": "cmake",
+      "path": "cmake",
+      "summary": "Shared CMake component modules.",
+      "doc_file": "modules/cmake.md",
+      "statistics": {
+        "file_count": 7
+      }
+    },
+    {
+      "name": "etc",
+      "path": "etc",
+      "summary": "Runtime configuration files.",
+      "doc_file": "modules/etc.md",
+      "statistics": {
+        "file_count": 3
+      }
+    },
+    {
+      "name": "firmware",
+      "path": "firmware",
+      "summary": "Device firmware images and descriptors.",
+      "doc_file": "modules/firmware.md",
+      "statistics": {
+        "file_count": 166
+      }
+    },
+    {
+      "name": "licenses",
+      "path": "licenses",
+      "summary": "License texts and exceptions table.",
+      "doc_file": "modules/licenses.md",
+      "statistics": {
+        "file_count": 4
+      }
+    },
+    {
+      "name": "opt",
+      "path": "opt",
+      "summary": "FTL templates, fwfix, configs.",
+      "doc_file": "modules/opt.md",
+      "statistics": {
+        "file_count": 21
+      }
+    },
+    {
+      "name": "src",
+      "path": "src",
+      "summary": "Native daemons/libs, kernel drivers, Tcl extensions, web UI sources, device types.",
+      "doc_file": "modules/src.md",
+      "statistics": {
+        "file_count": 5519
+      }
+    },
+    {
+      "name": "tests",
+      "path": "tests",
+      "summary": "Component install and devicetype-strip tests.",
+      "doc_file": "modules/tests.md",
+      "statistics": {
+        "file_count": 5
+      }
+    },
+    {
+      "name": "usr",
+      "path": "usr",
+      "summary": "Userland Tcl package HomeMatic.",
+      "doc_file": "modules/usr.md",
+      "statistics": {
+        "file_count": 2
+      }
+    },
+    {
+      "name": "www",
+      "path": "www",
+      "summary": "Deployed web UI: Tcl CGIs, JSON-RPC API, ReGa pages, assets.",
+      "doc_file": "modules/www.md",
+      "statistics": {
+        "file_count": 4011
+      }
+    },
+    {
+      "name": "webui-shell-build",
+      "path": "src/webui/www/webui, www_source, bootstrap, scripts, CfgTool",
+      "summary": "Frontend shell, JS architecture, build pipeline, Bootstrap status",
+      "doc_file": "modules/webui-shell-build.md"
+    },
+    {
+      "name": "webui-rega-pages",
+      "path": "src/webui/rega, src/webui/www/ise",
+      "summary": "ReGa-served pages, routing, assets",
+      "doc_file": "modules/webui-rega-pages.md"
+    },
+    {
+      "name": "webui-config-pages",
+      "path": "src/webui/www/config (excl. easymodes), pda, error, tools, upnp",
+      "summary": "cp_*/ic_* CGI pages and PDA UI",
+      "doc_file": "modules/webui-config-pages.md"
+    },
+    {
+      "name": "webui-easymodes",
+      "path": "src/webui/www/config/easymodes",
+      "summary": "Device profile/easymode Tcl definitions",
+      "doc_file": "modules/webui-easymodes.md"
+    },
+    {
+      "name": "webui-api",
+      "path": "src/webui/www/api, src/webui/www/tcl",
+      "summary": "JSON-RPC API catalogue (180 methods) and Tcl libs",
+      "doc_file": "modules/webui-api.md"
+    },
+    {
+      "name": "webui-design-docs",
+      "path": "src/webui/design, src/webui/documentation",
+      "summary": "Design source assets and stale JsDoc docs",
+      "doc_file": "modules/webui-design-docs.md"
+    }
+  ],
+  "stacks": [
+    {
+      "name": "root",
+      "directory": ".",
+      "technology": "make/cmake",
+      "file_count": 5,
+      "summary": "Top-level CMake/Make build entry and README.",
+      "doc_file": "modules/root.md"
+    },
+    {
+      "name": ".github",
+      "directory": ".github",
+      "technology": "GitHub Actions YAML",
+      "file_count": 2,
+      "summary": "CI workflows.",
+      "doc_file": "modules/.github.md"
+    },
+    {
+      "name": "bin",
+      "directory": "bin",
+      "technology": "prebuilt binaries",
+      "file_count": 47,
+      "summary": "Prebuilt binaries per architecture (ReGaHss, hs485d, ...).",
+      "doc_file": "modules/bin.md"
+    },
+    {
+      "name": "build-tools",
+      "directory": "build-tools",
+      "technology": "shell/awk",
+      "file_count": 1,
+      "summary": "bidcos-devicetype-strip awk XML stripper.",
+      "doc_file": "modules/build-tools.md"
+    },
+    {
+      "name": "cmake",
+      "directory": "cmake",
+      "technology": "CMake",
+      "file_count": 7,
+      "summary": "Shared CMake component modules.",
+      "doc_file": "modules/cmake.md"
+    },
+    {
+      "name": "etc",
+      "directory": "etc",
+      "technology": "conf/xml",
+      "file_count": 3,
+      "summary": "Runtime configuration files.",
+      "doc_file": "modules/etc.md"
+    },
+    {
+      "name": "firmware",
+      "directory": "firmware",
+      "technology": "XML/hex/eq3",
+      "file_count": 166,
+      "summary": "Device firmware images and descriptors.",
+      "doc_file": "modules/firmware.md"
+    },
+    {
+      "name": "licenses",
+      "directory": "licenses",
+      "technology": "text",
+      "file_count": 4,
+      "summary": "License texts and exceptions table.",
+      "doc_file": "modules/licenses.md"
+    },
+    {
+      "name": "opt",
+      "directory": "opt",
+      "technology": "FTL/XML",
+      "file_count": 21,
+      "summary": "FTL templates, fwfix, configs.",
+      "doc_file": "modules/opt.md"
+    },
+    {
+      "name": "src",
+      "directory": "src",
+      "technology": "C/C++ / Tcl / JavaScript",
+      "file_count": 5519,
+      "summary": "Native daemons/libs, kernel drivers, Tcl extensions, web UI sources, device types.",
+      "doc_file": "modules/src.md"
+    },
+    {
+      "name": "tests",
+      "directory": "tests",
+      "technology": "Python/Bash/XML",
+      "file_count": 5,
+      "summary": "Component install and devicetype-strip tests.",
+      "doc_file": "modules/tests.md"
+    },
+    {
+      "name": "usr",
+      "directory": "usr",
+      "technology": "Tcl",
+      "file_count": 2,
+      "summary": "Userland Tcl package HomeMatic.",
+      "doc_file": "modules/usr.md"
+    },
+    {
+      "name": "www",
+      "directory": "www",
+      "technology": "Tcl / JavaScript / ReGa",
+      "file_count": 4011,
+      "summary": "Deployed web UI: Tcl CGIs, JSON-RPC API, ReGa pages, assets.",
+      "doc_file": "modules/www.md"
+    }
+  ],
+  "integration_seams": [
+    {
+      "label": "msmq",
+      "description": "Microsoft MQ messaging integration",
+      "files": [
+        "./src/hs485d/HS485Controller.h",
+        "./src/hs485d/HS485ControllerCCU1.h"
+      ]
+    },
+    {
+      "label": "ipc",
+      "description": "Inter-process communication",
+      "files": [
+        "./src/eq3_char_loop/eq3_char_loop.c",
+        "./src/hs485d/HS485Controller.cpp",
+        "./src/hs485d/HS485Controller.h",
+        "./src/hs485d/HS485ControllerCCU1.cpp",
+        "./src/hs485d/HS485ControllerCCU1.h",
+        "./src/hs485d/LGWPortWrapper.cpp",
+        "./src/hs485d/hs485d.cpp",
+        "./src/hs485dLoader/hs485dLoader.cpp",
+        "./src/hss_led/LedController.cpp",
+        "./src/libLanDeviceUtils/include/IPConfiguration.h"
+      ]
+    },
+    {
+      "label": "tcl-load",
+      "description": "TCL loading external package or shared lib",
+      "files": [
+        "./src/devicetypes/list_values.tcl",
+        "./src/eq3configd/main.cpp",
+        "./src/eq3configd/src/udpframe.cpp",
+        "./src/hs485d/HMWLGWCommand.h",
+        "./src/hs485d/HMWLGWTransportFrame.cpp",
+        "./src/hs485d/HMWLGWTransportFrame.h",
+        "./src/hs485d/HS485CommMessageLGW.h",
+        "./src/hs485d/HS485ControllerLGW.cpp",
+        "./src/libLanDeviceUtils/src/EQ3ConfigProtocol.h"
+      ]
+    },
+    {
+      "label": "xmlrpc",
+      "description": "XML-RPC calls",
+      "files": [
+        "./src/SetInterfaceClock/SetInterfaceClock.cpp",
+        "./src/hs485d/HS485Central.cpp",
+        "./src/hs485d/HS485Central.h",
+        "./src/hs485d/HS485Channel.cpp",
+        "./src/hs485d/HS485Channel.h",
+        "./src/hs485d/HS485ChannelDescription.cpp",
+        "./src/hs485d/HS485ChannelDescription.h",
+        "./src/hs485d/HS485Controller.cpp",
+        "./src/hs485d/HS485Controller.h",
+        "./src/hs485d/HS485ControllerCCU1.cpp"
+      ]
+    }
+  ],
+  "file_index": {
+    "CMakeLists.txt": {
+      "module": "root",
+      "type": "config"
+    },
+    "Makefile": {
+      "module": "root",
+      "type": "config"
+    },
+    "README.md": {
+      "module": "root",
+      "type": "config"
+    },
+    "CMakePresets.json": {
+      "module": "root",
+      "type": "config"
+    },
+    ".gitignore": {
+      "module": "root",
+      "type": "config"
+    },
+    ".github/**": {
+      "module": ".github",
+      "type": "config"
+    },
+    "bin/**": {
+      "module": "bin",
+      "type": "config"
+    },
+    "build-tools/**": {
+      "module": "build-tools",
+      "type": "config"
+    },
+    "cmake/**": {
+      "module": "cmake",
+      "type": "config"
+    },
+    "etc/**": {
+      "module": "etc",
+      "type": "config"
+    },
+    "firmware/**": {
+      "module": "firmware",
+      "type": "config"
+    },
+    "licenses/**": {
+      "module": "licenses",
+      "type": "config"
+    },
+    "opt/**": {
+      "module": "opt",
+      "type": "config"
+    },
+    "src/**": {
+      "module": "src",
+      "type": "source"
+    },
+    "tests/**": {
+      "module": "tests",
+      "type": "config"
+    },
+    "usr/**": {
+      "module": "usr",
+      "type": "source"
+    },
+    "www/**": {
+      "module": "www",
+      "type": "source"
+    },
+    "src/webui/**": {
+      "module": "src",
+      "type": "source"
+    },
+    "www/config/**": {
+      "module": "www",
+      "type": "source"
+    }
+  },
+  "technology_stack": {
+    "languages": [
+      {
+        "name": "Tcl"
+      },
+      {
+        "name": "JavaScript"
+      },
+      {
+        "name": "C++"
+      },
+      {
+        "name": "C/C++"
+      },
+      {
+        "name": "C"
+      },
+      {
+        "name": "Python"
+      }
+    ],
+    "frameworks": [],
+    "databases": [],
+    "build_tools": [
+      "CMake",
+      "Make"
+    ],
+    "infrastructure": [
+      "GitHub Actions"
+    ],
+    "external_dependencies": [
+      {
+        "name": "OpenSSL"
+      },
+      {
+        "name": "Tcl"
+      },
+      {
+        "name": "tdom"
+      }
+    ]
+  },
+  "cross_cutting": {
+    "data_flow": "cross-cutting/data-flow.md",
+    "dependencies": "cross-cutting/dependencies.md",
+    "integration_seams": "cross-cutting/integration-seams.md",
+    "security": "cross-cutting/security.md",
+    "testing": "cross-cutting/testing.md",
+    "technical_debt": "cross-cutting/technical-debt.md",
+    "api_contracts": "cross-cutting/api-contracts.md",
+    "infrastructure": "cross-cutting/infrastructure.md"
+  },
+  "output_files": [
+    {
+      "path": "modules/root.md",
+      "description": "Module documentation: root"
+    },
+    {
+      "path": "modules/.github.md",
+      "description": "Module documentation: .github"
+    },
+    {
+      "path": "modules/bin.md",
+      "description": "Module documentation: bin"
+    },
+    {
+      "path": "modules/build-tools.md",
+      "description": "Module documentation: build-tools"
+    },
+    {
+      "path": "modules/cmake.md",
+      "description": "Module documentation: cmake"
+    },
+    {
+      "path": "modules/etc.md",
+      "description": "Module documentation: etc"
+    },
+    {
+      "path": "modules/firmware.md",
+      "description": "Module documentation: firmware"
+    },
+    {
+      "path": "modules/licenses.md",
+      "description": "Module documentation: licenses"
+    },
+    {
+      "path": "modules/opt.md",
+      "description": "Module documentation: opt"
+    },
+    {
+      "path": "modules/src.md",
+      "description": "Module documentation: src"
+    },
+    {
+      "path": "modules/tests.md",
+      "description": "Module documentation: tests"
+    },
+    {
+      "path": "modules/usr.md",
+      "description": "Module documentation: usr"
+    },
+    {
+      "path": "modules/www.md",
+      "description": "Module documentation: www"
+    },
+    {
+      "path": "overview/dependency-graph.md",
+      "description": "Overview document"
+    },
+    {
+      "path": "overview/entry-points.md",
+      "description": "Overview document"
+    },
+    {
+      "path": "overview/folder-structure.md",
+      "description": "Overview document"
+    },
+    {
+      "path": "overview/stack-inventory.md",
+      "description": "Overview document"
+    },
+    {
+      "path": "overview/tech-stack.md",
+      "description": "Overview document"
+    },
+    {
+      "path": "cross-cutting/data-flow.md",
+      "description": "Cross-cutting document"
+    },
+    {
+      "path": "cross-cutting/dependencies.md",
+      "description": "Cross-cutting document"
+    },
+    {
+      "path": "cross-cutting/integration-seams.md",
+      "description": "Cross-cutting document"
+    },
+    {
+      "path": "cross-cutting/security.md",
+      "description": "Cross-cutting document"
+    },
+    {
+      "path": "cross-cutting/technical-debt.md",
+      "description": "Cross-cutting document"
+    },
+    {
+      "path": "cross-cutting/testing.md",
+      "description": "Cross-cutting document"
+    },
+    {
+      "path": "external-context/summary.md",
+      "description": "External context summary"
+    },
+    {
+      "path": "external-context/unclarified.md",
+      "description": "Unclarified external items"
+    },
+    {
+      "path": "modules/webui-shell-build.md",
+      "description": "Frontend shell, JS architecture, build pipeline, Bootstrap status"
+    },
+    {
+      "path": "modules/webui-rega-pages.md",
+      "description": "ReGa-served pages, routing, assets"
+    },
+    {
+      "path": "modules/webui-config-pages.md",
+      "description": "cp_*/ic_* CGI pages and PDA UI"
+    },
+    {
+      "path": "modules/webui-easymodes.md",
+      "description": "Device profile/easymode Tcl definitions"
+    },
+    {
+      "path": "modules/webui-api.md",
+      "description": "JSON-RPC API catalogue (180 methods) and Tcl libs"
+    },
+    {
+      "path": "modules/webui-design-docs.md",
+      "description": "Design source assets and stale JsDoc docs"
+    },
+    {
+      "path": "cross-cutting/api-contracts.md",
+      "description": "Cross-cutting document"
+    },
+    {
+      "path": "cross-cutting/infrastructure.md",
+      "description": "Cross-cutting document"
+    }
+  ],
+  "metadata": {
+    "generated_at": "2026-10-09T17:00:00Z",
+    "quality_score": 100,
+    "coverage": {
+      "files_documented": 9793,
+      "files_total": 9793,
+      "modules_documented": 19,
+      "modules_detected": 19,
+      "apis_documented": 255,
+      "apis_detected": 255,
+      "models_documented": 6,
+      "models_detected": 6,
+      "cross_cutting_produced": 8,
+      "cross_cutting_applicable": 8
+    },
+    "verification": {
+      "coverage_percent": 100.0,
+      "accuracy_percent": 96.0,
+      "coverage_threshold": 95,
+      "accuracy_threshold": 95,
+      "passed": true,
+      "iterations": 3,
+      "summary_file": "verification/verification-summary.json",
+      "report_file": "verification/verification-report.md",
+      "remaining_gaps": [
+        "rfd, multimacd, hs485d, libhsscomm, libeq3config, libXmlRpc only partially read",
+        "src/webui deep-explored in 6 module docs; some large files sampled (see each doc's gaps)",
+        "related repository /home/standard/dev/OpenCCU not analyzed",
+        "audit-report.md (FAIL, pre-fix): remaining warning: 12 of 19 module docs lack a '## Components' heading"
+      ]
+    },
+    "remaining_note": "Score is formula-based (completion-template.md); depth is partial for several modules, see verification.remaining_gaps."
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "oneModernizerVersion": "3.1.2",
+  "repo_workflow_status": {
+    "audit-explore": "completed"
+  },
+  "features_active": [
+    {
+      "feature_name": "webui-api",
+      "status": "active",
+      "workflow_status": {
+        "plan": "completed",
+        "plan_runs": 2,
+        "audit-analysis": "completed",
+        "audit-analysis_runs": 2,
+        "sdd-specify": "completed",
+        "sdd-blueprint": "completed",
+        "sdd-tasks": "completed",
+        "sdd-analyze": "completed",
+        "architect": "completed",
+        "architect_runs": 2
+      },
+      "plan_path": ".migration/webui-api/plan.downstream.json",
+      "created_at": "09 Oct 2026 23:04:14",
+      "updated_at": "2026-10-30T16:13:11.780Z"
+    }
+  ],
+  "features_pending": [
+    {
+      "feature_name": "www",
+      "status": "pending",
+      "workflow_status": {
+        "plan": "completed",
+        "audit-analysis": "completed",
+        "audit-analysis_runs": 2,
+        "plan_runs": 4
+      },
+      "plan_path": ".migration/www/plan.downstream.json",
+      "created_at": "09 Oct 2026 22:57:40",
+      "updated_at": "10 Oct 2026 08:03:01"
+    }
+  ],
+  "features_archived": [],
+  "active_feature": "webui-api",
+  "created_at": "09 Oct 2026 22:57:40",
+  "updated_at": "2026-10-30T16:13:11.780Z"
+}
