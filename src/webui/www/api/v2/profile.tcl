@@ -1,7 +1,8 @@
 ##
 # v2/profile.tcl - GET|PUT /api/v2/profile (staged SP033, IC012, T156; BD-11 re-baselined by BD-15)
 #
-#   GET  [?userId=<id>]  strict JSON {"userId","userName","firstName","hasPassword","isNoExpert","language"}
+#   GET  [?userId=<id>]  strict JSON {"userId","userName","firstName","hasPassword","isNoExpert","language","level"}
+#                        level is ADMIN, USER or GUEST (the user level of ReGa; NONE if ReGa does not say)
 #                        GUEST or higher reads the own profile, ?userId= of another user needs ADMIN
 #   PUT  [?userId=<id>]  body {"language":"<xx>"} (^[a-z]{2}$) replaces /etc/config/userprofiles/
 #                        <UserFirstName>.lang atomically and answers {"language":"<xx>"}; USER or
@@ -30,7 +31,7 @@ proc profile_read { userId } {
     var user = dom.GetObject(userId);
     if (user)
     {
-      Write("NAME {" # user.Name() # "} FIRST {" # user.UserFirstName() # "} PWD {" # (user.UserPwd() != "") # "} NOEXPERT {" # user.UserEasyLinkMode() # "}");
+      Write("NAME {" # user.Name() # "} FIRST {" # user.UserFirstName() # "} PWD {" # (user.UserPwd() != "") # "} NOEXPERT {" # user.UserEasyLinkMode() # "} LEVEL {" # user.UserLevel() # "}");
     }
   }
   array set a [list userId $userId]
@@ -40,8 +41,15 @@ proc profile_read { userId } {
     set API_HTTP_STATUS 404
     jsonrpc_error 501 "user not found"
   }
-  foreach k {FIRST PWD NOEXPERT} { if { ![info exists u($k)] } then { set u($k) "" } }
-  return [dict create name $u(NAME) firstName $u(FIRST) hasPassword [expr { "true" eq $u(PWD) }] isNoExpert [expr { "true" eq $u(NOEXPERT) }]]
+  foreach k {FIRST PWD NOEXPERT LEVEL} { if { ![info exists u($k)] } then { set u($k) "" } }
+  # the ReGa user levels (the same numbers as USER_LEVEL of homematic.cgi)
+  switch -- [string trim $u(LEVEL)] {
+    8 { set level ADMIN }
+    2 { set level USER }
+    1 { set level GUEST }
+    default { set level NONE }
+  }
+  return [dict create name $u(NAME) firstName $u(FIRST) hasPassword [expr { "true" eq $u(PWD) }] isNoExpert [expr { "true" eq $u(NOEXPERT) }] level $level]
 }
 
 proc profile_langFile { firstName } {
@@ -87,7 +95,8 @@ proc v2_profile_handle { } {
     append json ",\"firstName\":[json_toString $first]"
     append json ",\"hasPassword\":[expr { [dict get $profile hasPassword] ? "true" : "false" }]"
     append json ",\"isNoExpert\":[expr { [dict get $profile isNoExpert] ? "true" : "false" }]"
-    append json ",\"language\":[json_toString [profile_language $first]]\}"
+    append json ",\"language\":[json_toString [profile_language $first]]"
+    append json ",\"level\":[json_toString [dict get $profile level]]\}"
     v2_respondJson $json
     return
   }

@@ -30,7 +30,7 @@ set USER {{AbCdEf1234 2 1234 Admin}}
 set S {_session_id_ AbCdEf1234 userID 1234}
 set V2 {-setenv {REQUEST_URI /api/v2/rpc} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234}}
 # the ReGa answer for the v2 profile read
-set PROFILE {{*UserFirstName()* {NAME {Admin} FIRST {Max} PWD {true} NOEXPERT {false}}}}
+set PROFILE {{*UserFirstName()* {NAME {Admin} FIRST {Max} PWD {true} NOEXPERT {false} LEVEL {8}}}}
 proc profile {args} {
   return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/profile} \
     -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} {*}$args]]]
@@ -108,7 +108,7 @@ test sp033-10 {acceptance[7] [V2]: GET /api/v2/profile answers strict JSON with 
   set r [profile -sessions $::USER -rega $::PROFILE -fs $fs]
   mock::fs::destroy $fs
   list [status $r] [string trim [dict get $r body]]
-} -result [list 200 {{"userId":"1234","userName":"Admin","firstName":"Max","hasPassword":true,"isNoExpert":false,"language":"de"}}]
+} -result [list 200 {{"userId":"1234","userName":"Admin","firstName":"Max","hasPassword":true,"isNoExpert":false,"language":"de","level":"ADMIN"}}]
 
 test sp033-11 {acceptance[7]/BD-11 [V2]: GET without a sid is HTTP 401; ?userId= of another user needs ADMIN (HTTP 403); a malformed userId is HTTP 422} -body {
   set a [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/profile} -header {X-Requested-With XMLHttpRequest} -sessions $::USER]]]
@@ -150,5 +150,16 @@ test sp033-14 {acceptance[8] [V2]: a GUEST session cannot PUT (403); a USER sess
   regexp {Allow: ([^\r\n]+)} [dict get $c headers] -> allow
   list [status $a] [status $b] [status $c] $allow
 } -result {403 403 405 {GET, PUT}}
+
+test sp033-level {GET /api/v2/profile maps the ReGa user level to ADMIN, USER, GUEST and NONE (unknown or missing)} -body {
+  set out {}
+  foreach lv {8 2 1 {} 5} {
+    set rega [list [list {*UserFirstName()*} "NAME {Admin} FIRST {Max} PWD {true} NOEXPERT {false} LEVEL {$lv}"]]
+    set r [profile -sessions $::USER -rega $rega]
+    regexp {"level":"(\w+)"} [dict get $r body] -> l
+    lappend out $l
+  }
+  set out
+} -result {ADMIN USER GUEST NONE NONE}
 
 cleanupTests

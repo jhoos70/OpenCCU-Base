@@ -3,7 +3,7 @@ namespace import ::tcltest::*
 
 # IC012 dispatcher -> user-profile: GET|PUT /api/v2/profile (v2/router.tcl). Request shape: GET
 # query userId (ADMIN for other users), PUT {language ^[a-z]{2}$}. Response: {userId,userName,
-# firstName,hasPassword,isNoExpert,language}. Errors: 401 invalid sid; 403 other user's profile
+# firstName,hasPassword,isNoExpert,language,level}. Errors: 401 invalid sid; 403 other user's profile
 # without ADMIN; 422 invalid language.
 set here [file dirname [file normalize [info script]]]
 set gen [file dirname [file dirname [file dirname $here]]]
@@ -14,7 +14,7 @@ source [file join $gen schema-harness tests helpers golden.tcl]
 
 set CAND only:dispatcher,security-session,user-profile
 set USER {{AbCdEf1234 2 1234 Admin}}
-set PROFILE {{*UserFirstName()* {NAME {Admin} FIRST {Max} PWD {true} NOEXPERT {false}}}}
+set PROFILE {{*UserFirstName()* {NAME {Admin} FIRST {Max} PWD {true} NOEXPERT {false} LEVEL {8}}}}
 proc req {method body args} {
   return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -method $method -contenttype [expr {$method eq "PUT" ? "application/json" : ""}] \
     -setenv {REQUEST_URI /api/v2/profile} -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $::USER -rega $::PROFILE {*}$args]]]
@@ -34,7 +34,7 @@ test ic012-1 {GET maps to the user-profile route and answers the locked attribut
   set r [req GET {} -fs $fs]
   mock::fs::destroy $fs
   string trim [dict get $r body]
-} -result {{"userId":"1234","userName":"Admin","firstName":"Max","hasPassword":true,"isNoExpert":false,"language":"de"}}
+} -result {{"userId":"1234","userName":"Admin","firstName":"Max","hasPassword":true,"isNoExpert":false,"language":"de","level":"ADMIN"}}
 
 test ic012-2 {PUT {language} writes the language and answers it} -body {
   set fs [mock::fs::create]
