@@ -3,15 +3,17 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DeviceValues } from "@/components/DeviceValues";
 import type { Device } from "@/lib/api";
 import { filterDevices, sortByName } from "@/lib/devices";
 import { text } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
+import { useCurrentProfile } from "@/lib/profile-context";
 import { useCcuStrings } from "@/lib/use-ccu-strings";
 import { useModel } from "@/lib/use-model";
 import { Status } from "./Status";
 
-function DeviceRows({ device, description, open, onToggle }: { device: Device; description: string; open: boolean; onToggle: () => void }) {
+function DeviceRows({ device, description, open, onToggle, sid, mayChange, onExpired }: { device: Device; description: string; open: boolean; onToggle: () => void; sid: string; mayChange: boolean; onExpired: () => void }) {
   const { t } = useI18n();
   const channels = [...device.channels].sort((a, b) => a.index - b.index);
   return (
@@ -58,6 +60,9 @@ function DeviceRows({ device, description, open, onToggle }: { device: Device; d
                 ))}
               </tbody>
             </Table>
+            <div className="mt-4">
+              <DeviceValues deviceId={device.id} sid={sid} mayChange={mayChange} onExpired={onExpired} />
+            </div>
           </TableCell>
         </TableRow>
       )}
@@ -67,6 +72,9 @@ function DeviceRows({ device, description, open, onToggle }: { device: Device; d
 
 export default function Devices({ sid, onExpired }: { sid: string; onExpired: () => void }) {
   const { t, lang } = useI18n();
+  const profile = useCurrentProfile();
+  // a guest only looks, as in the classic UI
+  const mayChange = profile?.level === "USER" || profile?.level === "ADMIN";
   const state = useModel("devices", sid, onExpired);
   const strings = useCcuStrings("deviceDescription", "extension", "stringtable");
   const [query, setQuery] = React.useState("");
@@ -83,7 +91,7 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
     <Card className="space-y-4">
       <div>
         <CardTitle>{t("devices")}</CardTitle>
-        <CardDescription>{t("readOnly")}</CardDescription>
+        <CardDescription>{mayChange ? t("devicesControl") : t("readOnly")}</CardDescription>
       </div>
       <Status state={state}>
         {(devices) => {
@@ -110,7 +118,7 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
                   </TableHead>
                   <tbody>
                     {shown.map((d) => (
-                      <DeviceRows key={d.id} device={{ ...d, name: text(d.name, strings) }} description={describe(d)} open={open.has(d.id)} onToggle={() => toggle(d.id)} />
+                      <DeviceRows key={d.id} device={{ ...d, name: text(d.name, strings) }} description={describe(d)} open={open.has(d.id)} onToggle={() => toggle(d.id)} sid={sid} mayChange={mayChange} onExpired={onExpired} />
                     ))}
                   </tbody>
                 </Table>

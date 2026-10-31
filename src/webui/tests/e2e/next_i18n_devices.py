@@ -87,6 +87,7 @@ def main():
                 else:
                     route.continue_()
             pg.route("**/v2/model?*", fulfil)
+            pg.route("**/v2/values*", lambda r: r.fulfill(status=200, content_type="application/json", body='{"device":"0","items":[]}'))  # the values of a mocked device
             pg.get_by_role("link", name="Geräte").click(); pg.get_by_label("Filter").wait_for()
             pg.wait_for_function("document.body.innerText.includes('Funk-Schaltaktor')", timeout=10000)  # descriptions load after the table
             names = [r.split("\t")[0].strip("▸▾ \n") for r in pg.locator("tbody > tr").all_inner_texts()]

@@ -43,6 +43,14 @@ def main():
             check("signed in", True)
             shot(pg, "overview")
 
+            def rows_are(expected):
+                """The rows settle when the page has loaded everything: wait for the expected count (or give up after 15 s)."""
+                try:
+                    pg.wait_for_function("([sel, n]) => document.querySelectorAll(sel).length === n", arg=["tbody tr", expected], timeout=15000)
+                except Exception:
+                    pass
+                return pg.locator("tbody tr").count()
+
             def timed(label, link, selector):
                 t = time.time(); pg.get_by_role("link", name=link, exact=True).click()
                 pg.wait_for_selector(selector, timeout=30000)
@@ -57,9 +65,11 @@ def main():
             pg.locator("tbody tr button[aria-expanded]").nth(3).click()
             check("a device expands to its channels", pg.locator("tbody tbody tr").count() > 0, "(%d channel rows)" % pg.locator("tbody tbody tr").count())
             shot(pg, "devices-open")
+            pg.get_by_role("button", name="Refresh").first.wait_for(timeout=15000)
+            check("an open device shows its live values", pg.get_by_text("Values", exact=True).first.is_visible() and pg.locator("tbody tbody tbody tr").count() > 3, "(%d rows)" % pg.locator("tbody tbody tbody tr").count())
 
             timed("Rooms", "Rooms", "tbody tr")
-            rooms = v1("Room.getAll"); check("Rooms: one row per room", pg.locator("tbody tr").count() == len(rooms), "rows=%d classic=%d" % (pg.locator("tbody tr").count(), len(rooms)))
+            rooms = v1("Room.getAll"); n = rows_are(len(rooms)); check("Rooms: one row per room", n == len(rooms), "rows=%d classic=%d" % (n, len(rooms)))
             shot(pg, "rooms")
 
             timed("System variables", "System variables", "tbody tr")
@@ -69,7 +79,8 @@ def main():
             shot(pg, "sysvars")
 
             timed("Programs", "Programs", "tbody tr")
-            prg = v1("Program.getAll"); rows = pg.locator("tbody tr").count()
+            prg = v1("Program.getAll"); listed = len([x for x in prg if not x.get("isInternal") and x.get("isOperable", True)])
+            rows = rows_are(listed)
             check("Programs: rows are the listed ones", 0 < rows <= len(prg), "rows=%d of %d programs (internal and copies hidden)" % (rows, len(prg)))
             shot(pg, "programs")
 

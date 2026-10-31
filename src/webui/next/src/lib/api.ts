@@ -229,6 +229,50 @@ export function makeSetSysVar(doFetch: Fetch = defaultFetch): (sid: string, id: 
 const setSysVarDefault = makeSetSysVar();
 export const setSysVar = (sid: string, id: string, value: SysVarValue): Promise<SysVarChange> => setSysVarDefault(sid, id, value);
 
+/** One datapoint of a device channel (GET /values?device=): the live value and what may be done with it. */
+export interface Datapoint {
+  id: string;
+  name: string;
+  channelId: string;
+  channel: string;
+  param: string; // SET_TEMPERATURE, STATE, ...
+  type: string; // LOGIC, ACTION, LIST, NUMBER, STRING
+  value: string; // as the CCU holds it ("" or the epoch timestamp: the device never reported one)
+  unit: string;
+  min: string;
+  max: string;
+  valueList: string; // ";" separated, for LIST (the value is the index)
+  timestamp: string;
+  integer: boolean;
+  readable: boolean;
+  writable: boolean;
+}
+
+export function makeGetValues(doFetch: Fetch = defaultFetch): (sid: string, deviceId: string) => Promise<Datapoint[]> {
+  return async function getValues(sid: string, deviceId: string): Promise<Datapoint[]> {
+    const { doc, status } = await send(doFetch, `/values?device=${encodeURIComponent(deviceId)}`, { method: "GET", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const items = (doc as { items?: Datapoint[] } | null)?.items;
+    if (!Array.isArray(items)) throw new ApiError(0, "unexpected answer", status);
+    return items;
+  };
+}
+const getValuesDefault = makeGetValues();
+export const getValues = (sid: string, deviceId: string): Promise<Datapoint[]> => getValuesDefault(sid, deviceId);
+
+/** POST /values: sets one datapoint; the answer is the datapoint as the CCU holds it afterwards (a device confirms later). */
+export function makeSetValue(doFetch: Fetch = defaultFetch): (sid: string, id: string, value: string | boolean) => Promise<Datapoint> {
+  return async function setValue(sid: string, id: string, value: string | boolean): Promise<Datapoint> {
+    const { doc, status } = await send(doFetch, "/values", { method: "POST", headers: headersFor(sid, true), body: JSON.stringify({ id, value }) });
+    throwIfError(doc, status);
+    const d = doc as Partial<Datapoint> | null;
+    if (!d || typeof d.value !== "string" || typeof d.id !== "string") throw new ApiError(0, "unexpected answer", status);
+    return d as Datapoint;
+  };
+}
+const setValueDefault = makeSetValue();
+export const setValue = (sid: string, id: string, value: string | boolean): Promise<Datapoint> => setValueDefault(sid, id, value);
+
 export interface ProgramRun {
   id: string;
   executed: boolean;
@@ -349,6 +393,7 @@ export function describeChangeError(e: unknown, t: Translate): string {
   if (e instanceof ApiError && e.status === 422) return t("errInvalidValue");
   if (e instanceof ApiError && e.status === 403) return t("errNotAllowed");
   if (e instanceof ApiError && e.status === 404) return t("errGone");
+  if (e instanceof ApiError && e.status === 502) return t("errNotSent");
   return describeError(e, t);
 }
 

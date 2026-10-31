@@ -153,6 +153,19 @@ export const en = {
   errNoV2: "The v2 API does not answer. It must be enabled on the CCU (v2_enabled).",
   errRefused: "The CCU refused the request ({code}).",
   errGeneric: "Something went wrong.",
+  // device values
+  valuesTitle: "Values",
+  noValues: "This device has no values.",
+  param: "Parameter",
+  noValueYet: "No value reported yet",
+  send: "Send",
+  valueSent: "{name}: command sent. The value changes when the device reports back.",
+  errNotSent: "The CCU did not pass the command on to the device (the interface does not respond).",
+  devicesControl: "Status and control",
+  changeValue: "Change {name}",
+  setYes: "Set {name} to yes",
+  setNo: "Set {name} to no",
+  sendCommand: "Send {name}",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -306,4 +319,17 @@ export const de: Record<MessageKey, string> = {
   errNoV2: "Die v2-API antwortet nicht. Sie muss auf der CCU aktiviert sein (v2_enabled).",
   errRefused: "Die CCU hat die Anfrage abgelehnt ({code}).",
   errGeneric: "Etwas ist schiefgelaufen.",
+  // device values
+  valuesTitle: "Werte",
+  noValues: "Dieses Gerät hat keine Werte.",
+  param: "Parameter",
+  noValueYet: "Noch kein Wert gemeldet",
+  send: "Senden",
+  valueSent: "{name}: Befehl gesendet. Der Wert ändert sich, sobald das Gerät antwortet.",
+  errNotSent: "Die CCU hat den Befehl nicht an das Gerät weitergegeben (die Schnittstelle antwortet nicht).",
+  devicesControl: "Status und Bedienung",
+  changeValue: "{name} ändern",
+  setYes: "{name} auf ja setzen",
+  setNo: "{name} auf nein setzen",
+  sendCommand: "{name} senden",
 };
