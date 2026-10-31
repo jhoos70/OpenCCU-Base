@@ -6,6 +6,8 @@
 #   query  sections  comma list (default: devices,channels,rooms,functions,sysvars,programs)
 #   sysvars   also {"description","lastModified"} (the classic list's description and "last modified" columns;
 #             lastModified is "2026-10-31 19:34:03" in the CCU's time, the epoch if the variable was never set)
+#   programs  also {"description","isOperable","isCopy"}: isOperable is the classic rule for the status page (users may
+#             operate the program), a copy is an editing artefact the classic list leaves out
 #   alarms    the alarm system variables that are triggered (the classic header's alarm messages):
 #             {"id","name","occurredAt"}
 #   services  the open service messages (the classic header's service messages):
@@ -267,6 +269,9 @@ proc model_readPrograms { } {
         WriteLine("TIME {" # program.ProgramLastExecuteTime() # "}");
         WriteLine("ACTIVE {" # program.Active() # "}");
         WriteLine("INTERNAL {" # program.Internal() # "}");
+        WriteLine("INFO {" # program.PrgInfo() # "}");
+        WriteLine("OPERABLE {" # (program.UserAccessRights(iulOtherThanAdmin) == iarFullAccess) # "}");
+        WriteLine("COPY {" # (program.ProgramCopyID() != ID_ERROR) # "}");
         WriteLine("}");
       }
     }
@@ -274,7 +279,8 @@ proc model_readPrograms { } {
   set items {}
   foreach rec [hmscript $script] {
     if { [catch { array set p $rec }] || ![info exists p(ID)] } then { array unset p; continue }
-    lappend items "\{\"id\":[json_toString $p(ID)],\"name\":[json_toString $p(NAME)],\"isActive\":[model_bool $p(ACTIVE)],\"isInternal\":[model_bool $p(INTERNAL)],\"lastExecuteTime\":[json_toString $p(TIME)]\}"
+    foreach k {INFO OPERABLE COPY} { if { ![info exists p($k)] } then { set p($k) "" } }
+    lappend items "\{\"id\":[json_toString $p(ID)],\"name\":[json_toString $p(NAME)],\"isActive\":[model_bool $p(ACTIVE)],\"isInternal\":[model_bool $p(INTERNAL)],\"lastExecuteTime\":[json_toString $p(TIME)],\"description\":[json_toString $p(INFO)],\"isOperable\":[model_bool $p(OPERABLE)],\"isCopy\":[model_bool $p(COPY)]\}"
     array unset p
   }
   return $items

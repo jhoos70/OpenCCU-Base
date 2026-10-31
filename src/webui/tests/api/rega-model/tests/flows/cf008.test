@@ -72,7 +72,7 @@ test cf008-6 {error path: a v2 SysVar.create* with an existing name is HTTP 409 
   list [status $r] [err $r] $created
 } -result {409 {500 {name already exists (Presence)}} 0}
 
-test cf008-7 {error path: v2 mutation routes (programs, rooms, functions) are not delivered yet (EG-6): HTTP 404 route not found} -body {
+test cf008-7 {error path: the v2 programs route is delivered (a body without execute is 422); the rooms and functions mutation routes are not yet (EG-6): HTTP 404 route not found} -body {
   set out {}
   foreach p {programs rooms functions} {
     set r [golden::call_raw {{"id":"1"}} [golden::prepare [list -candidate $::CAND -method POST -contenttype application/json -setenv [list REQUEST_URI /api/v2/$p] \
@@ -80,6 +80,6 @@ test cf008-7 {error path: v2 mutation routes (programs, rooms, functions) are no
     lappend out [status $r]
   }
   set out
-} -result {404 404 404}
+} -result {422 404 404}
 
 cleanupTests

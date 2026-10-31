@@ -112,7 +112,7 @@ test sp044-10 {acceptance[6] [V2]: without sections all sections but datapoints 
   set j [string trim [dict get $r body]]
   list [status $r] [regexp {"devices":\{"total":1,"offset":0,"limit":100,"items":} $j] [regexp {"channels":\{"total":1,"offset":0,"limit":100,"items":\[\{"id":"1",} $j] \
     [regexp {"rooms":\{"total":1,.*"items":\[\{"id":"1201","name":"Kitchen","description":"d","channelIds":\["1301"\]\}\]\}} $j] \
-    [regexp {"functions":\{"total":1} $j] [regexp {"sysvars":\{"total":1,.*"isLogged":true,"isVisible":true,"isInternal":false} $j] [regexp {"programs":\{"total":1,.*"isActive":true,"isInternal":false,"lastExecuteTime":"t"\}\]\}\}$} $j] [string match *datapoints* $j]
+    [regexp {"functions":\{"total":1} $j] [regexp {"sysvars":\{"total":1,.*"isLogged":true,"isVisible":true,"isInternal":false} $j] [regexp {"programs":\{"total":1,.*"isActive":true,"isInternal":false,"lastExecuteTime":"t","description":"","isOperable":false,"isCopy":false\}\]\}\}$} $j] [string match *datapoints* $j]
 } -result {200 1 1 1 1 1 1 0}
 
 test sp044-11 {acceptance[6] [V2]: sections=devices,rooms returns only the requested sections (acceptance of SP025[8])} -body {
