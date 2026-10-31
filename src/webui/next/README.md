@@ -4,8 +4,10 @@ React 19, TypeScript, Vite and Tailwind, with shadcn/ui-style components (Radix 
 `src/components/ui` and are maintained here. It runs **next to** the classic UI, which stays untouched.
 Decisions: `.migration/plan/decisions-ui.md` (D1 to D5).
 
-Status: the login only. It signs in with `Session.login` on the v2 API, keeps the session id in
-`sessionStorage`, and links to the classic UI with the same session, so both can be used at once.
+Status: login, and two read-only pages, Rooms and System variables. It signs in with `Session.login` on the
+v2 API, keeps the session id in `sessionStorage`, and links to the classic UI with the same session, so both
+can be used at once. The pages read the v2 bulk model (`GET /model`); routes are hash based (`#/rooms`,
+`#/sysvars`), so no server route is needed and a reload keeps the page. An expired session returns to the form.
 
 ## Where it runs
 
@@ -37,12 +39,17 @@ Built output is never committed.
 
 ## End-to-end test
 
-`src/webui/tests/e2e/next_login.py` drives a real browser against a CCU that has the app installed and
-`v2_enabled true`: wrong password, login, reload, the same session in the classic UI, sign out.
+Both drive a real browser against a CCU that has the app installed and `v2_enabled true`
+(`python3 -I <file> --base http://127.0.0.1:18080 --password ...`, in the Playwright container of `tests/e2e`):
+
+- `src/webui/tests/e2e/next_login.py`: wrong password, login, reload, the same session in the classic UI, sign out.
+- `src/webui/tests/e2e/next_pages.py`: rooms and system variables compared with the classic v1 API, tabs, reload,
+  umlauts, internal variables hidden, an expired session returns to the form.
 
 ## Not yet
 
-German text (the classic UI is multilingual), any page after the login, push events, and the clean
+German text (the classic UI is multilingual), pages beyond rooms and system variables (devices, programs),
+editing, push events, and the clean
 `/next/` and `/api/v2` URLs (they need a change in the OpenCCU packaging repository, "Route A").
 
 ## Licences

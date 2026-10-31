@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, describeError, login, makeRpc } from "./api";
+import { ApiError, describeError, isSessionExpired, login, makeGetModel, makeRpc } from "./api";
 
 const reply = (status: number, body: unknown) => async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
 
@@ -52,5 +52,31 @@ describe("describeError", () => {
     expect(describeError(new ApiError(429, "rate limit exceeded", 429))).toMatch(/Too many attempts/);
     expect(describeError(new ApiError(999, "stack trace here", 500))).not.toMatch(/stack trace/);
     expect(describeError(new Error("x"))).toBe("Something went wrong.");
+  });
+});
+
+describe("getModel", () => {
+  const model = { rooms: { total: 1, offset: 0, limit: 500, items: [{ id: "1", name: "Büro", description: "", channelIds: [] }] } };
+
+  it("reads one section with the session and no request body", async () => {
+    let url = "", init: RequestInit | undefined;
+    const get = makeGetModel(async (u, i) => ((url = String(u)), (init = i), new Response(JSON.stringify(model))));
+    const rooms = await get("rooms", "AbCdEf1234");
+    expect(url).toBe("/api/homematic.cgi/v2/model?sections=rooms&limit=500");
+    expect(init!.method).toBe("GET");
+    expect(init!.body).toBeUndefined();
+    expect((init!.headers as Record<string, string>)["X-Session-Id"]).toBe("AbCdEf1234");
+    expect(rooms.items[0].name).toBe("Büro");
+  });
+
+  it("recognises an expired session", async () => {
+    const get = makeGetModel(reply(401, { error: { code: 400, message: "access denied" } }));
+    const e = await get("rooms", "x").catch((x) => x);
+    expect(isSessionExpired(e)).toBe(true);
+  });
+
+  it("rejects an answer without the section", async () => {
+    const get = makeGetModel(reply(200, {}));
+    await expect(get("rooms", "x")).rejects.toBeInstanceOf(ApiError);
   });
 });

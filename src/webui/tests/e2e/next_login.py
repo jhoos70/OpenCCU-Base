@@ -42,13 +42,13 @@ def main():
             del console[:]  # the browser logs the deliberate 401 as an error; only count what follows
 
             pg.fill("#password", a.password); pg.keyboard.press("Enter")
-            pg.get_by_text("Signed in").wait_for()
+            pg.get_by_role("button", name="Sign out").wait_for()
             signed_in = True
-            check("login shows the signed-in view", a.user in pg.inner_text("main"))
+            check("login shows the signed-in view", a.user in pg.inner_text("header"))
             sid = pg.evaluate("JSON.parse(sessionStorage.getItem('openccu.next.session')).sid")
             check("session id has the CCU format", bool(re.fullmatch(r"[A-Za-z0-9]{10}", sid)), sid[:2] + "…")
 
-            pg.reload(); pg.get_by_text("Signed in").wait_for()
+            pg.reload(); pg.get_by_role("button", name="Sign out").wait_for()
             check("session survives a reload", True)
 
             pg.get_by_text("Open the classic UI").click()
@@ -56,7 +56,7 @@ def main():
             pg.wait_for_selector("#menubar", timeout=20000)
             check("classic UI opens with the same session", "/login.htm" not in pg.url and pg.locator("#menubar").is_visible(), pg.url.replace(sid, "SID"))
 
-            pg.goto(a.base + "/webui/next/"); pg.get_by_text("Signed in").wait_for()
+            pg.goto(a.base + "/webui/next/"); pg.get_by_role("button", name="Sign out").wait_for()
             pg.get_by_role("button", name="Sign out").click()
             pg.wait_for_selector("#user")
             signed_in = False

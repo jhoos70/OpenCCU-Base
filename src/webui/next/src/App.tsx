@@ -5,6 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
+import { useRoute, type Route } from "@/lib/use-route";
+import Rooms from "@/pages/Rooms";
+import SysVars from "@/pages/SysVars";
 
 function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
   const [user, setUser] = React.useState("");
@@ -54,7 +58,8 @@ function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
   );
 }
 
-function Home({ session, onLogout }: { session: Stored; onLogout: () => void }) {
+function Shell({ session, onLogout }: { session: Stored; onLogout: () => void }) {
+  const route = useRoute();
   const [busy, setBusy] = React.useState(false);
   async function signOut() {
     setBusy(true);
@@ -65,22 +70,40 @@ function Home({ session, onLogout }: { session: Stored; onLogout: () => void }) 
     }
     onLogout();
   }
+  const tab = (name: Route, label: string) => (
+    <a
+      href={`#/${name}`}
+      aria-current={route === name ? "page" : undefined}
+      className={cn("rounded-md px-3 py-1.5 text-sm font-medium", route === name ? "bg-white/20" : "hover:bg-white/10")}
+    >
+      {label}
+    </a>
+  );
   return (
-    <Card className="w-full max-w-sm space-y-4">
-      <div>
-        <CardTitle>Signed in</CardTitle>
-        <CardDescription>
-          as <strong>{session.user}</strong>
-        </CardDescription>
-      </div>
-      {/* The classic UI takes the same session id, so both UIs run side by side. */}
-      <Button asChild variant="outline" className="w-full">
-        <a href={`/pages/index.htm?sid=@${session.sid}@`}>Open the classic UI</a>
-      </Button>
-      <Button className="w-full" onClick={signOut} disabled={busy}>
-        Sign out
-      </Button>
-    </Card>
+    <div className="min-h-screen">
+      <header className="bg-[var(--primary)] text-[var(--primary-foreground)]">
+        <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+          <strong className="mr-2">OpenCCU</strong>
+          <nav className="flex gap-1" aria-label="Main">
+            {tab("rooms", "Rooms")}
+            {tab("sysvars", "System variables")}
+          </nav>
+          <div className="ml-auto flex items-center gap-3 text-sm">
+            <span>{session.user}</span>
+            {/* The classic UI takes the same session id, so both UIs run side by side. */}
+            <a className="underline" href={`/pages/index.htm?sid=@${session.sid}@`}>
+              Open the classic UI
+            </a>
+            <Button variant="outline" className="h-8 text-[var(--foreground)]" onClick={signOut} disabled={busy}>
+              Sign out
+            </Button>
+          </div>
+        </div>
+      </header>
+      <main className="mx-auto max-w-3xl p-4">
+        {route === "rooms" ? <Rooms sid={session.sid} onExpired={onLogout} /> : <SysVars sid={session.sid} onExpired={onLogout} />}
+      </main>
+    </div>
   );
 }
 
@@ -98,14 +121,13 @@ export default function App() {
       .finally(() => setChecking(false));
   }, []);
 
+  const leave = React.useCallback(() => (clearSession(), setSession(null)), []);
+
   if (checking) return null;
+  if (session) return <Shell session={session} onLogout={leave} />;
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
-      {session ? (
-        <Home session={session} onLogout={() => (clearSession(), setSession(null))} />
-      ) : (
-        <LoginForm onLogin={(s) => (saveSession(s), setSession(s))} />
-      )}
+      <LoginForm onLogin={(s) => (saveSession(s), setSession(s))} />
     </main>
   );
 }

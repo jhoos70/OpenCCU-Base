@@ -18,27 +18,96 @@ export class ApiError extends Error {
 
 export type Rpc = <T>(method: string, params?: Record<string, unknown>, sid?: string) => Promise<T>;
 
-export function makeRpc(doFetch: typeof fetch = (...a) => fetch(...a)): Rpc {
+type Fetch = typeof fetch;
+const defaultFetch: Fetch = (...a) => fetch(...a);
+
+/** Sends one request and returns the parsed JSON document; transport problems become ApiErrors. */
+async function send(doFetch: Fetch, path: string, init: RequestInit): Promise<{ doc: unknown; status: number }> {
+  let res: Response;
+  try {
+    res = await doFetch(`${API_BASE}${path}`, init);
+  } catch {
+    throw new ApiError(0, "network error", 0);
+  }
+  try {
+    return { doc: await res.json(), status: res.status };
+  } catch {
+    // not JSON: lighttpd's 404 page, i.e. the v2 router is not answering
+    throw new ApiError(0, `unexpected response (HTTP ${res.status})`, res.status);
+  }
+}
+
+function headersFor(sid?: string, json = false): Record<string, string> {
+  const headers: Record<string, string> = { "X-Requested-With": "XMLHttpRequest" };
+  if (json) headers["Content-Type"] = "application/json";
+  if (sid) headers["X-Session-Id"] = sid;
+  return headers;
+}
+
+type ErrorDoc = { error?: { code?: number; message?: string } | null };
+function throwIfError(doc: unknown, status: number): void {
+  const err = (doc as ErrorDoc | null)?.error;
+  if (err) throw new ApiError(err.code ?? 0, err.message ?? "error", status);
+}
+
+export function makeRpc(doFetch: Fetch = defaultFetch): Rpc {
   return async function rpc<T>(method: string, params: Record<string, unknown> = {}, sid?: string): Promise<T> {
-    const headers: Record<string, string> = { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" };
-    if (sid) headers["X-Session-Id"] = sid;
-    let res: Response;
-    try {
-      res = await doFetch(`${API_BASE}/rpc`, { method: "POST", headers, body: JSON.stringify({ version: "1.1", method, params, id: 1 }) });
-    } catch {
-      throw new ApiError(0, "network error", 0);
-    }
-    let doc: { result?: T; error?: { code?: number; message?: string } | null } | null = null;
-    try {
-      doc = await res.json();
-    } catch {
-      // not JSON: lighttpd's 404 page, i.e. the v2 router is not answering
-      throw new ApiError(0, `unexpected response (HTTP ${res.status})`, res.status);
-    }
-    if (doc?.error) throw new ApiError(doc.error.code ?? 0, doc.error.message ?? "error", res.status);
-    return doc?.result as T;
+    const body = JSON.stringify({ version: "1.1", method, params, id: 1 });
+    const { doc, status } = await send(doFetch, "/rpc", { method: "POST", headers: headersFor(sid, true), body });
+    throwIfError(doc, status);
+    return (doc as { result?: T } | null)?.result as T;
   };
 }
+
+// ---- the bulk read model: GET /model (devices, channels, rooms, functions, sysvars, programs)
+
+export interface Section<T> {
+  total: number;
+  offset: number;
+  limit: number;
+  items: T[];
+}
+
+export interface Room {
+  id: string;
+  name: string;
+  description: string;
+  channelIds: string[];
+}
+
+export interface SysVar {
+  id: string;
+  name: string;
+  type: string; // LOGIC, NUMBER, ENUM, ALARM, STRING
+  unit: string;
+  value: string;
+  valueName0?: string;
+  valueName1?: string;
+  valueList?: string;
+  isVisible: boolean;
+  isInternal: boolean;
+}
+
+export interface Model {
+  rooms: Section<Room>;
+  sysvars: Section<SysVar>;
+}
+
+export type ModelSection = keyof Model;
+export type GetModel = <S extends ModelSection>(section: S, sid: string, limit?: number) => Promise<Model[S]>;
+
+export function makeGetModel(doFetch: Fetch = defaultFetch): GetModel {
+  return async function getModel<S extends ModelSection>(section: S, sid: string, limit = 500): Promise<Model[S]> {
+    const { doc, status } = await send(doFetch, `/model?sections=${section}&limit=${limit}`, { method: "GET", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const data = (doc as Partial<Model> | null)?.[section];
+    if (!data || !Array.isArray(data.items)) throw new ApiError(0, "unexpected model", status);
+    return data as Model[S];
+  };
+}
+
+const getModelDefault = makeGetModel();
+export const getModel: GetModel = (section, sid, limit) => getModelDefault(section, sid, limit);
 
 const rpc = makeRpc();
 
@@ -47,6 +116,8 @@ export const logout = (sid: string, call: Rpc = rpc) => call<boolean>("Session.l
 export const renew = (sid: string, call: Rpc = rpc) => call<unknown>("Session.renew", {}, sid);
 
 /** A message for the user; never shows internals. */
+export const isSessionExpired = (e: unknown): boolean => e instanceof ApiError && e.status === 401;
+
 export function describeError(e: unknown): string {
   if (!(e instanceof ApiError)) return "Something went wrong.";
   if (e.status === 429 || e.code === 429) return "Too many attempts. Wait a moment and try again.";
