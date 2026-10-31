@@ -79,5 +79,7 @@ switched. `isolated-ccu.sh up | check | install | restore FILE.sbk | down` (the 
   user names and passwords of the **real** CCU.
 - Never attach a radio module to it while the real CCU runs: both would claim the same devices.
 - `down` removes the containers, the network and the volume with the restored data.
+- `src/webui/tests/e2e/next_realdata.py` is the read-only pass for this instance (`--base http://127.0.0.1:18090`, your login):
+  it compares every finished page with the classic API, times it and takes screenshots.
 - Do not run the write tests of `src/webui/tests/e2e` against restored data (they create temporary objects and
   `next_log.py` clears the log); a read-only comparison with the classic UI is the test for real data.
