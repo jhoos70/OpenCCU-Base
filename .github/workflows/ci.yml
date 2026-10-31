@@ -19,6 +19,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  no-www-copy:
+    name: No committed www/ copy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Code
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Fail if www/ is tracked again
+        run: |
+          # The web root is built from src/webui; a second committed copy drifts.
+          tracked="$(git ls-files -- www)"
+          if [ -n "${tracked}" ]; then
+            echo "::error::www/ must not be tracked; edit src/webui/www or src/webui/rega/www instead."
+            printf '%s\n' "${tracked}" | head -20
+            exit 1
+          fi
+
   build:
     name: Build [${{ matrix.platform }}]
     runs-on: ubuntu-24.04
