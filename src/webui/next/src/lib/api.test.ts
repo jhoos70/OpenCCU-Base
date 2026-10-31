@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Translate } from "./i18n";
-import { ApiError, describeError, getHideSticky, isSessionExpired, login, makeGetMessages, makeGetModel, makeGetProfile, makeRpc } from "./api";
+import { ApiError, describeError, getHideSticky, isSessionExpired, login, makeGetMessages, makeGetModel, makeGetProfile, makeGetSystem, makeRpc } from "./api";
 
 const reply = (status: number, body: unknown) => async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
 
@@ -93,7 +93,11 @@ describe("getProfile", () => {
     const get = makeGetProfile(async (u) => ((url = String(u)), new Response(JSON.stringify(profile))));
     const p = await get("AbCdEf1234");
     expect(url).toBe("/api/homematic.cgi/v2/profile");
-    expect([p.userName, p.level, p.isNoExpert, p.language]).toEqual(["Admin", "ADMIN", true, "de"]);
+    expect([p.userName, p.level, p.isNoExpert, p.language, p.hasPassword]).toEqual(["Admin", "ADMIN", true, "de", true]);
+  });
+  it("takes only an explicit false as no password (a missing field raises no alarm)", async () => {
+    expect((await makeGetProfile(reply(200, { ...profile, hasPassword: false }))("x")).hasPassword).toBe(false);
+    expect((await makeGetProfile(reply(200, { ...profile, hasPassword: undefined }))("x")).hasPassword).toBe(true);
   });
   it("maps an unknown or missing level to NONE (no rights are assumed)", async () => {
     for (const level of [undefined, "ROOT", 8]) {
@@ -135,5 +139,20 @@ describe("getHideSticky", () => {
   it("passes an expired session and an unreachable CCU on", async () => {
     await expect(getHideSticky("x", answer(401, { error: { code: 400, message: "x" } }))).rejects.toMatchObject({ status: 401 });
     await expect(getHideSticky("x", makeRpc(async () => { throw new TypeError("x"); }))).rejects.toMatchObject({ code: 0 });
+  });
+});
+
+describe("getSystem", () => {
+  const body = { time: "2026-10-31 19:05:12", sunrise: "07:08", sunset: "16:32", firmwareVersion: "3.89.11.20261019" };
+  it("reads the system information with the session", async () => {
+    let url = "";
+    const get = makeGetSystem(async (u) => ((url = String(u)), new Response(JSON.stringify(body))));
+    expect(await get("AbCdEf1234")).toEqual(body);
+    expect(url).toBe("/api/homematic.cgi/v2/system");
+  });
+  it("fills what is missing with empty texts and rejects an answer without a time", async () => {
+    expect(await makeGetSystem(reply(200, { time: "" }))("x")).toEqual({ time: "", sunrise: "", sunset: "", firmwareVersion: "" });
+    await expect(makeGetSystem(reply(200, {}))("x")).rejects.toBeInstanceOf(ApiError);
+    expect(isSessionExpired(await makeGetSystem(reply(401, { error: { code: 400, message: "x" } }))("x").catch((e) => e))).toBe(true);
   });
 });

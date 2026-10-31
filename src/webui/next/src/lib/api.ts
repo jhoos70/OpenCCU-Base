@@ -115,6 +115,7 @@ export interface Profile {
   userId: string;
   userName: string;
   firstName: string;
+  hasPassword: boolean;
   isNoExpert: boolean;
   language: string;
   level: Level;
@@ -191,6 +192,26 @@ export async function getHideSticky(sid: string, call: Rpc = rpc): Promise<boole
 export const getDutyCycle = (sid: string, call: Rpc = rpc): Promise<unknown> => call<unknown>("Interface.getDutyCycle", {}, sid);
 export const isUnknownMethod = (e: unknown): boolean => e instanceof ApiError && e.code === 401;
 
+export interface SystemInfo {
+  /** The CCU's clock "2026-10-31 19:05:12" (its own time zone); "" if it cannot be read. */
+  time: string;
+  sunrise: string; // "07:08"
+  sunset: string;
+  firmwareVersion: string;
+}
+
+export function makeGetSystem(doFetch: Fetch = defaultFetch): (sid: string) => Promise<SystemInfo> {
+  return async function getSystem(sid: string): Promise<SystemInfo> {
+    const { doc, status } = await send(doFetch, "/system", { method: "GET", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const d = doc as Partial<SystemInfo> | null;
+    if (!d || typeof d.time !== "string") throw new ApiError(0, "unexpected system information", status);
+    return { time: d.time, sunrise: String(d.sunrise ?? ""), sunset: String(d.sunset ?? ""), firmwareVersion: String(d.firmwareVersion ?? "") };
+  };
+}
+const getSystemDefault = makeGetSystem();
+export const getSystem = (sid: string): Promise<SystemInfo> => getSystemDefault(sid);
+
 export type GetProfile = (sid: string) => Promise<Profile>;
 
 export function makeGetProfile(doFetch: Fetch = defaultFetch): GetProfile {
@@ -200,7 +221,7 @@ export function makeGetProfile(doFetch: Fetch = defaultFetch): GetProfile {
     const p = doc as Partial<Profile> | null;
     if (!p || typeof p.userName !== "string") throw new ApiError(0, "unexpected profile", status);
     const level: Level = p.level === "ADMIN" || p.level === "USER" || p.level === "GUEST" ? p.level : "NONE";
-    return { userId: String(p.userId ?? ""), userName: p.userName, firstName: String(p.firstName ?? ""), isNoExpert: p.isNoExpert === true, language: String(p.language ?? ""), level };
+    return { userId: String(p.userId ?? ""), userName: p.userName, firstName: String(p.firstName ?? ""), hasPassword: p.hasPassword !== false, isNoExpert: p.isNoExpert === true, language: String(p.language ?? ""), level };
   };
 }
 

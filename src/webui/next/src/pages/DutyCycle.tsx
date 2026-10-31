@@ -44,6 +44,7 @@ function Meter({ label, value, severity, barClass }: { label: string; value: num
   );
 }
 
+/** The load of the radio interfaces: a card of the overview. */
 export default function DutyCycle({ sid, onExpired }: { sid: string; onExpired: () => void }) {
   const { t } = useI18n();
   const load = React.useCallback(async () => parseDutyCycle(await getDutyCycle(sid)), [sid]);
@@ -52,7 +53,7 @@ export default function DutyCycle({ sid, onExpired }: { sid: string; onExpired: 
   return (
     <Card className="space-y-4">
       <div>
-        <CardTitle>{t("dutyCycle")}</CardTitle>
+        <CardTitle as="h2">{t("dutyCycle")}</CardTitle>
         <CardDescription>{t("dutyCycleHelp")}</CardDescription>
       </div>
       {!loaded && <p className="text-sm text-[var(--muted-foreground)]">{t("loading")}</p>}
@@ -73,9 +74,9 @@ export default function DutyCycle({ sid, onExpired }: { sid: string; onExpired: 
           <ul className="space-y-6">
             {data.map((i) => (
               <li key={i.address || i.name} className="space-y-3">
-                <h2 className="text-base font-semibold">
+                <h3 className="text-base font-semibold">
                   {interfaceLabel(i, t)} <span className="text-sm font-normal text-[var(--muted-foreground)]">{i.address}</span>
-                </h2>
+                </h3>
                 <Meter label={t("dutyCycle")} value={i.dutyCycle} severity={i.dutyCycle === null ? null : dutyCycleSeverity(i.dutyCycle)} />
                 {i.carrierSense !== null && (
                   <Meter label={t("carrierSense")} value={i.carrierSense} severity={carrierSenseSeverity(i.carrierSense)} barClass={carrierSenseSeverity(i.carrierSense) === "ok" ? "bg-sky-500" : undefined} />

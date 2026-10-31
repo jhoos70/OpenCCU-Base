@@ -58,7 +58,7 @@ def main():
 
     def check_fixture(pg, suffix=""):
         pg.get_by_role("heading", name="CCU").wait_for()
-        labels = [h.strip().split("\n")[0].strip() for h in pg.locator("main h2").all_inner_texts()]
+        labels = [h.strip().split("\n")[0].strip() for h in pg.locator("main h3").all_inner_texts()]
         check("each interface is named like the classic start page" + suffix, [l.split(" ")[0] + (" " + l.split(" ", 1)[1] if " " in l else "") for l in labels] != [] and labels[0].startswith("CCU") and "HAP (Garten)" in labels[1] and "LGW (JEQ0987654)" in labels[2] and "HAP (Broken)" in labels[3], str(labels))
         ccu, hap, lgw, broken = (block(pg, x) for x in ("CCU", "HAP (Garten)", "LGW (JEQ0987654)", "HAP (Broken)"))
         v, c = meter(ccu, "Duty cycle")
@@ -96,8 +96,8 @@ def main():
             pg.goto(a.base + "/webui/next/"); pg.wait_for_selector("#user")
             pg.fill("#user", a.user); pg.fill("#password", a.password); pg.keyboard.press("Enter")
             pg.wait_for_selector("aside nav a")
-            check("the navigation lists the page in the System group", "Duty cycle" in [t.strip() for t in pg.locator("aside nav li a").all_inner_texts()])
-            pg.get_by_role("link", name="Duty cycle").click(); pg.get_by_role("heading", name="Duty cycle", level=1).wait_for()
+            check("the duty cycle is a card of the overview, the landing page", pg.locator("aside nav a[aria-current=page]").inner_text() == "Overview")
+            pg.get_by_role("heading", name="Duty cycle", level=2).wait_for()
 
             if a.data == "empty":
                 pg.get_by_text("No radio interface reports a duty cycle.").wait_for()
@@ -109,7 +109,7 @@ def main():
                 # ---- live update
                 state["data"] = [{**FIXTURE[0], "dutyCycle": "92"}]
                 pg.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
-                pg.wait_for_function("document.querySelectorAll('main h2').length === 1")
+                pg.wait_for_function("document.querySelectorAll('main h3').length === 1")
                 v, c = meter(block(pg, "CCU"), "Duty cycle")
                 check("the page follows the data without a reload", v == "92" and "bg-red-500" in c, "%s %s" % (v, c))
                 state["data"] = []
@@ -125,9 +125,9 @@ def main():
                 # ---- German
                 state["mode"] = "data"; state["data"] = FIXTURE; pg.reload(); pg.get_by_role("heading", name="CCU").wait_for()
                 pg.get_by_role("button", name="Account menu").click(); pg.get_by_role("menuitemradio", name="Deutsch").click()
-                pg.get_by_role("heading", name="Duty Cycle", level=1).wait_for()
+                pg.get_by_role("heading", name="Duty Cycle", level=2).wait_for()
                 body = pg.inner_text("main")
-                check("the page is German", "Funkauslastung" not in body and "Warnung" in body and "Kritisch" in body and "n. v." in body and "Warnung ab 70 %, kritisch ab 90 %." in body, body.replace("\n", " ")[:120])
+                check("the page is German", "Warnung" in body and "Kritisch" in body and "n. v." in body and "Warnung ab 70 %, kritisch ab 90 %." in body, body.replace("\n", " ")[:120])
                 # ---- narrow screen
                 pg.set_viewport_size({"width": 375, "height": 740})
                 check("narrow: no sideways page scroll", not pg.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"))

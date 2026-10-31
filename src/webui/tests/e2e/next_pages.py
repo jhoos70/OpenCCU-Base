@@ -45,9 +45,13 @@ def main():
             signed_in = True
             sid = pg.evaluate("JSON.parse(sessionStorage.getItem('openccu.next.session')).sid")
 
-            # ---- devices (default page): this CCU has none, the empty state is the real answer
-            pg.get_by_text("No devices available.").wait_for()
-            check("devices is the default page", pg.locator("h1").inner_text() == "Devices")
+            # ---- the overview is the landing page (as the classic start page)
+            pg.get_by_role("heading", name="System", level=2).wait_for()
+            check("the overview is the default page", pg.locator("aside nav a[aria-current=page]").inner_text() == "Overview")
+
+            # ---- devices: this CCU has none, the empty state is the real answer
+            pg.get_by_role("link", name="Devices").click(); pg.get_by_text("No devices available.").wait_for()
+            check("devices says so when there are none", pg.locator("h1").inner_text() == "Devices")
 
             # ---- rooms
             pg.get_by_role("link", name="Rooms").click()

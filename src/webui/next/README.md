@@ -5,7 +5,8 @@ React 19, TypeScript, Vite and Tailwind, with shadcn/ui-style components (Radix 
 Decisions: `.migration/plan/decisions-ui.md` (D1 to D5).
 
 Status: login, an app shell (app bar, sidebar or drawer, user menu, alarm and service indicators) and read-only
-pages: Devices (filter, channels per device), Rooms, System variables, Duty cycle and the two message lists. It signs in with `Session.login` on the v2 API, keeps the session
+pages: Overview (the landing page), Devices (filter, channels per device), Rooms, System variables and the two
+message lists. It signs in with `Session.login` on the v2 API, keeps the session
 id in `sessionStorage`, and links to the classic UI with the same session, so both can be used at once. The pages
 read the v2 bulk model (`GET /model`); routes are hash based (`#/devices`, `#/rooms`, `#/sysvars`), so no server
 route is needed and a reload keeps the page. An expired session returns to the form.
@@ -28,18 +29,26 @@ sticky-unreach ones while the CCU hides them (`CCU.getStickyUnreachState`; a use
 "hide", as the classic UI does). Message texts that contain `${key}` references are resolved from the classic
 language files. Acknowledging a message is not built (the classic UI does it with `ReceiptAlarm`).
 
-## Duty cycle
+## Overview
 
-The page (`#/dutycycle`, System group) shows the load of each radio interface (CCU radio module, HmIP access points,
-LAN gateways): a bar for the duty cycle and, where the interface reports it, one for carrier sense, each with the value
-and a word (normal, warning, critical), so colour is not the only signal. The thresholds are those of the classic start
-page: duty cycle warning from 70 % and critical from 90 %, carrier sense from 11 % and 20 %. An interface is named as
-there: "CCU", "HAP (name)" or "LGW (name)", or by address if it has no name; -1 is shown as not available.
+The landing page, as the classic start page is: a **System** card (the time of the CCU, date, sunrise, sunset, the
+firmware version), the **duty cycle** card, and a **Favourites** card that points to the classic UI (favourites are
+not built). A hint appears if the account has no password. The system values come from the new `GET /api/v2/system`
+(any session; time, sunrise and sunset from one ReGa script, the version from `/VERSION`); a value that cannot be read
+is shown as a dash. The time is asked again every minute and runs with the browser's clock in between.
 
-The data is `Interface.getDutyCycle`, which reads `/tmp/dutycycle.json`, written by OpenCCU's `updateDCVars.tcl`. **Both
-the method and the classic display are an OpenCCU addition (rootfs patch 0057), not part of this repository's API**: on a
-system without the method the page says that the duty cycle is not available. It refreshes every minute (the file changes
-every few minutes). The classic header's hidden test panel (duty cycle, interfaces, restart ReGa, API tools) is not carried over.
+The **duty cycle** card shows the load of each radio interface (CCU radio module, HmIP access points, LAN gateways): a
+bar for the duty cycle and, where the interface reports it, one for carrier sense, each with the value and a word
+(normal, warning, critical), so colour is not the only signal. The thresholds are those of the classic start page: duty
+cycle warning from 70 % and critical from 90 %, carrier sense from 11 % and 20 %. An interface is named as there: "CCU",
+"HAP (name)" or "LGW (name)", or by address if it has no name; -1 is shown as not available.
+
+The duty cycle data is `Interface.getDutyCycle`, which reads `/tmp/dutycycle.json`, written by OpenCCU's
+`updateDCVars.tcl`. **Both the method and the classic display are an OpenCCU addition (rootfs patch 0057), not part of
+this repository's API**: on a system without the method the card says that the duty cycle is not available. It
+refreshes every minute. The classic header's hidden test panel (duty cycle, interfaces, restart ReGa, API tools) is not
+carried over. Not carried over from the classic start page either: the user's own start-page system variables, the
+rows about available firmware (they need an internet check) and the favourites themselves.
 
 The navigation is **object-centric**: one entry per object (devices, rooms, system variables, ...) where the classic
 menu has a status page under "Status and control" and an editor under "Settings". `src/lib/nav.ts` maps every
@@ -108,7 +117,10 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
 - `src/webui/tests/e2e/next_messages.py`: the indicators against the classic header (real), the alarm page against
   the indicator, and mocked service messages (the test CCU has none): sticky handling, German, live update, a failing
   update, an expired session, guest and user.
-- `src/webui/tests/e2e/next_dutycycle.py` (`--data mock|real|empty`): the page with mocked answers (severity colours and
+- `src/webui/tests/e2e/next_overview.py`: the real date, sunrise, sunset and firmware version against the classic start
+  page (the time within a minute), a ticking clock (the browser clock is controlled), an unreadable time, a failing
+  call (the other cards stay), the password hint, German and the narrow layout.
+- `src/webui/tests/e2e/next_dutycycle.py` (`--data mock|real|empty`): the card with mocked answers (severity colours and
   words, -1, carrier sense, live update, unknown method, failure, German, narrow, expired session), through the real API
   path with a hand-written `/tmp/dutycycle.json` in OpenCCU's format (`real`), and the real empty answer (`empty`). The
   test CCU has no radio hardware.

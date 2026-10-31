@@ -58,10 +58,10 @@ def main():
             pg.get_by_role("button", name="Benutzermenü").wait_for(); out_label = "Benutzermenü"
             pg.wait_for_selector("aside nav li a")  # the nav follows once the profile has loaded
             tabs = [t.strip() for t in pg.locator("aside nav li a").all_inner_texts()]
-            check("the navigation is German", tabs == ["Geräte", "Räume", "Systemvariablen", "Duty Cycle"], str(tabs))
+            check("the navigation is German", tabs == ["Übersicht", "Geräte", "Räume", "Systemvariablen"], str(tabs))
 
             # ---- the real, empty device list
-            pg.get_by_text("Keine Geräte verfügbar.").wait_for()
+            pg.get_by_role("link", name="Geräte").click(); pg.get_by_text("Keine Geräte verfügbar.").wait_for()
             check("an empty device list says so in German", True)
 
             # ---- sysvars: ${key} value names come from the classic language files

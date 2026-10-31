@@ -14,13 +14,13 @@ interface Base {
   group: Group;
   /** The lowest user level that sees the entry (the classic menu decides, see nav.test.ts). */
   minLevel: MinLevel;
-  /** The classic menu entries it replaces: "menu/submenu", or "menu" for a top-level action. Empty: new in this UI. */
+  /** The classic menu entries it replaces: "menu/submenu", or "menu" for a top-level action. Empty: new in this UI (none yet). */
   classic: readonly string[];
 }
 export type NavItem = (Base & { ready: true; labelKey: MessageKey }) | (Base & { ready: false });
 
 export const NAV: readonly NavItem[] = [
-  { id: "overview", group: "objects", minLevel: "USER", classic: ["menuStartPage"], ready: false },
+  { id: "overview", group: "objects", minLevel: "USER", classic: ["menuStartPage"], ready: true, labelKey: "overview" },
   { id: "devices", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuDevices", "menuSettingsPage/submenuDevices"], ready: true, labelKey: "devices" },
   { id: "rooms", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuRooms", "menuSettingsPage/submenuRooms"], ready: true, labelKey: "rooms" },
   { id: "functions", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFunction", "menuSettingsPage/submenuFunction"], ready: false },
@@ -36,8 +36,6 @@ export const NAV: readonly NavItem[] = [
   { id: "firmware", group: "system", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuDeviceFirmwareInformation"], ready: false },
   { id: "users", group: "system", minLevel: "USER", classic: ["menuSettingsPage/submenuUserManagement"], ready: false },
   { id: "control", group: "system", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuSysControl"], ready: false },
-  // not a classic menu entry: the classic UI shows the duty cycle on its start page (an OpenCCU addition, patch 0057)
-  { id: "dutycycle", group: "system", minLevel: "USER", classic: [], ready: true, labelKey: "dutyCycle" },
   // the classic Help page is the system information (version, uptime, addresses): an "About" of the user menu later
   { id: "about", group: "system", minLevel: "USER", classic: ["menuHelpPage"], ready: false },
 ];
