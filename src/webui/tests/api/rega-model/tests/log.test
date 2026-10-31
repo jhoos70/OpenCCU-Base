@@ -1,0 +1,129 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# GET and DELETE /api/v2/log: the system log (the history of the logged datapoints) and clearing it. The ReGa scripts
+# themselves are proven on a real ReGa (see the commit message); here: the JSON built from the records, the grouping,
+# the paging arithmetic, the validation, the access rules and the clearing.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+# the component code lives in ::mock::generated (the tests tree is not the code tree in the repository)
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list [status $r] $c $m] }
+  return [list [status $r] none]
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER  {{AbCdEf1234 2 1000 User}}
+set COUNT {*GetHistoryData(0, 1000000*}
+set RECS  {*logStart*}
+set CLEAR {*ClearHistoryData*}
+proc rec {group time name args} {
+  set d [dict create GROUP $group VALUE 1 TIME $time KIND SYSVAR NAME $name DP {} TYPE LOGIC UNIT {} LIST {} V0 off V1 on]
+  foreach {k v} $args { dict set d $k $v }
+  set s ""
+  dict for {k v} $d { append s $k " " [list $v] " " }
+  return [string trimright $s]
+}
+proc call {method query args} {
+  array set o [list -sessions $::USER -rega {}]
+  array set o $args
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method $method -contenttype {} -setenv {REQUEST_URI /api/v2/log} -query $query \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
+}
+proc get {query total records args} { return [call GET $query -rega [list [list $::COUNT $total] [list $::RECS $records]] {*}$args] }
+proc body {r} { return [string trim [dict get $r body]] }
+proc scripts {r} { return [join [dict get $r rega_calls] \n] }
+proc injected {r name} { if {[regexp "var $name = \"(\[0-9\]+)\";" [scripts $r] -> v]} { return $v }; return - }
+
+test log-0 {the handler file exists, is complete Tcl and is registered for GET and DELETE} -body {
+  set fd [open [file join $gen rega-model v2 log.tcl] r]; set c [read $fd]; close $fd
+  set fd [open [file join $gen dispatcher v2 router.tcl] r]; set r [read $fd]; close $fd
+  list [info complete $c] [regexp {/log\s+\{\{GET DELETE\}\s+log.tcl\s+v2_log_handle\}} $r]
+} -result {1 1}
+
+test log-1 {the records come newest first as items with the name, kind, datapoint and the value with how to write it} -body {
+  set recs [list [rec 1 {2026-10-31 21:30:34} Anwesenheit VALUE 0] \
+                 [rec 2 {2026-10-31 21:30:35} {Küche Heizung} KIND CHANNEL DP LEVEL TYPE NUMBER VALUE 0.5 UNIT %]]
+  set r [get "" 2 $recs]
+  list [status $r] [body $r]
+} -result [list 200 [encoding convertto utf-8 {{"total":2,"offset":0,"limit":200,"items":[{"time":"2026-10-31 21:30:35","name":"Küche Heizung","kind":"CHANNEL","datapoint":"LEVEL","values":[{"value":"0.5","type":"NUMBER","unit":"%","valueList":"","valueName0":"off","valueName1":"on"}]},{"time":"2026-10-31 21:30:34","name":"Anwesenheit","kind":"SYSVAR","datapoint":"","values":[{"value":"false","type":"LOGIC","unit":"","valueList":"","valueName0":"off","valueName1":"on"}]}]}}]]
+
+test log-2 {the archive holds 0 and 1 for a logic or alarm value: they are written true and false, other types stay as they are} -body {
+  set recs [list [rec 1 t1 a VALUE 1] [rec 2 t2 b VALUE 0 TYPE ALARM] [rec 3 t3 c VALUE true] [rec 4 t4 d TYPE LIST VALUE 2 LIST {a;b;c}] [rec 5 t5 e TYPE STRING VALUE 0] [rec 6 t6 f TYPE NUMBER VALUE 1]]
+  set r [get "" 6 $recs]
+  regexp -all -inline {"value":"([^"]*)"} [body $r]
+} -result {{"value":"1"} 1 {"value":"0"} 0 {"value":"2"} 2 {"value":"true"} true {"value":"false"} false {"value":"true"} true}
+
+test log-3 {records of one event (the same group number, one after the other) are one item, with the time and the name of the last record} -body {
+  set recs [list [rec 7 {2026-10-31 10:00:00} {Dimmer} KIND CHANNEL DP LEVEL TYPE NUMBER VALUE 1] [rec 7 {2026-10-31 10:00:01} {Dimmer} KIND CHANNEL DP STATE VALUE 1] [rec 8 {2026-10-31 10:05:00} Other]]
+  set r [get "" 3 $recs]
+  set j [body $r]
+  list [regexp -all {"time":} $j] [regexp {"time":"2026-10-31 10:00:01","name":"Dimmer","kind":"CHANNEL","datapoint":"LEVEL","values":\[\{[^\]]*\},\{[^\]]*\}\]} $j]
+} -result {2 1}
+
+test log-4 {limit and offset count records from the newest: the arithmetic of the page that is asked from ReGa} -body {
+  set out {}
+  foreach {q start count} {"" 0 100 limit=30 70 30 limit=30&offset=30 40 30 limit=30&offset=90 0 10 limit=30&offset=100 - -} {
+    set r [get $q 100 {}]
+    lappend out "[injected $r logStart]/[injected $r logCount]"
+  }
+  set out
+} -result {0/100 70/30 40/30 0/10 -/-}
+
+test log-5 {an offset beyond the log is an empty page and no records are asked for; an empty log likewise} -body {
+  set a [get "offset=500" 100 {}]
+  set b [get "" 0 {}]
+  list [body $a] [regexp {logStart} [scripts $a]] [body $b] [regexp {logStart} [scripts $b]]
+} -result [list {{"total":100,"offset":500,"limit":200,"items":[]}} 0 {{"total":0,"offset":0,"limit":200,"items":[]}} 0]
+
+test log-6 {limit is 1 to 1000 and offset a number, else HTTP 422 'invalid argument (<name>)' and no records are asked for} -body {
+  set out {}
+  foreach q {limit=0 limit=1001 limit=abc limit= offset=-1 offset=x} {
+    set r [get $q 10 {}]
+    lappend out [err $r] [regexp {logStart} [scripts $r]]
+  }
+  set out
+} -result [list {422 403 {invalid argument (limit)}} 0 {422 403 {invalid argument (limit)}} 0 {422 403 {invalid argument (limit)}} 0 {422 403 {invalid argument (limit)}} 0 {422 403 {invalid argument (offset)}} 0 {422 403 {invalid argument (offset)}} 0]
+
+test log-7 {a record of an object that is gone (no archived datapoint) simply does not appear; missing fields are empty} -body {
+  set r [get "" 2 [list {GROUP 1 TIME t1 NAME x} {GROUP 2 VALUE 1}]]
+  body $r
+} -result {{"total":2,"offset":0,"limit":200,"items":[{"time":"","name":"","kind":"","datapoint":"","values":[{"value":"1","type":"","unit":"","valueList":"","valueName0":"","valueName1":""}]},{"time":"t1","name":"x","kind":"","datapoint":"","values":[{"value":"","type":"","unit":"","valueList":"","valueName0":"","valueName1":""}]}]}}
+
+test log-8 {a guest reads and clears nothing (HTTP 403, no history script runs); without a session HTTP 401} -body {
+  set a [get "" 1 {} -sessions $::GUEST]
+  set b [call DELETE "" -sessions $::GUEST -rega [list [list $::CLEAR true]]]
+  set n [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/log} -header {X-Requested-With XMLHttpRequest} -sessions $::USER]]]
+  list [err $a] [regexp {GetHistoryData} [scripts $a]] [status $b] [regexp {ClearHistoryData} [scripts $b]] [status $n] [llength [dict get $n rega_calls]]
+} -result {{403 400 {access denied (\"USER\" needed, session level 1)}} 0 403 0 401 0}
+
+test log-9 {DELETE clears the log and says whether it is empty afterwards} -body {
+  set a [call DELETE "" -rega [list [list $::CLEAR true] [list $::COUNT 0]]]
+  set b [call DELETE "" -rega [list [list $::CLEAR true] [list $::COUNT 3]]]
+  list [status $a] [body $a] [regexp {ClearHistoryData} [scripts $a]] [body $b]
+} -result {200 {{"cleared":true,"total":0}} 1 {{"cleared":false,"total":3}}}
+
+test log-10 {only GET and DELETE are allowed (405 with Allow: GET, DELETE)} -body {
+  set out {}
+  foreach m {POST PUT} {
+    set r [call $m ""]
+    regexp {Allow: ([A-Z, ]+)} [dict get $r headers] -> allow
+    lappend out [status $r]/[string trim $allow]
+  }
+  set out
+} -result {{405/GET, DELETE} {405/GET, DELETE}}
+
+test log-11 {the record script is fixed text: start and count are script variables, only digits can reach them} -body {
+  set fd [open [file join $gen rega-model v2 log.tcl] r]; set c [read $fd]; close $fd
+  list [regexp {GetHistoryData\(logStart.ToInteger\(\), logCount.ToInteger\(\)} $c] [regexp {dom.GetHistoryData\(\$} $c]
+} -result {1 0}
+
+cleanupTests

@@ -12,6 +12,7 @@
 #   GET|PUT /api/v2/profile v2/profile.tcl   v2_profile_handle    (IC012, user-profile)
 #   GET  /api/v2/system     v2/system.tcl    v2_system_handle     (time, sunrise, sunset, firmware version)
 #   POST /api/v2/sysvars    v2/sysvars.tcl   v2_sysvars_handle    (changes a system variable)
+#   GET|DELETE /api/v2/log  v2/log.tcl       v2_log_handle        (reads and clears the system log)
 #
 # The request path is taken from REQUEST_URI (query removed), else SCRIPT_NAME + PATH_INFO.
 # The routes answer on /api/v2/... and also on /api/homematic.cgi/v2/...: the second form reaches
@@ -41,6 +42,7 @@ set V2_ROUTES {
   /profile   {{GET PUT} profile.tcl v2_profile_handle}
   /system    {GET  system.tcl    v2_system_handle}
   /sysvars   {POST sysvars.tcl   v2_sysvars_handle}
+  /log       {{GET DELETE} log.tcl v2_log_handle}
 }
 
 ##
