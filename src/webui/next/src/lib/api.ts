@@ -187,6 +187,10 @@ export async function getHideSticky(sid: string, call: Rpc = rpc): Promise<boole
   }
 }
 
+/** The raw answer of Interface.getDutyCycle (an OpenCCU method; code 401 "unknown method" where it does not exist). */
+export const getDutyCycle = (sid: string, call: Rpc = rpc): Promise<unknown> => call<unknown>("Interface.getDutyCycle", {}, sid);
+export const isUnknownMethod = (e: unknown): boolean => e instanceof ApiError && e.code === 401;
+
 export type GetProfile = (sid: string) => Promise<Profile>;
 
 export function makeGetProfile(doFetch: Fetch = defaultFetch): GetProfile {

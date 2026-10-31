@@ -49,8 +49,11 @@ describe("the nav against the classic menu", () => {
   it("maps each classic entry once", () => {
     expect(mapped.filter((e, i) => mapped.indexOf(e) !== i)).toEqual([]);
   });
+  it("has no classic equivalent only for the entries that are new in this UI", () => {
+    expect(NAV.filter((i) => i.classic.length === 0).map((i) => i.id)).toEqual(["dutycycle"]);
+  });
   it("gives every entry the level the classic menu gives it (USER if the user menu has it, else ADMIN)", () => {
-    for (const i of NAV) {
+    for (const i of NAV.filter((i) => i.classic.length > 0)) {
       const forUser = i.classic.some((e) => user.includes(e));
       expect([i.id, i.minLevel]).toEqual([i.id, forUser ? "USER" : "ADMIN"]);
     }
@@ -60,9 +63,9 @@ describe("the nav against the classic menu", () => {
 describe("navFor", () => {
   it("shows the built entries of the level, grouped, and points to the classic UI for the rest", () => {
     const a = navFor("ADMIN");
-    expect(a.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["devices", "rooms", "sysvars"]);
+    expect(a.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["devices", "rooms", "sysvars", "dutycycle"]);
     expect(a.hasMore).toBe(true);
-    expect(navFor("USER").groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["devices", "rooms", "sysvars"]);
+    expect(navFor("USER").groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["devices", "rooms", "sysvars", "dutycycle"]);
   });
   it("gives guests and unknown levels nothing, as the classic UI does", () => {
     for (const l of ["GUEST", "NONE"] as const) expect(navFor(l)).toEqual({ groups: [], hasMore: false });

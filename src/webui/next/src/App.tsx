@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Alarms from "@/pages/Alarms";
 import Devices from "@/pages/Devices";
+import DutyCycle from "@/pages/DutyCycle";
 import Rooms from "@/pages/Rooms";
 import Services from "@/pages/Services";
 import SysVars from "@/pages/SysVars";
@@ -68,7 +69,7 @@ function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
   );
 }
 
-const PAGES: Record<string, React.ComponentType<{ sid: string; onExpired: () => void }>> = { devices: Devices, rooms: Rooms, sysvars: SysVars, alarms: () => <Alarms />, services: () => <Services /> };
+const PAGES: Record<string, React.ComponentType<{ sid: string; onExpired: () => void }>> = { devices: Devices, rooms: Rooms, sysvars: SysVars, dutycycle: DutyCycle, alarms: () => <Alarms />, services: () => <Services /> };
 
 function Shell({ session, onLogout }: { session: Stored; onLogout: () => void }) {
   const { t } = useI18n();

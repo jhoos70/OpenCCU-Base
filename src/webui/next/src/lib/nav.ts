@@ -14,7 +14,7 @@ interface Base {
   group: Group;
   /** The lowest user level that sees the entry (the classic menu decides, see nav.test.ts). */
   minLevel: MinLevel;
-  /** The classic menu entries it replaces: "menu/submenu", or "menu" for a top-level action. */
+  /** The classic menu entries it replaces: "menu/submenu", or "menu" for a top-level action. Empty: new in this UI. */
   classic: readonly string[];
 }
 export type NavItem = (Base & { ready: true; labelKey: MessageKey }) | (Base & { ready: false });
@@ -36,6 +36,8 @@ export const NAV: readonly NavItem[] = [
   { id: "firmware", group: "system", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuDeviceFirmwareInformation"], ready: false },
   { id: "users", group: "system", minLevel: "USER", classic: ["menuSettingsPage/submenuUserManagement"], ready: false },
   { id: "control", group: "system", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuSysControl"], ready: false },
+  // not a classic menu entry: the classic UI shows the duty cycle on its start page (an OpenCCU addition, patch 0057)
+  { id: "dutycycle", group: "system", minLevel: "USER", classic: [], ready: true, labelKey: "dutyCycle" },
   // the classic Help page is the system information (version, uptime, addresses): an "About" of the user menu later
   { id: "about", group: "system", minLevel: "USER", classic: ["menuHelpPage"], ready: false },
 ];
