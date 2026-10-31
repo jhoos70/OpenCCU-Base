@@ -2,7 +2,8 @@ import * as React from "react";
 import { describeError, login, logout, renew } from "@/lib/api";
 import { clearSession, loadSession, saveSession, type Stored } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
-import { navFor } from "@/lib/nav";
+import { INDICATOR_ROUTES, navFor, showsIndicators } from "@/lib/nav";
+import { MessagesProvider } from "@/lib/use-messages";
 import { useProfile } from "@/lib/use-profile";
 import { useRoute } from "@/lib/use-route";
 import { AppBar } from "@/components/AppBar";
@@ -12,8 +13,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import Alarms from "@/pages/Alarms";
 import Devices from "@/pages/Devices";
 import Rooms from "@/pages/Rooms";
+import Services from "@/pages/Services";
 import SysVars from "@/pages/SysVars";
 
 function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
@@ -65,7 +68,7 @@ function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
   );
 }
 
-const PAGES: Record<string, React.ComponentType<{ sid: string; onExpired: () => void }>> = { devices: Devices, rooms: Rooms, sysvars: SysVars };
+const PAGES: Record<string, React.ComponentType<{ sid: string; onExpired: () => void }>> = { devices: Devices, rooms: Rooms, sysvars: SysVars, alarms: () => <Alarms />, services: () => <Services /> };
 
 function Shell({ session, onLogout }: { session: Stored; onLogout: () => void }) {
   const { t } = useI18n();
@@ -73,7 +76,8 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
   const profile = state.status === "ready" ? state.profile : null;
   // No profile (yet), no level, no menu: rights are never assumed.
   const nav = React.useMemo(() => navFor(profile?.level ?? "NONE"), [profile?.level]);
-  const route = useRoute(nav.groups.flatMap((g) => g.items.map((i) => i.id)));
+  const indicators = profile !== null && showsIndicators(profile.level);
+  const route = useRoute([...nav.groups.flatMap((g) => g.items.map((i) => i.id)), ...(indicators ? INDICATOR_ROUTES : [])]);
   const [busy, setBusy] = React.useState(false);
   // The classic UI takes the same session id, so both UIs run side by side.
   const classicHref = `/pages/index.htm?sid=@${session.sid}@`;
@@ -90,25 +94,27 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
 
   const Page = PAGES[route];
   return (
-    <div className="min-h-screen">
-      <AppBar profile={profile} nav={nav} current={route} classicHref={classicHref} onSignOut={signOut} busy={busy} />
-      <div className="mx-auto flex max-w-6xl gap-6 p-4">
-        {nav.groups.length > 0 && (
-          <aside className="hidden w-56 shrink-0 md:block">
-            <NavList nav={nav} current={route} classicHref={classicHref} />
-          </aside>
-        )}
-        <main className="min-w-0 flex-1">
-          {state.status === "loading" && <p className="text-sm text-[var(--muted-foreground)]">{t("loading")}</p>}
-          {state.status === "error" && (
-            <p role="alert" className="text-sm text-[var(--destructive)]">
-              {state.message}
-            </p>
+    <MessagesProvider sid={session.sid} enabled={indicators} onExpired={onLogout}>
+      <div className="min-h-screen">
+        <AppBar profile={profile} nav={nav} current={route} classicHref={classicHref} onSignOut={signOut} busy={busy} />
+        <div className="mx-auto flex max-w-6xl gap-6 p-4">
+          {nav.groups.length > 0 && (
+            <aside className="hidden w-56 shrink-0 md:block">
+              <NavList nav={nav} current={route} classicHref={classicHref} />
+            </aside>
           )}
-          {state.status === "ready" && (Page ? <Page sid={session.sid} onExpired={onLogout} /> : <p className="text-sm text-[var(--muted-foreground)]">{t("noAccess")}</p>)}
-        </main>
+          <main className="min-w-0 flex-1">
+            {state.status === "loading" && <p className="text-sm text-[var(--muted-foreground)]">{t("loading")}</p>}
+            {state.status === "error" && (
+              <p role="alert" className="text-sm text-[var(--destructive)]">
+                {state.message}
+              </p>
+            )}
+            {state.status === "ready" && (Page ? <Page sid={session.sid} onExpired={onLogout} /> : <p className="text-sm text-[var(--muted-foreground)]">{t("noAccess")}</p>)}
+          </main>
+        </div>
       </div>
-    </div>
+    </MessagesProvider>
   );
 }
 

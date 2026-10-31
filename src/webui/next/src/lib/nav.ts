@@ -68,3 +68,9 @@ export function navFor(level: Level): NavView {
 }
 
 export const READY_IDS: readonly string[] = NAV.filter((i) => i.ready).map((i) => i.id);
+
+/** The pages the header indicators open. They are not in the navigation: the classic UI reaches them only from its header. */
+export const INDICATOR_ROUTES: readonly string[] = ["alarms", "services"];
+
+/** The classic header shows the alarm and service counters to everyone but guests. */
+export const showsIndicators = (level: Level): boolean => level === "USER" || level === "ADMIN";

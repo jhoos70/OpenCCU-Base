@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CLASSIC_LANDING_PAGES, NAV, canSee, navFor } from "./nav";
+import { CLASSIC_LANDING_PAGES, INDICATOR_ROUTES, NAV, canSee, navFor, showsIndicators } from "./nav";
 
 // The real menu definitions of the classic UI.
 const dir = new URL("../../../www/webui/js/mainmenu/", import.meta.url);
@@ -71,5 +71,15 @@ describe("navFor", () => {
     expect(canSee({ minLevel: "ADMIN" }, "USER")).toBe(false);
     expect(canSee({ minLevel: "ADMIN" }, "ADMIN")).toBe(true);
     expect(canSee({ minLevel: "USER" }, "USER")).toBe(true);
+  });
+});
+
+describe("the header indicators", () => {
+  it("are shown to users and admins, not to guests or unknown levels, as in the classic header", () => {
+    expect(["ADMIN", "USER", "GUEST", "NONE"].map((l) => showsIndicators(l as "ADMIN"))).toEqual([true, true, false, false]);
+  });
+  it("open pages that are not navigation entries", () => {
+    expect(INDICATOR_ROUTES).toEqual(["alarms", "services"]);
+    expect(NAV.map((i) => i.id).filter((id) => INDICATOR_ROUTES.includes(id))).toEqual([]);
   });
 });

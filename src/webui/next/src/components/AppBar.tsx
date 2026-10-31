@@ -3,6 +3,7 @@ import { useI18n } from "@/lib/i18n";
 import type { NavView } from "@/lib/nav";
 import type { Profile } from "@/lib/api";
 import { NavList } from "@/components/NavList";
+import { StatusIndicators } from "@/components/StatusIndicators";
 import { UserMenu } from "@/components/UserMenu";
 import { Sheet, SheetClose, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
@@ -33,7 +34,8 @@ export function AppBar({ profile, nav, current, classicHref, onSignOut, busy }: 
         <a href="#/" className="text-lg font-semibold">
           {t("appName")}
         </a>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <StatusIndicators />
           <UserMenu profile={profile} classicHref={classicHref} onSignOut={onSignOut} busy={busy} />
         </div>
       </div>

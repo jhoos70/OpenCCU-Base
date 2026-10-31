@@ -12,6 +12,9 @@ const named = (name: string | undefined, fallback: string, strings: Strings): st
   return isKey(name) ? (resolveKey(name, strings) ?? fallback) : name;
 };
 
+/** A text with ${key} references anywhere in it ("${unknownMessage} (HM-X|UNREACH)"): known keys are replaced, unknown ones stay. */
+export const expand = (s: string, strings: Strings): string => s.replace(/\$\{(\w+)\}/g, (m, key: string) => strings[key] ?? m);
+
 /** A name or description that may itself be a ${key}. */
 export const text = (s: string, strings: Strings): string => (isKey(s) ? (resolveKey(s, strings) ?? s) : s);
 

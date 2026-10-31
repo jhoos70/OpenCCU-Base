@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Translate } from "./i18n";
-import { ApiError, describeError, isSessionExpired, login, makeGetModel, makeGetProfile, makeRpc } from "./api";
+import { ApiError, describeError, getHideSticky, isSessionExpired, login, makeGetMessages, makeGetModel, makeGetProfile, makeRpc } from "./api";
 
 const reply = (status: number, body: unknown) => async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
 
@@ -104,5 +104,36 @@ describe("getProfile", () => {
   it("recognises an expired session and a broken answer", async () => {
     expect(isSessionExpired(await makeGetProfile(reply(401, { error: { code: 400, message: "x" } }))("x").catch((e) => e))).toBe(true);
     await expect(makeGetProfile(reply(200, {}))("x")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("getMessages", () => {
+  const body = { alarms: { total: 1, offset: 0, limit: 500, items: [{ id: "1", name: "A", occurredAt: "2026-10-31 19:35:05" }] }, services: { total: 0, offset: 0, limit: 500, items: [] } };
+
+  it("reads both sections in one request", async () => {
+    let url = "";
+    const get = makeGetMessages(async (u) => ((url = String(u)), new Response(JSON.stringify(body))));
+    const m = await get("AbCdEf1234");
+    expect(url).toBe("/api/homematic.cgi/v2/model?sections=alarms,services&limit=500");
+    expect([m.alarms.length, m.services.length]).toEqual([1, 0]);
+  });
+  it("rejects an answer without both sections and recognises an expired session", async () => {
+    await expect(makeGetMessages(reply(200, { alarms: body.alarms }))("x")).rejects.toBeInstanceOf(ApiError);
+    expect(isSessionExpired(await makeGetMessages(reply(401, { error: { code: 400, message: "x" } }))("x").catch((e) => e))).toBe(true);
+  });
+});
+
+describe("getHideSticky", () => {
+  const answer = (status: number, doc: unknown) => makeRpc(reply(status, doc));
+  it("is true when the CCU hides sticky messages (a number other than 0)", async () => {
+    expect(await getHideSticky("x", answer(200, { result: 1, error: null }))).toBe(true);
+    expect(await getHideSticky("x", answer(200, { result: 0, error: null }))).toBe(false);
+  });
+  it("treats a refused answer (not an admin) as hidden, like the classic UI", async () => {
+    expect(await getHideSticky("x", answer(403, { error: { code: 400, message: "access denied" } }))).toBe(true);
+  });
+  it("passes an expired session and an unreachable CCU on", async () => {
+    await expect(getHideSticky("x", answer(401, { error: { code: 400, message: "x" } }))).rejects.toMatchObject({ status: 401 });
+    await expect(getHideSticky("x", makeRpc(async () => { throw new TypeError("x"); }))).rejects.toMatchObject({ code: 0 });
   });
 });

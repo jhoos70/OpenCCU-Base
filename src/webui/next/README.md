@@ -15,8 +15,18 @@ route is needed and a reload keeps the page. An expired session returns to the f
 The classic header mixes identity, a breadcrumb, alarm and service counters, logout, a save button and a two-level
 menu. Here each has its own place: the slim app bar holds the name and the **user menu** (name, level, simple or
 expert mode as information, language, the classic UI, sign out); the **navigation** is a sidebar on wide screens and
-a drawer on narrow ones; a page has a title instead of a breadcrumb. Status indicators (alarm and service
-messages) will join the app bar. There is no global "Save changes" button: dialogs that save have their own buttons.
+a drawer on narrow ones; a page has a title instead of a breadcrumb. There is no global "Save changes" button: dialogs that save have their own buttons.
+
+## Alarm and service messages
+
+The app bar shows the two counters of the classic header, each a link to its list (`#/alarms`, `#/services`): a
+green dot at 0, red (alarms) or amber (service messages) above 0, shown to users and admins, not to guests. The
+data is the `alarms` and `services` sections of `GET /model` (one request, every 10 seconds, paused while the tab
+is hidden, last known numbers kept if an update fails; the classic UI asks every 3 seconds). The alarm count is
+the alarm system variables that are oncoming and true; the service count is the open service messages, minus the
+sticky-unreach ones while the CCU hides them (`CCU.getStickyUnreachState`; a user who may not ask is treated as
+"hide", as the classic UI does). Message texts that contain `${key}` references are resolved from the classic
+language files. Acknowledging a message is not built (the classic UI does it with `ReceiptAlarm`).
 
 The navigation is **object-centric**: one entry per object (devices, rooms, system variables, ...) where the classic
 menu has a status page under "Status and control" and an editor under "Settings". `src/lib/nav.ts` maps every
@@ -82,6 +92,9 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
   umlauts, internal variables hidden, an expired session returns to the form.
 - `src/webui/tests/e2e/next_shell.py`: sidebar, user menu, drawer on a narrow screen, user levels (mocked `/profile`:
   user, guest, unknown level, failing and expired), at most two logins.
+- `src/webui/tests/e2e/next_messages.py`: the indicators against the classic header (real), the alarm page against
+  the indicator, and mocked service messages (the test CCU has none): sticky handling, German, live update, a failing
+  update, an expired session, guest and user.
 - `src/webui/tests/e2e/next_i18n_devices.py`: German by browser language, the language switch, `${key}` value names
   resolved from the classic strings, and the Devices page. The test CCU has no devices, so the real answer is the
   empty state; the rest uses a mocked model answer with realistic devices (shape of `v2/model.tcl`).
@@ -93,7 +106,7 @@ in more often gets "Too many attempts". The classic API (v1) is not limited unle
 
 ## Not yet
 
-alarm and service indicators, pages beyond devices, rooms and system variables (programs, the device inbox), editing, push events,
+acknowledging messages, pages beyond devices, rooms and system variables (programs, the device inbox), editing, push events,
 device pages checked against real hardware (there is none in the test CCU), and the clean
 `/next/` and `/api/v2` URLs (they need a change in the OpenCCU packaging repository, "Route A").
 

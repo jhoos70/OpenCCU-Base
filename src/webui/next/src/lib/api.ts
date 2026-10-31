@@ -120,7 +120,23 @@ export interface Profile {
   level: Level;
 }
 
+export interface AlarmMsg {
+  id: string;
+  name: string;
+  occurredAt: string; // "2026-10-31 19:35:05", CCU local time
+}
+
+export interface ServiceMsg {
+  id: string;
+  occurredAt: string;
+  channelName: string;
+  message: string; // string table text, may contain ${key} references (see ccu-strings.ts)
+  isSticky: boolean; // a sticky-unreach message: the classic header may leave it out of the count
+}
+
 export interface Model {
+  alarms: Section<AlarmMsg>;
+  services: Section<ServiceMsg>;
   devices: Section<Device>;
   rooms: Section<Room>;
   sysvars: Section<SysVar>;
@@ -139,6 +155,38 @@ export function makeGetModel(doFetch: Fetch = defaultFetch): GetModel {
   };
 }
 
+export interface MessageSnapshot {
+  alarms: AlarmMsg[];
+  services: ServiceMsg[];
+}
+
+/** The alarm and service messages (the classic header's two counters) in one request. */
+export function makeGetMessages(doFetch: Fetch = defaultFetch): (sid: string) => Promise<MessageSnapshot> {
+  return async function getMessages(sid: string): Promise<MessageSnapshot> {
+    const { doc, status } = await send(doFetch, "/model?sections=alarms,services&limit=500", { method: "GET", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const m = doc as Partial<Model> | null;
+    if (!m || !Array.isArray(m.alarms?.items) || !Array.isArray(m.services?.items)) throw new ApiError(0, "unexpected messages", status);
+    return { alarms: m.alarms.items, services: m.services.items };
+  };
+}
+
+/**
+ * Does the CCU hide sticky-unreach messages from the count (CCU.getStickyUnreachState, admin only)? The classic
+ * UI asks every user and treats a refused answer as "hide"; this does the same.
+ */
+export async function getHideSticky(sid: string, call: Rpc = rpc): Promise<boolean> {
+  try {
+    return Number(await call<unknown>("CCU.getStickyUnreachState", {}, sid)) !== 0;
+  } catch (e) {
+    if (e instanceof ApiError && e.status !== 0) {
+      if (isSessionExpired(e)) throw e;
+      return true;
+    }
+    throw e;
+  }
+}
+
 export type GetProfile = (sid: string) => Promise<Profile>;
 
 export function makeGetProfile(doFetch: Fetch = defaultFetch): GetProfile {
@@ -151,6 +199,9 @@ export function makeGetProfile(doFetch: Fetch = defaultFetch): GetProfile {
     return { userId: String(p.userId ?? ""), userName: p.userName, firstName: String(p.firstName ?? ""), isNoExpert: p.isNoExpert === true, language: String(p.language ?? ""), level };
   };
 }
+
+const getMessagesDefault = makeGetMessages();
+export const getMessages = (sid: string): Promise<MessageSnapshot> => getMessagesDefault(sid);
 
 const getProfileDefault = makeGetProfile();
 export const getProfile: GetProfile = (sid) => getProfileDefault(sid);

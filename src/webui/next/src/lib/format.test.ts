@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SysVar } from "./api";
 import { translate } from "./i18n";
-import { formatSysVarValue as fmt, isUserVar, text } from "./format";
+import { expand, formatSysVarValue as fmt, isUserVar, text } from "./format";
 import type { Strings } from "./ccu-strings";
 
 const v = (o: Partial<SysVar>): SysVar => ({ id: "1", name: "x", type: "STRING", unit: "", value: "", isVisible: true, isInternal: false, ...o });
@@ -42,5 +42,14 @@ describe("isUserVar", () => {
     expect(isUserVar(v({}))).toBe(true);
     expect(isUserVar(v({ isInternal: true }))).toBe(false);
     expect(isUserVar(v({ isVisible: false }))).toBe(false);
+  });
+});
+
+describe("expand", () => {
+  it("replaces ${key} references inside a longer text and leaves unknown ones", () => {
+    const strings = { unknownMessage: "Unbekannte Meldung" };
+    expect(expand("${unknownMessage} (HM-X|UNREACH=TRUE)", strings)).toBe("Unbekannte Meldung (HM-X|UNREACH=TRUE)");
+    expect(expand("${a} and ${unknownMessage}", strings)).toBe("${a} and Unbekannte Meldung");
+    expect(expand("plain text", strings)).toBe("plain text");
   });
 });
