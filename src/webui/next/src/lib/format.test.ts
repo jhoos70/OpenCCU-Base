@@ -4,7 +4,7 @@ import { translate } from "./i18n";
 import { expand, formatSysVarValue as fmt, isUserVar, text } from "./format";
 import type { Strings } from "./ccu-strings";
 
-const v = (o: Partial<SysVar>): SysVar => ({ id: "1", name: "x", type: "STRING", unit: "", value: "", isVisible: true, isInternal: false, ...o });
+const v = (o: Partial<SysVar>): SysVar => ({ id: "1", name: "x", type: "STRING", unit: "", value: "", description: "", lastModified: "", isVisible: true, isInternal: false, ...o });
 
 const formatSysVarValue = (x: SysVar, strings: Strings = {}, lang: "en" | "de" = "en") => fmt(x, (k, p) => translate(lang, k, p), strings);
 
@@ -28,12 +28,14 @@ describe("formatSysVarValue", () => {
     expect(text("plain", {})).toBe("plain");
   });
   it("picks the entry of an enum list and falls back to the raw value", () => {
-    expect(formatSysVarValue(v({ type: "ENUM", value: "1", valueList: "off;on;auto" }))).toBe("on");
-    expect(formatSysVarValue(v({ type: "ENUM", value: "7", valueList: "off;on" }))).toBe("7");
+    expect(formatSysVarValue(v({ type: "LIST", value: "1", valueList: "off;on;auto" }))).toBe("on");
+    expect(formatSysVarValue(v({ type: "LIST", value: "7", valueList: "off;on" }))).toBe("7");
   });
-  it("appends the unit of a number", () => {
-    expect(formatSysVarValue(v({ type: "NUMBER", value: "21.5", unit: "°C" }))).toBe("21.5 °C");
-    expect(formatSysVarValue(v({ type: "NUMBER", value: "3" }))).toBe("3");
+  it("writes a number with two decimals and its unit, as the classic list does, in the user's notation", () => {
+    expect(formatSysVarValue(v({ type: "NUMBER", value: "21.5", unit: "°C" }))).toBe("21.50 °C");
+    expect(formatSysVarValue(v({ type: "NUMBER", value: "-1.000000", unit: "%" }))).toBe("-1.00 %");
+    expect(fmt(v({ type: "NUMBER", value: "1234.5" }), (k, p) => translate("de", k, p), {}, "de")).toBe("1.234,50");
+    expect(formatSysVarValue(v({ type: "NUMBER", value: "n/a" }))).toBe("n/a");
   });
 });
 

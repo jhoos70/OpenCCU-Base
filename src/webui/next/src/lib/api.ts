@@ -85,6 +85,10 @@ export interface SysVar {
   valueName0?: string;
   valueName1?: string;
   valueList?: string;
+  minValue?: string;
+  maxValue?: string;
+  description: string;
+  lastModified: string; // "2026-10-31 19:34:03" (CCU time); the epoch "1970-01-01 01:00:00" if never set
   isVisible: boolean;
   isInternal: boolean;
 }
@@ -192,6 +196,27 @@ export async function getHideSticky(sid: string, call: Rpc = rpc): Promise<boole
 export const getDutyCycle = (sid: string, call: Rpc = rpc): Promise<unknown> => call<unknown>("Interface.getDutyCycle", {}, sid);
 export const isUnknownMethod = (e: unknown): boolean => e instanceof ApiError && e.code === 401;
 
+/** A value for POST /sysvars: a boolean for a logic variable, else the text (a number is sent as typed, not as a float). */
+export type SysVarValue = string | boolean;
+
+export interface SysVarChange {
+  id: string;
+  value: string;
+  lastModified: string;
+}
+
+export function makeSetSysVar(doFetch: Fetch = defaultFetch): (sid: string, id: string, value: SysVarValue) => Promise<SysVarChange> {
+  return async function setSysVar(sid: string, id: string, value: SysVarValue): Promise<SysVarChange> {
+    const { doc, status } = await send(doFetch, "/sysvars", { method: "POST", headers: headersFor(sid, true), body: JSON.stringify({ id, value }) });
+    throwIfError(doc, status);
+    const d = doc as Partial<SysVarChange> | null;
+    if (!d || typeof d.value !== "string") throw new ApiError(0, "unexpected answer", status);
+    return { id: String(d.id ?? id), value: d.value, lastModified: String(d.lastModified ?? "") };
+  };
+}
+const setSysVarDefault = makeSetSysVar();
+export const setSysVar = (sid: string, id: string, value: SysVarValue): Promise<SysVarChange> => setSysVarDefault(sid, id, value);
+
 export interface SystemInfo {
   /** The CCU's clock "2026-10-31 19:05:12" (its own time zone); "" if it cannot be read. */
   time: string;
@@ -239,6 +264,14 @@ const rpc = makeRpc();
 export const login = (username: string, password: string, call: Rpc = rpc) => call<string>("Session.login", { username, password });
 export const logout = (sid: string, call: Rpc = rpc) => call<boolean>("Session.logout", {}, sid);
 export const renew = (sid: string, call: Rpc = rpc) => call<unknown>("Session.renew", {}, sid);
+
+/** What went wrong with a change, for the user: the server's refusals have their own words, the rest is the common ones. */
+export function describeChangeError(e: unknown, t: Translate): string {
+  if (e instanceof ApiError && e.status === 422) return t("errInvalidValue");
+  if (e instanceof ApiError && e.status === 403) return t("errNotAllowed");
+  if (e instanceof ApiError && e.status === 404) return t("errGone");
+  return describeError(e, t);
+}
 
 export const isSessionExpired = (e: unknown): boolean => e instanceof ApiError && e.status === 401;
 

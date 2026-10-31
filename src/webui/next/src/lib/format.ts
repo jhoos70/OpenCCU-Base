@@ -18,18 +18,24 @@ export const expand = (s: string, strings: Strings): string => s.replace(/\$\{(\
 /** A name or description that may itself be a ${key}. */
 export const text = (s: string, strings: Strings): string => (isKey(s) ? (resolveKey(s, strings) ?? s) : s);
 
-export function formatSysVarValue(v: SysVar, t: Translate, strings: Strings = {}): string {
+/** A number as the classic list shows it: two decimals ("-1.00 %"), in the user's notation. */
+const decimal = (value: string, lang: string): string => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString(lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : value;
+};
+
+export function formatSysVarValue(v: SysVar, t: Translate, strings: Strings = {}, lang = "en"): string {
   switch (v.type) {
     case "LOGIC":
       return v.value === "true" ? named(v.valueName1, t("yes"), strings) : named(v.valueName0, t("no"), strings);
     case "ALARM":
       return v.value === "true" ? named(v.valueName1, t("triggered"), strings) : named(v.valueName0, t("notTriggered"), strings);
-    case "ENUM": {
+    case "LIST": {
       const list = (v.valueList ?? "").split(";");
       return list[Number(v.value)] ?? v.value;
     }
     case "NUMBER":
-      return v.unit ? `${v.value} ${v.unit}` : v.value;
+      return v.unit ? `${decimal(v.value, lang)} ${v.unit}` : decimal(v.value, lang);
     default:
       return v.value;
   }

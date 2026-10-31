@@ -5,8 +5,8 @@ React 19, TypeScript, Vite and Tailwind, with shadcn/ui-style components (Radix 
 Decisions: `.migration/plan/decisions-ui.md` (D1 to D5).
 
 Status: login, an app shell (app bar, sidebar or drawer, user menu, alarm and service indicators) and read-only
-pages: Overview (the landing page), Devices (filter, channels per device), Rooms, System variables and the two
-message lists. It signs in with `Session.login` on the v2 API, keeps the session
+pages: Overview (the landing page), Devices (filter, channels per device), Rooms, System variables (status **and
+control**) and the two message lists. It signs in with `Session.login` on the v2 API, keeps the session
 id in `sessionStorage`, and links to the classic UI with the same session, so both can be used at once. The pages
 read the v2 bulk model (`GET /model`); routes are hash based (`#/devices`, `#/rooms`, `#/sysvars`), so no server
 route is needed and a reload keeps the page. An expired session returns to the form.
@@ -28,6 +28,23 @@ the alarm system variables that are oncoming and true; the service count is the 
 sticky-unreach ones while the CCU hides them (`CCU.getStickyUnreachState`; a user who may not ask is treated as
 "hide", as the classic UI does). Message texts that contain `${key}` references are resolved from the classic
 language files. Acknowledging a message is not built (the classic UI does it with `ReceiptAlarm`).
+
+## System variables: status and control
+
+The first page that **writes**. The list is the classic one: name, description, last modified and status, with a name
+filter, refreshed every 10 seconds. A user or administrator gets a **Change** button next to every logic, list, number
+or string variable; it opens a dialog like the classic "Change system variable value": a choice between the value names
+for a logic variable, the entries for a list, a number field with the variable's limits and unit, a text field (at most
+1000 characters) for a string. OK stays disabled until the value is valid and different; a refusal of the server is shown
+in the dialog, which stays open; Escape and Cancel send nothing; the focus goes back to the Change button. Alarm
+variables, the system's own (internal) variables and hidden ones cannot be changed. A guest only looks.
+
+It calls the new `POST /api/v2/sysvars {id, value}` (a boolean for a logic variable, else the text as typed, so a number is
+not rounded by a float round trip). The server decides: it looks the id up among the system variables only, validates by
+type and limits, needs the variable's full access right for a non-admin, and logs each change. The server's answer (value
+and time as ReGa has them) updates the row at once. The classic UI changes a variable with a ReGa page script
+(`saveSysVar`) and has no JSON method for a string or a list value (`SysVar.setEnum` redefines the value list), which is
+why the route exists. Checked on the test CCU against the v1 API and the classic list.
 
 ## Overview
 
@@ -117,6 +134,10 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
 - `src/webui/tests/e2e/next_messages.py`: the indicators against the classic header (real), the alarm page against
   the indicator, and mocked service messages (the test CCU has none): sticky handling, German, live update, a failing
   update, an expired session, guest and user.
+- `src/webui/tests/e2e/next_sysvars.py`: **real changes on the test CCU, run it on a test CCU only.** The list against
+  the classic list; Anwesenheit flipped and put back (checked through the v1 API); a temporary number with limits and a
+  temporary list created and always deleted; a string and the server's refusals (422, 403, 404, 500), an expired
+  session, German and the user level with mocked answers; cancel, Escape, focus, filter and a change made elsewhere.
 - `src/webui/tests/e2e/next_overview.py`: the real date, sunrise, sunset and firmware version against the classic start
   page (the time within a minute), a ticking clock (the browser clock is controlled), an unreadable time, a failing
   call (the other cards stay), the password hint, German and the narrow layout.

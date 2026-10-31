@@ -74,7 +74,7 @@ def main():
             # ---- switch language, remembered across reload
             pg.get_by_role("button", name="Benutzermenü").click(); pg.get_by_role("menuitemradio", name="English").click()
             pg.get_by_role("heading", name="System variables").wait_for()
-            check("the switch changes the language", pg.evaluate("document.documentElement.lang") == "en" and "Read only" in pg.inner_text("main"))
+            check("the switch changes the language", pg.evaluate("document.documentElement.lang") == "en" and "Status and control" in pg.inner_text("main"))
             check("an English fallback is shown when the classic English file lacks the key", "not triggered" in pg.locator("tbody tr", has_text="Alarmzone 1").inner_text())
             pg.reload(); pg.get_by_role("heading", name="System variables").wait_for()
             check("the choice survives a reload", pg.evaluate("localStorage.getItem('openccu.next.lang')") == "en")

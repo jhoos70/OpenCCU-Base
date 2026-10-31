@@ -3,6 +3,8 @@ import { isSessionExpired } from "./api";
 
 export interface Polled<T> {
   data: T | null;
+  /** Loads now (after a change), without waiting for the next round. */
+  refresh: () => void;
   /** The last error of an update (kept until an update works again); the data stays the last known. */
   error: unknown;
   loaded: boolean;
@@ -13,7 +15,9 @@ export interface Polled<T> {
  * An expired session calls onExpired. `load` must be stable (useCallback).
  */
 export function usePolled<T>(load: () => Promise<T>, ms: number, onExpired: () => void): Polled<T> {
-  const [state, setState] = React.useState<Polled<T>>({ data: null, error: null, loaded: false });
+  const [state, setState] = React.useState<Omit<Polled<T>, "refresh">>({ data: null, error: null, loaded: false });
+  const tickRef = React.useRef<() => void>(() => {});
+  const refresh = React.useCallback(() => tickRef.current(), []);
   React.useEffect(() => {
     let live = true;
     let busy = false;
@@ -31,6 +35,7 @@ export function usePolled<T>(load: () => Promise<T>, ms: number, onExpired: () =
         busy = false;
       }
     }
+    tickRef.current = () => void tick();
     const visible = () => document.visibilityState === "visible";
     void tick();
     const timer = window.setInterval(() => visible() && void tick(), ms);
@@ -42,5 +47,5 @@ export function usePolled<T>(load: () => Promise<T>, ms: number, onExpired: () =
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [load, ms, onExpired]);
-  return state;
+  return { ...state, refresh };
 }

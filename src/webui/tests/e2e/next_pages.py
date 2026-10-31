@@ -73,7 +73,7 @@ def main():
             all_ui = sorted(column(pg, 1))
             check("all variables equal the classic API", all_ui == sorted(v["name"] for v in v1_vars), "%d variables" % len(all_ui))
             row = pg.locator("tbody tr", has_text="Anwesenheit")
-            check("a logic variable shows its value name", row.count() == 1 and row.locator("td:nth-child(3)").inner_text().strip() in ("anwesend", "nicht anwesend"), row.inner_text() if row.count() else "missing")
+            check("a logic variable shows its value name", row.count() == 1 and row.locator("td:nth-child(4) span").first.inner_text().strip() in ("anwesend", "nicht anwesend"), row.inner_text() if row.count() else "missing")
 
             pg.reload(); pg.wait_for_selector("h1:text('System variables')"); pg.wait_for_selector("tbody tr")
             check("reload keeps the page", "#/sysvars" in pg.url and pg.locator("tbody tr").count() > 0)
