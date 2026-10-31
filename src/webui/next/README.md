@@ -5,8 +5,8 @@ React 19, TypeScript, Vite and Tailwind, with shadcn/ui-style components (Radix 
 Decisions: `.migration/plan/decisions-ui.md` (D1 to D5).
 
 Status: login, an app shell (app bar, sidebar or drawer, user menu, alarm and service indicators) and read-only
-pages: Overview (the landing page), Devices (filter, channels per device), Rooms, System variables (status **and
-control**) and the two message lists. It signs in with `Session.login` on the v2 API, keeps the session
+pages: Overview (the landing page), Devices (filter, channels per device), Rooms, Programs (status **and control**), System variables
+(status **and control**) and the two message lists. It signs in with `Session.login` on the v2 API, keeps the session
 id in `sessionStorage`, and links to the classic UI with the same session, so both can be used at once. The pages
 read the v2 bulk model (`GET /model`); routes are hash based (`#/devices`, `#/rooms`, `#/sysvars`), so no server
 route is needed and a reload keeps the page. An expired session returns to the form.
@@ -28,6 +28,18 @@ the alarm system variables that are oncoming and true; the service count is the 
 sticky-unreach ones while the CCU hides them (`CCU.getStickyUnreachState`; a user who may not ask is treated as
 "hide", as the classic UI does). Message texts that contain `${key}` references are resolved from the classic
 language files. Acknowledging a message is not built (the classic UI does it with `ReceiptAlarm`).
+
+## Programs: status and control
+
+The classic status list of the programs and its action: name, description, last run and a **Run** button, with a name
+filter, refreshed every 10 seconds. It lists what the classic page lists: programs that users may operate, not the copies
+of the editor and not the system's own; an inactive program can be run by hand, as in the classic UI. A click runs the
+program through `POST /api/v2/programs {id, execute: true}` and shows the result in a status line that a screen reader
+announces ("... was started", or why not); the last run in the row is the time ReGa reports. A user or administrator may
+run programs, a guest only looks. Not built: the classic "Activity" text (what a program does; it is produced by a ReGa
+page function that a script cannot call), activating and deactivating a program, and editing (the classic "Programs and
+connections" pages). The server runs only a program of the program collection, refuses an internal program (403), and a
+non-admin needs the program's full access right; the v1 `Program.execute` checks none of this.
 
 ## System variables: status and control
 
@@ -134,6 +146,10 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
 - `src/webui/tests/e2e/next_messages.py`: the indicators against the classic header (real), the alarm page against
   the indicator, and mocked service messages (the test CCU has none): sticky handling, German, live update, a failing
   update, an expired session, guest and user.
+- `src/webui/tests/e2e/next_programs.py`: **real runs on the test CCU, run it on a test CCU only.** A bare test program is
+  created by a ReGa script and always deleted; it is compared with the classic list, run through the page and checked
+  through the v1 API (its last run moves); mocks cover programs the classic list leaves out, the server's refusals, an
+  expired session, German and the user level.
 - `src/webui/tests/e2e/next_sysvars.py`: **real changes on the test CCU, run it on a test CCU only.** The list against
   the classic list; Anwesenheit flipped and put back (checked through the v1 API); a temporary number with limits and a
   temporary list created and always deleted; a string and the server's refusals (422, 403, 404, 500), an expired

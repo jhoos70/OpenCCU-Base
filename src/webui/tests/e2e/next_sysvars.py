@@ -204,7 +204,7 @@ def main():
             check("the row shows what the CCU answered, with its time", "Oct 31, 2026" in row("Notiz").inner_text() and "10:00:00 PM" in row("Notiz").inner_text(), row("Notiz").inner_text().replace("\n", " ")[:120])
 
             for status, body, words, label in ((422, {"error": {"code": 403, "message": "invalid argument (value)"}}, "not valid", "an invalid value (422)"),
-                                              (403, {"error": {"code": 400, "message": "access denied"}}, "may not change", "no right (403)"),
+                                              (403, {"error": {"code": 400, "message": "access denied"}}, "not allowed", "no right (403)"),
                                               (404, {"error": {"code": 501, "message": "system variable not found"}}, "does not exist", "a variable that is gone (404)"),
                                               (500, {"error": {"code": 200, "message": "internal error secret"}}, "refused", "a server error (500)")):
                 state["post"] = (status, body)

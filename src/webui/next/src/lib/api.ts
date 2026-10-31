@@ -139,7 +139,19 @@ export interface ServiceMsg {
   isSticky: boolean; // a sticky-unreach message: the classic header may leave it out of the count
 }
 
+export interface Program {
+  id: string;
+  name: string;
+  description: string;
+  lastExecuteTime: string; // "2026-10-31 21:08:42" (CCU time); the epoch if it never ran
+  isActive: boolean;
+  isInternal: boolean;
+  isOperable: boolean; // users may operate it (the classic status list shows only these)
+  isCopy: boolean; // an editing artefact the classic list leaves out
+}
+
 export interface Model {
+  programs: Section<Program>;
   alarms: Section<AlarmMsg>;
   services: Section<ServiceMsg>;
   devices: Section<Device>;
@@ -216,6 +228,24 @@ export function makeSetSysVar(doFetch: Fetch = defaultFetch): (sid: string, id: 
 }
 const setSysVarDefault = makeSetSysVar();
 export const setSysVar = (sid: string, id: string, value: SysVarValue): Promise<SysVarChange> => setSysVarDefault(sid, id, value);
+
+export interface ProgramRun {
+  id: string;
+  executed: boolean;
+  lastExecuteTime: string;
+}
+
+export function makeExecuteProgram(doFetch: Fetch = defaultFetch): (sid: string, id: string) => Promise<ProgramRun> {
+  return async function executeProgram(sid: string, id: string): Promise<ProgramRun> {
+    const { doc, status } = await send(doFetch, "/programs", { method: "POST", headers: headersFor(sid, true), body: JSON.stringify({ id, execute: true }) });
+    throwIfError(doc, status);
+    const d = doc as Partial<ProgramRun> | null;
+    if (!d || typeof d.executed !== "boolean") throw new ApiError(0, "unexpected answer", status);
+    return { id: String(d.id ?? id), executed: d.executed, lastExecuteTime: String(d.lastExecuteTime ?? "") };
+  };
+}
+const executeProgramDefault = makeExecuteProgram();
+export const executeProgram = (sid: string, id: string): Promise<ProgramRun> => executeProgramDefault(sid, id);
 
 export interface SystemInfo {
   /** The CCU's clock "2026-10-31 19:05:12" (its own time zone); "" if it cannot be read. */
