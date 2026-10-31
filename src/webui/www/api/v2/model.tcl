@@ -2,8 +2,14 @@
 # v2/model.tcl - GET /api/v2/model (staged SP044/SP025/SP040/SP042/SP043, IC009, T176; BD-13)
 #
 # The bulk read model: devices, channels, rooms, functions, sysvars, programs and (opt-in)
-# datapoints, each section as {"total","offset","limit","items":[...]}.
+# datapoints, alarms and services, each section as {"total","offset","limit","items":[...]}.
 #   query  sections  comma list (default: devices,channels,rooms,functions,sysvars,programs)
+#   alarms    the alarm system variables that are triggered (the classic header's alarm messages):
+#             {"id","name","occurredAt"}
+#   services  the open service messages (the classic header's service messages):
+#             {"id","occurredAt","channelName","message","isSticky"}; message is the text of the string
+#             table, possibly a ${key} reference that the client translates; a sticky-unreach message
+#             (isSticky) is not counted by the classic header when CCU.getStickyUnreachState says so
 #          limit     1..500, default 100 (model_default_limit / model_max_limit of BD-09)
 #          offset    >= 0, default 0
 # GUEST or higher; without a valid session HTTP 401 before any ReGa script runs; a malformed
@@ -13,7 +19,7 @@
 # booleans.
 ##
 
-set MODEL_SECTIONS {devices channels rooms functions sysvars programs datapoints}
+set MODEL_SECTIONS {devices channels rooms functions sysvars programs datapoints alarms services}
 set MODEL_DEFAULT_SECTIONS {devices channels rooms functions sysvars programs}
 set MODEL_DEFAULT_LIMIT 100
 set MODEL_MAX_LIMIT 500
@@ -312,6 +318,113 @@ proc model_readDatapoints { } {
   return $items
 }
 
+##
+# The triggered alarms: the alarm system variables that are oncoming and true (as the classic UpdateUI counts them)
+##
+proc model_readAlarms { } {
+  set script {
+    string id;
+    foreach(id, dom.GetObject(ID_SYSTEM_VARIABLES).EnumIDs())
+    {
+      var sv = dom.GetObject(id);
+      if (sv)
+      {
+        if (sv.IsTypeOf(OT_ALARMDP))
+        {
+          if ((sv.AlState() == asOncoming) && (sv.State() == true))
+          {
+            WriteLine("{");
+            WriteLine("ID {" # sv.ID() # "}");
+            WriteLine("NAME {" # sv.Name() # "}");
+            WriteLine("TIME {" # sv.AlOccurrenceTime() # "}");
+            WriteLine("}");
+          }
+        }
+      }
+    }
+  }
+  set items {}
+  foreach rec [hmscript $script] {
+    if { [catch { array set a $rec }] || ![info exists a(ID)] } then { array unset a; continue }
+    set time ""
+    if { [info exists a(TIME)] } then { set time $a(TIME) }
+    lappend items "\{\"id\":[json_toString $a(ID)],\"name\":[json_toString $a(NAME)],\"occurredAt\":[json_toString $time]\}"
+    array unset a
+  }
+  return $items
+}
+
+##
+# The open service messages (alarm objects of ID_SERVICES that are oncoming); the text is looked up like UpdateUI does
+##
+proc model_readServices { } {
+  set script {
+    string id;
+    foreach(id, dom.GetObject(ID_SERVICES).EnumIDs())
+    {
+      var alarm = dom.GetObject(id);
+      if (alarm)
+      {
+        if (alarm.IsTypeOf(OT_ALARMDP))
+        {
+          if (alarm.AlState() == asOncoming)
+          {
+            string channelName = "";
+            string message = "";
+            string sticky = "false";
+            var trigger = dom.GetObject(alarm.LastTriggerID());
+            if (trigger)
+            {
+              if (trigger.HSSID() == "STICKY_UNREACH") { sticky = "true"; }
+              var channel = dom.GetObject(trigger.Channel());
+              if (channel)
+              {
+                channelName = channel.Name();
+                if (trigger.IsTypeOf(OT_HSSDP))
+                {
+                  string longKey = channel.ChnLabel() # "|" # trigger.HSSID();
+                  string shortKey = trigger.HSSID();
+                  if ((trigger.ValueType() == ivtInteger) && (trigger.ValueSubType() == istEnum))
+                  {
+                    longKey = longKey # "=" # web.webGetValueFromList(trigger.ValueList(), alarm.Value());
+                    shortKey = shortKey # "=" # web.webGetValueFromList(trigger.ValueList(), alarm.Value());
+                  }
+                  if ((trigger.ValueType() == ivtBinary) && (trigger.ValueSubType() == istGeneric))
+                  {
+                    longKey = longKey # "=TRUE";
+                    shortKey = shortKey # "=FALSE";
+                  }
+                  message = web.webKeyFromStringTable(longKey);
+                  if (!message.Length())
+                  {
+                    message = web.webKeyFromStringTable(shortKey);
+                    if (!message.Length()) { message = "${unknownMessage} (" # longKey # ")"; }
+                  }
+                }
+              }
+            }
+            WriteLine("{");
+            WriteLine("ID {" # alarm.ID() # "}");
+            WriteLine("TIME {" # alarm.AlOccurrenceTime() # "}");
+            WriteLine("CHANNEL {" # channelName # "}");
+            WriteLine("MESSAGE {" # message # "}");
+            WriteLine("STICKY {" # sticky # "}");
+            WriteLine("}");
+          }
+        }
+      }
+    }
+  }
+  set items {}
+  foreach rec [hmscript $script] {
+    if { [catch { array set m $rec }] || ![info exists m(ID)] } then { array unset m; continue }
+    foreach k {TIME CHANNEL MESSAGE STICKY} { if { ![info exists m($k)] } then { set m($k) "" } }
+    lappend items "\{\"id\":[json_toString $m(ID)],\"occurredAt\":[json_toString $m(TIME)],\"channelName\":[json_toString $m(CHANNEL)],\"message\":[json_toString $m(MESSAGE)],\"isSticky\":[model_bool $m(STICKY)]\}"
+    array unset m
+  }
+  return $items
+}
+
 proc v2_model_handle { } {
   global MODEL_SECTIONS MODEL_DEFAULT_SECTIONS MODEL_DEFAULT_LIMIT MODEL_MAX_LIMIT
 
@@ -355,6 +468,8 @@ proc v2_model_handle { } {
       sysvars   { set items [model_readSysvars] }
       programs  { set items [model_readPrograms] }
       datapoints { set items [model_readDatapoints] }
+      alarms    { set items [model_readAlarms] }
+      services  { set items [model_readServices] }
     }
     lappend parts [model_section $s $items $offset $limit]
   }
