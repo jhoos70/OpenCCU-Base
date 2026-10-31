@@ -65,3 +65,19 @@ Optional checks:
 
 No UI exists for v2; program/room editing and datapoint-change push events are not implemented
 (they need a live CCU); lighttpd is not changed.
+
+## Trying it on the data of a real CCU, without touching it: `isolated-ccu.sh`
+
+A restored backup of your real CCU in a Docker container that cannot reach the internet, your LAN or the real CCU. It
+shows the real devices, rooms, programs, system variables and history in the new UI; it has no radio, so nothing is
+switched. `isolated-ccu.sh up | check | install | restore FILE.sbk | down` (the header of the script explains the isolation).
+
+- Create the backup on the real CCU (Settings, Control panel, Security: create a backup; the exact tab name varies by
+  version) and keep the `.sbk` **outside the repository**. It contains passwords and keys.
+- `restore` validates the file (`restoreBackup.sh -c`), applies it, restarts the container and checks the isolation again.
+- The instance is at `http://127.0.0.1:18090` on this host only (use an SSH tunnel from another machine). Log in with the
+  user names and passwords of the **real** CCU.
+- Never attach a radio module to it while the real CCU runs: both would claim the same devices.
+- `down` removes the containers, the network and the volume with the restored data.
+- Do not run the write tests of `src/webui/tests/e2e` against restored data (they create temporary objects and
+  `next_log.py` clears the log); a read-only comparison with the classic UI is the test for real data.
