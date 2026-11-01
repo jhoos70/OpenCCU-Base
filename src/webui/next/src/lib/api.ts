@@ -110,6 +110,9 @@ export interface Device {
   interface: string;
   type: string; // the device type, e.g. HmIP-eTRV-B; its description is a CCU string
   isReady: boolean;
+  lastUpdated?: string;
+  roomIds?: string[];
+  funcIds?: string[];
   channels: Channel[];
 }
 

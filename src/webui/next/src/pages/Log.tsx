@@ -18,7 +18,7 @@ const PAGE = 200;
 /** The system log: the history of the logged channels and system variables, newest first, with refresh, export and clear. */
 export default function Log({ sid, onExpired }: { sid: string; onExpired: () => void }) {
   const { t, lang } = useI18n();
-  const strings = useCcuStrings("extension", "stringtable");
+  const strings = useCcuStrings("base", "extension", "stringtable");
   const profile = useCurrentProfile();
   const mayClear = profile?.level === "USER" || profile?.level === "ADMIN";
   const [items, setItems] = React.useState<LogItem[]>([]);

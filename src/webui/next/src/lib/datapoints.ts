@@ -6,8 +6,8 @@ import type { MessageKey } from "./messages";
 
 export const STRING_MAX = 1000;
 
-/** A device that never reported a value has the epoch as the time (and a default value that means nothing). */
-export const neverReported = (dp: Datapoint): boolean => dp.timestamp.startsWith("1970-");
+/** A device that never reported a value has the epoch as the time (and a default value that means nothing). Virtual devices (groups) are internal and always valid. */
+export const neverReported = (dp: Datapoint): boolean => !dp.name.startsWith("VirtualDevices.") && dp.timestamp.startsWith("1970-");
 
 const num = (s: string): number | null => (s.trim() !== "" && Number.isFinite(Number(s)) ? Number(s) : null);
 

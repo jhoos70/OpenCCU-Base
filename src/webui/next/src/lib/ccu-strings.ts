@@ -4,7 +4,7 @@
 // /webui/js/lang/<lang>/translate.lang.<catalog>.js: a jQuery.extend(true, langJSON, {"de": {"key": "text"}})
 // call with ISO-8859-1 percent escapes (%FC = ü). If a file cannot be read the caller falls back to plain text.
 
-export type Catalog = "extension" | "stringtable" | "deviceDescription";
+export type Catalog = "base" | "extension" | "stringtable" | "deviceDescription";
 export type Strings = Record<string, string>;
 
 const decode = (s: string): string =>
@@ -21,7 +21,7 @@ export function parseCatalog(source: string): Strings {
 }
 
 export function catalogUrl(lang: string, catalog: Catalog): string {
-  return `/webui/js/lang/${lang}/translate.lang.${catalog}.js`;
+  return catalog === "base" ? `/webui/js/lang/${lang}/translate.lang.js` : `/webui/js/lang/${lang}/translate.lang.${catalog}.js`;
 }
 
 type Fetch = typeof fetch;
@@ -48,3 +48,31 @@ export function resolveKey(text: string | undefined, strings: Strings): string |
 }
 
 export const isKey = (text: string | undefined): boolean => /^\$\{\w+\}$/.test(text ?? "");
+
+export const DEV_DESCR_URL = "/tools/js/jsDevDescr.cgi";
+
+/** Extracts the 50 px thumbnail path per device type from /tools/js/jsDevDescr.cgi (DEV_PATHS["type"]["50"] = "/config/img/..."). */
+export function parseDeviceIcons(source: string): Strings {
+  const out: Strings = {};
+  const entry = /DEV_PATHS\["([^"\\]+)"\]\["50"\]\s*=\s*"([^"\\]+)"/g;
+  for (let m = entry.exec(source); m; m = entry.exec(source)) {
+    out[m[1]] = m[2];
+    out[m[1].toLowerCase()] ??= m[2];
+  }
+  return out;
+}
+
+export const deviceIcon = (type: string, icons: Strings): string | undefined => icons[type] ?? icons[type.toLowerCase()];
+
+let iconCache: Promise<Strings> | undefined;
+
+/** The 50 px device icon map from /tools/js/jsDevDescr.cgi; cached, and an unreadable response is an empty map. */
+export function loadDeviceIcons(doFetch: Fetch = (...a) => fetch(...a)): Promise<Strings> {
+  if (!iconCache) {
+    iconCache = doFetch(DEV_DESCR_URL)
+      .then((r) => (r.ok ? r.text() : ""))
+      .then(parseDeviceIcons)
+      .catch(() => ({}));
+  }
+  return iconCache;
+}

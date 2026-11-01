@@ -8,11 +8,11 @@ export function healthChannelIds(devices: Device[]): string[] {
 }
 
 /** Devices whose name, type, description or address contains every word of the query (case-insensitive). */
-export function filterDevices(devices: Device[], query: string, describe: (d: Device) => string): Device[] {
+export function filterDevices(devices: Device[], query: string, describe: (d: Device) => string, extra?: (d: Device) => string): Device[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return devices;
   return devices.filter((d) => {
-    const hay = `${d.name} ${d.type} ${describe(d)} ${d.address} ${d.interface}`.toLowerCase();
+    const hay = `${d.name} ${d.type} ${describe(d)} ${d.address} ${d.interface} ${extra ? extra(d) : ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }

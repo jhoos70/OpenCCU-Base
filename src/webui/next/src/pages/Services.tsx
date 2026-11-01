@@ -11,7 +11,7 @@ import { useMessages } from "@/lib/use-messages";
 export default function Services() {
   const { t, lang } = useI18n();
   const m = useMessages();
-  const strings = useCcuStrings("stringtable", "extension");
+  const strings = useCcuStrings("base", "stringtable", "extension");
   const sticky = stickyCount(m.services);
   const profile = useCurrentProfile();
   const mayChange = profile?.level === "USER" || profile?.level === "ADMIN";

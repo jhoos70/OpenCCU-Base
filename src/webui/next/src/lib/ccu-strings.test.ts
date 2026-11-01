@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogUrl, isKey, loadCatalog, parseCatalog, resolveKey } from "./ccu-strings";
+import { catalogUrl, deviceIcon, isKey, loadCatalog, parseCatalog, parseDeviceIcons, resolveKey } from "./ccu-strings";
 
 const SAMPLE = `jQuery.extend(true,langJSON, {
   "de" : {
@@ -49,9 +49,25 @@ describe("loadCatalog", () => {
     expect(a).toBe(b);
     expect(calls).toBe(1);
     expect(catalogUrl("de", "extension")).toBe("/webui/js/lang/de/translate.lang.extension.js");
+    expect(catalogUrl("de", "base")).toBe("/webui/js/lang/de/translate.lang.js");
   });
   it("treats a missing or failing file as an empty catalog", async () => {
     expect(await loadCatalog("en", "stringtable", (async () => new Response("nope", { status: 404 })) as unknown as typeof fetch)).toEqual({});
     expect(await loadCatalog("en", "deviceDescription", (async () => { throw new TypeError("x"); }) as unknown as typeof fetch)).toEqual({});
+  });
+});
+
+describe("parseDeviceIcons", () => {
+  const js = `
+    DEV_PATHS["HM-LC-Sw1-Pl"] = new Object();
+    DEV_PATHS["HM-LC-Sw1-Pl"]["50"] = "/config/img/devices/50/16_hm-lc-sw1-pl_thumb.png";
+    DEV_PATHS["HM-LC-Sw1-Pl"]["250"] = "/config/img/devices/250/16_hm-lc-sw1-pl.png";
+    DEV_PATHS["HMIP-SWDO"]["50"] = "/config/img/devices/50/118_hmip-swdo_thumb.png";
+  `;
+  it("extracts 50 px thumbnails and matches case-insensitively", () => {
+    const icons = parseDeviceIcons(js);
+    expect(deviceIcon("HM-LC-Sw1-Pl", icons)).toBe("/config/img/devices/50/16_hm-lc-sw1-pl_thumb.png");
+    expect(deviceIcon("HmIP-SWDO", icons)).toBe("/config/img/devices/50/118_hmip-swdo_thumb.png");
+    expect(deviceIcon("HmIP-UNKNOWN", icons)).toBeUndefined();
   });
 });

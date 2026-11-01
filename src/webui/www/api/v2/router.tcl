@@ -162,7 +162,33 @@ proc v2_respondJson { json } {
   jsonrpc_v2Headers
   puts "CONTENT-TYPE: application/json; charset=utf-8"
   puts ""
-  puts -nonewline [encoding convertto utf-8 $json]
+  puts -nonewline [encoding convertto utf-8 [v2_repairUtf8 $json]]
+}
+
+##
+# ReGa hands its texts over as ISO-8859-1 bytes, but some texts are stored as UTF-8 (a value name such as "nicht
+# ausgelöst" written by a newer tool holds the bytes C3 B6): read as ISO-8859-1 they would reach the client as "Ã¶".
+# Every well-formed UTF-8 multi-byte sequence is decoded back to its character; ISO-8859-1 text is not touched (an
+# umlaut there is a single byte that is not followed by continuation bytes, e.g. "J\xF6rn").
+##
+proc v2_repairUtf8 { s } {
+  if { ![regexp {[\u00c2-\u00f4][\u0080-\u00bf]} $s] } then { return $s }
+  set re {[\u00c2-\u00df][\u0080-\u00bf]|[\u00e0-\u00ef][\u0080-\u00bf]{2}|[\u00f0-\u00f4][\u0080-\u00bf]{3}}
+  set out ""
+  set pos 0
+  foreach range [regexp -all -inline -indices -- $re $s] {
+    lassign $range from to
+    append out [string range $s $pos [expr { $from - 1 }]]
+    set seq [string range $s $from $to]
+    if { [catch { encoding convertfrom utf-8 $seq } ch] || [string length $ch] != 1 || [scan $ch %c] < 0x80 } then {
+      append out $seq
+    } else {
+      append out $ch
+    }
+    set pos [expr { $to + 1 }]
+  }
+  append out [string range $s $pos end]
+  return $out
 }
 
 proc router_error { status code message {allow ""} } {

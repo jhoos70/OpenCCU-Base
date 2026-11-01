@@ -15,6 +15,7 @@ const t: Translate = (k, p) => translate("en", k, p);
 describe("what is shown", () => {
   it("shows nothing for a device that never reported, and for a button", () => {
     expect(neverReported(dp({ timestamp: "1970-01-01 01:00:00" }))).toBe(true);
+    expect(neverReported(dp({ name: "VirtualDevices.INT0000009:2.STATE", timestamp: "1970-01-01 01:00:00" }))).toBe(false);
     expect(formatDatapoint(dp({ timestamp: "1970-01-01 01:00:00" }), t, "en")).toBe("");
     expect(formatDatapoint(dp({ type: "ACTION", value: "" }), t, "en")).toBe("");
   });

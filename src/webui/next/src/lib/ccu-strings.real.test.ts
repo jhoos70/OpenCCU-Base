@@ -4,12 +4,19 @@ import { parseCatalog, type Catalog } from "./ccu-strings";
 
 // The real language files of the classic UI: this fails if their format changes under the parser.
 const dir = new URL("../../../www/webui/js/lang/", import.meta.url);
-const load = (lang: string, catalog: Catalog) => parseCatalog(readFileSync(new URL(`${lang}/translate.lang.${catalog}.js`, dir), "latin1"));
+const file = (lang: string, catalog: Catalog) => (catalog === "base" ? `${lang}/translate.lang.js` : `${lang}/translate.lang.${catalog}.js`);
+const load = (lang: string, catalog: Catalog) => parseCatalog(readFileSync(new URL(file(lang, catalog), dir), "latin1"));
 
 describe("the classic language files", () => {
   it("resolve the value names that system variables use", () => {
     expect(load("de", "extension").sysVarAlarmZone1NotTriggered).toBe("nicht ausgelöst");
     expect(load("en", "extension").sysVarAlarmZone1NotTriggered).toMatch(/not/i);
+  });
+  it("resolve the maintenance service message keys from translate.lang.js", () => {
+    expect(load("de", "base").stringTableUnreach).toBe("Gerätekommunikation gestört");
+    expect(load("en", "base").stringTableUnreach).toBe("Device communication disturbed");
+    expect(load("de", "base").stringTableStickyUnreach).toBe("Gerätekommunikation war gestört");
+    expect(load("de", "base").stringTableBatteryLow).toBe("Batterieladezustand gering");
   });
   it("describe device types", () => {
     expect(load("de", "deviceDescription")["HM-LC-Sw1-Pl"]).toBe("Funk-Schaltaktor 1-fach, Zwischenstecker");

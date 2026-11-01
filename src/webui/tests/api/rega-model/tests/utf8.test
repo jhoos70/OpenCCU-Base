@@ -1,0 +1,23 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# The answers of /api/v2 (v2_respondJson): ReGa hands texts over as ISO-8859-1 bytes, but some texts are stored as UTF-8
+# (seen on a real CCU3: the value names of "Alarmzone 1" hold the bytes C3 B6 for "ö"). v2_repairUtf8 decodes such a
+# text so it reaches the client encoded once ("ö", not "Ã¶"); an ISO-8859-1 text ("J\xF6rn") stays as it is.
+set here [file dirname [file normalize [info script]]]
+proc jsonrpc_v2Headers {} {}
+source [file join $here .. .. .. .. www api v2 router.tcl]
+
+test utf8-0 {a UTF-8 multi-byte sequence is decoded to its character} -body {
+  list [v2_repairUtf8 "nicht ausgel\u00c3\u00b6st"] [v2_repairUtf8 "\u00e2\u0082\u00ac 5"]
+} -result [list "nicht ausgel\u00f6st" "\u20ac 5"]
+
+test utf8-1 {ISO-8859-1 text and broken sequences are not touched} -body {
+  list [v2_repairUtf8 "J\u00f6rn Dachfenster"] [v2_repairUtf8 "G\u00e4ste \u00dcbersicht"] [v2_repairUtf8 "x\u00c3"] [v2_repairUtf8 "\u00c3("] [v2_repairUtf8 plain]
+} -result [list "J\u00f6rn Dachfenster" "G\u00e4ste \u00dcbersicht" "x\u00c3" "\u00c3(" plain]
+
+test utf8-2 {mixed text: both kinds in one answer} -body {
+  v2_repairUtf8 "{\"a\":\"J\u00f6rn\",\"b\":\"ausgel\u00c3\u00b6st\"}"
+} -result "{\"a\":\"J\u00f6rn\",\"b\":\"ausgel\u00f6st\"}"
+
+cleanupTests

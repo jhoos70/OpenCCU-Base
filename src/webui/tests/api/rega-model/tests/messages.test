@@ -68,7 +68,7 @@ test messages-4 {limit and offset page both sections} -body {
 } -result {1 1 0}
 
 test messages-5 {alarms and services are opt-in: the default sections do not run their scripts} -body {
-  set r [model "" -rega [list [list $::ALARMS [list [alarm 1 A {2026}]]] [list $::SERVICES [list [svc 1]]]]]
+  set r [model "" -sessions {{AbCdEf1234 2 1001 User}} -rega [list [list $::ALARMS [list [alarm 1 A {2026}]]] [list $::SERVICES [list [svc 1]]]]]
   set j [body $r]
   list [status $r] [regexp {"alarms"|"services"} $j]
 } -result {200 0}

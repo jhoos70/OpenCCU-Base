@@ -72,7 +72,7 @@ test sp044-model3 {the model scripts are read only: no AddMetaData, no Add, no R
 test sp044-model4 {a malformed device record is skipped, the others are returned} -body {
   set r [model "sections=devices" -rega [list [list {*Devices().EnumIDs()*Channels()*} [list "ID \{broken" [list ID 5 NAME ok ADDRESS A INTERFACE I DEVICE_TYPE T READY_CONFIG true GROUP_ONLY {} CHANNELS {}]]]]]
   string trim [dict get $r body]
-} -result {{"devices":{"total":1,"offset":0,"limit":100,"items":[{"id":"5","name":"ok","address":"A","interface":"I","type":"T","operateGroupOnly":"false","isReady":true,"channels":[]}]}}}
+} -result {{"devices":{"total":1,"offset":0,"limit":100,"items":[{"id":"5","name":"ok","address":"A","interface":"I","type":"T","operateGroupOnly":"false","isReady":true,"lastUpdated":"","roomIds":[],"funcIds":[],"channels":[]}]}}}
 
 test sp044-golden {golden re-run: ReGa.runScript and ReGa.isPresent replay byte-identical through the staged scripts} -body {
   golden::compare_all -candidate only:rega-model -only {ReGa.runScript ReGa.isPresent}

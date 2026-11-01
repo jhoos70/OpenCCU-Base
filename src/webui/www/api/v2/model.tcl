@@ -69,6 +69,10 @@ proc model_devicesScript { } {
         WriteLine("DEVICE_TYPE {" # dev.Label() # "}");
         WriteLine("READY_CONFIG {" # dev.ReadyConfig() # "}");
         WriteLine("GROUP_ONLY {" # dev.MetaData("operateGroupOnly") # "}");
+        integer maxSec = 0;
+        string maxTime = "";
+        string roomIDs = "";
+        string funcIDs = "";
         Write("CHANNELS {");
         foreach(cId, dev.Channels())
         {
@@ -77,6 +81,27 @@ proc model_devicesScript { } {
           if (channel) { if (false == channel.Internal()) { takeCh = true; } }
           if (takeCh)
           {
+            if (channel.LastDPActionTimeSeconds() > maxSec)
+            {
+              maxSec = channel.LastDPActionTimeSeconds();
+              maxTime = channel.LastDPActionTime();
+            }
+            string rId;
+            foreach(rId, channel.ChnRoom())
+            {
+              if (("\t" # roomIDs # "\t").Find("\t" # rId # "\t") < 0)
+              {
+                roomIDs = roomIDs # rId # "\t";
+              }
+            }
+            string fId;
+            foreach(fId, channel.ChnFunction())
+            {
+              if (("\t" # funcIDs # "\t").Find("\t" # fId # "\t") < 0)
+              {
+                funcIDs = funcIDs # fId # "\t";
+              }
+            }
             var readable = false; var writable = false; var eventable = false; var logable = false;
             foreach(pId, channel.DPs())
             {
@@ -126,6 +151,9 @@ proc model_devicesScript { } {
           }
         }
         WriteLine("}");
+        WriteLine("LAST_ACTION_TIME {" # maxTime # "}");
+        WriteLine("ROOM_IDS {" # roomIDs # "}");
+        WriteLine("FUNC_IDS {" # funcIDs # "}");
         WriteLine("}");
       }
     }
@@ -165,7 +193,26 @@ proc model_readDevices { } {
       if { [catch { lappend cj [model_channelJson $c] }] } then { continue }
       lappend channels [lindex $cj end]
     }
-    lappend devices "\{\"id\":[json_toString $d(ID)],\"name\":[json_toString $d(NAME)],\"address\":[json_toString $d(ADDRESS)],\"interface\":[json_toString $d(INTERFACE)],\"type\":[json_toString $d(DEVICE_TYPE)],\"operateGroupOnly\":[json_toString $groupOnly],\"isReady\":[model_bool $d(READY_CONFIG)],\"channels\":\[[join $cj ,]\]\}"
+    set rids {}
+    if { [info exists d(ROOM_IDS)] } then {
+      foreach rid [split [string trim $d(ROOM_IDS)] "\t"] {
+        set rid [string trim $rid]
+        if { $rid ne "" } then { lappend rids [json_toString $rid] }
+      }
+    }
+    set fids {}
+    if { [info exists d(FUNC_IDS)] } then {
+      foreach fid [split [string trim $d(FUNC_IDS)] "\t"] {
+        set fid [string trim $fid]
+        if { $fid ne "" } then { lappend fids [json_toString $fid] }
+      }
+    }
+    set lastUpdated ""
+    if { [info exists d(LAST_ACTION_TIME)] } then {
+      set lastUpdated [string trim $d(LAST_ACTION_TIME)]
+      if { [string match "1970-*" $lastUpdated] } then { set lastUpdated "" }
+    }
+    lappend devices "\{\"id\":[json_toString $d(ID)],\"name\":[json_toString $d(NAME)],\"address\":[json_toString $d(ADDRESS)],\"interface\":[json_toString $d(INTERFACE)],\"type\":[json_toString $d(DEVICE_TYPE)],\"operateGroupOnly\":[json_toString $groupOnly],\"isReady\":[model_bool $d(READY_CONFIG)],\"lastUpdated\":[json_toString $lastUpdated],\"roomIds\":\[[join $rids ,]\],\"funcIds\":\[[join $fids ,]\],\"channels\":\[[join $cj ,]\]\}"
     array unset d
   }
   return [list $devices $channels]
@@ -415,8 +462,16 @@ proc model_readServices { } {
                   }
                   if ((trigger.ValueType() == ivtBinary) && (trigger.ValueSubType() == istGeneric))
                   {
-                    longKey = longKey # "=TRUE";
-                    shortKey = shortKey # "=FALSE";
+                    if (trigger.Value() == true)
+                    {
+                      longKey = longKey # "=TRUE";
+                      shortKey = shortKey # "=TRUE";
+                    }
+                    else
+                    {
+                      longKey = longKey # "=FALSE";
+                      shortKey = shortKey # "=FALSE";
+                    }
                   }
                   message = web.webKeyFromStringTable(longKey);
                   if (!message.Length())
