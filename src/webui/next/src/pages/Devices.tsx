@@ -140,7 +140,7 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
   const state = useModel("devices", sid, onExpired, refreshSignal);
   const roomsState = useModel("rooms", sid, onExpired, refreshSignal);
   const functionsState = useModel("functions", sid, onExpired, refreshSignal);
-  const strings = useCcuStrings("deviceDescription", "extension", "stringtable");
+  const strings = useCcuStrings("deviceDescription", "extension", "stringtable", "group");
   const icons = useDeviceIcons();
 
   const [selectedDeviceId, setSelectedDeviceId] = React.useState<string | null>(getDeviceIdFromHash);

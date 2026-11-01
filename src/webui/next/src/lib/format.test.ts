@@ -49,9 +49,10 @@ describe("isUserVar", () => {
 
 describe("expand", () => {
   it("replaces ${key} references inside a longer text and leaves unknown ones", () => {
-    const strings = { unknownMessage: "Unbekannte Meldung" };
+    const strings = { unknownMessage: "Unbekannte Meldung", deviceLinkOfGroup: "Verknüpfung durch Gruppe " };
     expect(expand("${unknownMessage} (HM-X|UNREACH=TRUE)", strings)).toBe("Unbekannte Meldung (HM-X|UNREACH=TRUE)");
     expect(expand("${a} and ${unknownMessage}", strings)).toBe("${a} and Unbekannte Meldung");
+    expect(expand("${deviceLinkOfGroup}9", strings)).toBe("Verknüpfung durch Gruppe 9");
     expect(expand("plain text", strings)).toBe("plain text");
   });
 });

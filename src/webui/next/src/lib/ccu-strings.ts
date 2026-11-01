@@ -4,7 +4,7 @@
 // /webui/js/lang/<lang>/translate.lang.<catalog>.js: a jQuery.extend(true, langJSON, {"de": {"key": "text"}})
 // call with ISO-8859-1 percent escapes (%FC = ü). If a file cannot be read the caller falls back to plain text.
 
-export type Catalog = "base" | "extension" | "stringtable" | "deviceDescription";
+export type Catalog = "base" | "extension" | "stringtable" | "deviceDescription" | "group";
 export type Strings = Record<string, string>;
 
 const decode = (s: string): string =>

@@ -14,7 +14,7 @@ import {
   type Room,
 } from "@/lib/api";
 import { deviceIcon } from "@/lib/ccu-strings";
-import { text } from "@/lib/format";
+import { expand, text } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import {
   ArrowRight,
@@ -332,7 +332,7 @@ export function DeviceLinks({
                       {isOutgoing ? t("outgoing") : t("incoming")}
                     </span>
                     <h4 className="text-sm font-bold text-[var(--foreground)]">
-                      {link.name || `${link.sender} ↔ ${link.receiver}`}
+                      {expand(link.name, strings) || `${link.sender} ↔ ${link.receiver}`}
                     </h4>
                   </div>
 
@@ -369,7 +369,7 @@ export function DeviceLinks({
                 {/* Description if present */}
                 {link.description && (
                   <p className="text-xs text-[var(--muted-foreground)] -mt-2">
-                    {text(link.description, strings)}
+                    {expand(link.description, strings)}
                   </p>
                 )}
 
