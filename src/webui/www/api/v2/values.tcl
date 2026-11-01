@@ -3,7 +3,9 @@
 # device and the operation of its datapoints (the classic "Status and control" of devices, rooms and functions)
 #
 # GET   the datapoints of ONE device (the channels of a device are small enough to read in one script; the whole
-#       installation is not read at once). GUEST or higher. The answer is strict JSON
+#       installation is not read at once), or of a set of channels (?channels=1,2,3: up to 100 ids, as the members of a
+#       favourite list; a channel that is unknown, internal or of a device that is not ready is simply not in the
+#       answer). GUEST or higher. The answer is strict JSON
 #         {"device":"2650","items":[{"id","name","channelId","channel","param","type","value","unit","min","max",
 #           "valueList","timestamp","integer","readable","writable"}]}
 #       type is LOGIC, ACTION (a button: only true can be sent), LIST (value is the index into the ";" separated
@@ -28,6 +30,7 @@
 ##
 
 set VALUES_STRING_MAX 1000
+set VALUES_CHANNELS_MAX 100
 
 proc values_param { name } {
   global V2_QUERY
@@ -82,7 +85,7 @@ proc values_isAdmin { } {
 ##
 # The datapoints of one device as the records of one script; the script is fixed text
 ##
-proc values_readDevice { deviceId } {
+proc values_readDevice { deviceId channelFilter } {
   global VALUES_DESCRIBE
   set script {
     string dId;
@@ -90,7 +93,10 @@ proc values_readDevice { deviceId } {
     string pId;
     foreach(dId, root.Devices().EnumIDs())
     {
-      if (dId == deviceId)
+      boolean takeDevice = false;
+      if (deviceId == "") { takeDevice = true; }
+      if (dId == deviceId) { takeDevice = true; }
+      if (takeDevice)
       {
         var dev = dom.GetObject(dId);
         if (dev)
@@ -104,17 +110,25 @@ proc values_readDevice { deviceId } {
                 var channel = dom.GetObject(cId);
                 if (channel)
                 {
-                  if (false == channel.Internal())
+                  boolean takeChannel = true;
+                  if (channelFilter != "")
                   {
-                    foreach(pId, channel.DPs())
+                    takeChannel = false;
+                    if (channelFilter.Find("," # cId # ",") >= 0) { takeChannel = true; }
+                  }
+                  if (takeChannel)
+                  {
+                    if (false == channel.Internal())
                     {
-                      var dp = dom.GetObject(pId);
-                      if (dp)
+                      foreach(pId, channel.DPs())
                       {
-                        if (false == dp.Internal())
+                        var dp = dom.GetObject(pId);
+                        if (dp)
                         {
-                          Write("");
-                          DESCRIBE
+                          if (false == dp.Internal())
+                          {
+                            DESCRIBE
+                          }
                         }
                       }
                     }
@@ -128,7 +142,7 @@ proc values_readDevice { deviceId } {
     }
   }
   set script [string map [list DESCRIBE $VALUES_DESCRIBE] $script]
-  array set a [list deviceId $deviceId isAdmin [values_isAdmin]]
+  array set a [list deviceId $deviceId channelFilter $channelFilter isAdmin [values_isAdmin]]
   return [hmscript $script a]
 }
 
@@ -253,7 +267,7 @@ proc values_write { dpId type value } {
 }
 
 proc v2_values_handle { } {
-  global env API_HTTP_STATUS
+  global env API_HTTP_STATUS VALUES_CHANNELS_MAX
   if { "POST" eq $env(REQUEST_METHOD) } then {
     v2_requireLevel USER
 
@@ -292,9 +306,26 @@ proc v2_values_handle { } {
 
   v2_requireLevel GUEST
   lassign [values_param device] has deviceId
+  lassign [values_param channels] hasChannels channels
+  if { $has && $hasChannels } then { jsonrpc_error 403 "invalid argument (device)" }
+  if { $hasChannels } then {
+    # a set of channels: up to 100 ids, each digits; the answer is the datapoints of those that exist (maybe none)
+    set ids [split $channels ,]
+    if { 0 == [llength $ids] || [llength $ids] > $VALUES_CHANNELS_MAX } then { jsonrpc_error 403 "invalid argument (channels)" }
+    foreach id $ids {
+      if { ![regexp {^[0-9]{1,10}$} $id] } then { jsonrpc_error 403 "invalid argument (channels)" }
+    }
+    set items {}
+    foreach rec [values_readDevice "" ",[join $ids ,],"] {
+      set item [values_item $rec]
+      if { "" != $item } then { lappend items $item }
+    }
+    v2_respondJson "\{\"channels\":[json_toString [join $ids ,]],\"items\":\[[join $items ,]\]\}"
+    return
+  }
   if { !$has || ![regexp {^[0-9]{1,10}$} $deviceId] } then { jsonrpc_error 403 "invalid argument (device)" }
   set items {}
-  foreach rec [values_readDevice $deviceId] {
+  foreach rec [values_readDevice $deviceId ""] {
     set item [values_item $rec]
     if { "" != $item } then { lappend items $item }
   }

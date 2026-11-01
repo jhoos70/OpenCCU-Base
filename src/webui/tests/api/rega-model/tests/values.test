@@ -168,4 +168,18 @@ test values-11 {the id only reaches a datapoint of a channel of a device: type H
   list [regexp {dp.TypeName\(\) == "HSSDP"} $c] [regexp {dom.GetObject\(dp.Channel\(\)\)} $c] [regexp {foreach\(dId, root.Devices\(\).EnumIDs\(\)\)} $c] [regexp {dp.State\(newValue\)} $c]
 } -result {1 1 1 1}
 
+test values-12 {a set of channels is read in one script: the ids reach ReGa as one string variable, the answer is the datapoints of those that exist} -body {
+  set rec1 [rec LOGIC ID 1 PARAM STATE VALUE true]
+  set r [get channels=3000,3005 -rega [list [list $::DEVICE [list $rec1]]]]
+  set b [body $r]
+  list [status $r] [regexp {^\{"channels":"3000,3005","items":\[\{"id":"1",} $b] [regexp {var channelFilter = ",3000,3005,";} [scripts $r]] [regexp {var deviceId = "";} [scripts $r]]
+} -result {200 1 1 1}
+
+test values-13 {channels that match nothing answer an empty list (200, not 404); bad ids, too many ids and both device and channels are 422} -body {
+  set none [get channels=3000 -rega [list [list $::DEVICE {}]]]
+  set out [list [status $none] [regexp {"items":\[\]} [body $none]]]
+  foreach q [list channels=3000,x channels= channels=,3000 "channels=[join [lrepeat 101 1] ,]" device=1&channels=2] { lappend out [err [get $q]] }
+  set out
+} -result [list 200 1 {422 403 {invalid argument (channels)}} {422 403 {invalid argument (channels)}} {422 403 {invalid argument (channels)}} {422 403 {invalid argument (channels)}} {422 403 {invalid argument (device)}}]
+
 cleanupTests

@@ -1,0 +1,78 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# GET /api/v2/favourites: the favourite lists of the signed-in user. The ReGa script itself is proven on a real ReGa
+# (see the commit message); here: the shape of the answer, the grouping and order, the access rules and that the user
+# id is the session's own and reaches ReGa as a string variable.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list [status $r] $c $m] }
+  return [list [status $r] none]
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER  {{AbCdEf1234 2 1004 User}}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set FAV {*EnumEnabledVisibleIDs*}
+proc get {args} {
+  array set o [list -sessions $::USER -rega {} -method GET -query {}]
+  array set o $args
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method $o(-method) -contenttype {} -setenv {REQUEST_URI /api/v2/favourites} -query $o(-query) \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
+}
+proc body {r} { return [string trim [dict get $r body]] }
+proc scripts {r} { return [join [dict get $r rega_calls] \n] }
+
+set RECS [list \
+  {LIST 1587 NAME Heizung INFO {}} \
+  {ITEM 1587 ID 4477 TYPE CHANNEL NAME {Arbeitszimmer Gruppe:1}} \
+  {ITEM 1587 ID 950 TYPE SYSVAR NAME Anwesenheit} \
+  {LIST 12019 NAME Rolladen INFO {Alle Rolläden}} \
+  {ITEM 12019 ID 15789 TYPE SEPARATOR NAME {}} \
+  {ITEM 12019 ID 15306 TYPE CHANNEL NAME {Rollladen AZ:4}}]
+
+test favourites-0 {the handler file exists, is complete Tcl and is registered as a GET route} -body {
+  set fd [open [file join $gen rega-model v2 favourites.tcl] r]; set c [read $fd]; close $fd
+  set fd [open [file join $gen dispatcher v2 router.tcl] r]; set r [read $fd]; close $fd
+  list [info complete $c] [regexp {/favourites\s+\{GET\s+favourites.tcl\s+v2_favourites_handle\}} $r]
+} -result {1 1}
+
+test favourites-1 {the lists and their members come back in order, grouped by list, as strict JSON} -body {
+  set r [get -rega [list [list $::FAV $::RECS]]]
+  list [status $r] [body $r]
+} -result [list 200 [encoding convertto utf-8 {{"lists":[{"id":"1587","name":"Heizung","info":"","items":[{"id":"4477","type":"CHANNEL","name":"Arbeitszimmer Gruppe:1"},{"id":"950","type":"SYSVAR","name":"Anwesenheit"}]},{"id":"12019","name":"Rolladen","info":"Alle Rolläden","items":[{"id":"15789","type":"SEPARATOR","name":""},{"id":"15306","type":"CHANNEL","name":"Rollladen AZ:4"}]}]}}]]
+
+test favourites-2 {a user without lists, or a list without members, is an empty answer, not an error} -body {
+  set none [get -rega [list [list $::FAV {}]]]
+  set empty [get -rega [list [list $::FAV [list {LIST 5 NAME Leer INFO {}}]]]]
+  list [body $none] [body $empty]
+} -result [list {{"lists":[]}} {{"lists":[{"id":"5","name":"Leer","info":"","items":[]}]}}]
+
+test favourites-3 {USER or higher: a guest is refused (403), an administrator reads their own lists; no session is 401 and no ReGa script runs} -body {
+  set g [get -sessions $::GUEST]
+  set a [get -sessions $::ADMIN -rega [list [list $::FAV $::RECS]]]
+  set n [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method GET -contenttype {} -setenv {REQUEST_URI /api/v2/favourites} -header {X-Requested-With XMLHttpRequest}]]]
+  list [err $g] [status $a] [status $n] [llength [dict get $n rega_calls]]
+} -result {{403 400 {access denied (\"USER\" needed, session level 1)}} 200 401 0}
+
+test favourites-4 {the user is the session's own and reaches ReGa as a string variable, never from the query} -body {
+  set r [get -query user=1 -sessions {{AbCdEf1234 2 25526 User}} -rega [list [list $::FAV {}]]]
+  list [regexp {var uid = "25526";} [scripts $r]] [regexp {var uid = "1";} [scripts $r]]
+} -result {1 0}
+
+test favourites-5 {only GET is allowed (405)} -body {
+  set out {}
+  foreach m {POST PUT DELETE} { lappend out [status [get -method $m]] }
+  set out
+} -result {405 405 405}
+
+cleanupTests
