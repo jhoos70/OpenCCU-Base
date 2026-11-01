@@ -84,6 +84,18 @@ def main():
         page.keyboard.press("Escape")
         page.wait_for_selector("[cmdk-input-wrapper]", state="hidden")
 
+        # 9. Test direct device navigation via URL
+        page.set_viewport_size({"width": 1280, "height": 800})
+        # Navigate to a non-existent device to test not-found state and back button
+        page.goto("http://127.0.0.1:18080/webui/next/#/devices/nonexistent-999")
+        page.wait_for_selector("a[href='#/devices']")
+        back_btn = page.locator("a[href='#/devices']", has_text=re.compile(r"Back|Zurück"))
+        assert back_btn.is_visible(), "Back to devices button should be visible in detail view"
+        print("PASS  Device detail view renders with Back button")
+        back_btn.click()
+        page.wait_for_url("**/webui/next/#/devices")
+        print("PASS  Back button returned to devices list")
+
         browser.close()
         print("ALL COMMAND PALETTE TESTS PASSED!")
 

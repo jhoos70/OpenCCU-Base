@@ -29,6 +29,7 @@ import { useModel } from "@/lib/use-model";
 import { usePolled } from "@/lib/use-polled";
 import { healthOf, type ChannelInfo } from "@/lib/widgets";
 import { Status } from "./Status";
+import { ArrowLeft, ExternalLink, Radio } from "lucide-react";
 
 const HEALTH_MS = 10_000;
 const STORAGE_KEY = "openccu.next.devices.columns";
@@ -115,6 +116,11 @@ interface DeviceTableRow {
   channelCount: number;
 }
 
+const getDeviceIdFromHash = (): string | null => {
+  const parts = window.location.hash.replace(/^#\/?/, "").split(/[\/?#]/);
+  return parts[0] === "devices" && parts[1] ? decodeURIComponent(parts[1]) : null;
+};
+
 export default function Devices({ sid, onExpired }: { sid: string; onExpired: () => void }) {
   const { t, lang } = useI18n();
   const profile = useCurrentProfile();
@@ -125,6 +131,14 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
   const functionsState = useModel("functions", sid, onExpired);
   const strings = useCcuStrings("deviceDescription", "extension", "stringtable");
   const icons = useDeviceIcons();
+
+  const [selectedDeviceId, setSelectedDeviceId] = React.useState<string | null>(getDeviceIdFromHash);
+
+  React.useEffect(() => {
+    const handleHash = () => setSelectedDeviceId(getDeviceIdFromHash());
+    window.addEventListener("hashchange", handleHash);
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, []);
 
   const [query, setQuery] = React.useState("");
   const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
@@ -240,6 +254,14 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
                 )}
                 <span>{d.name}</span>
               </button>
+              <a
+                href={`#/devices/${d.id}`}
+                className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--primary)] transition-colors"
+                title={`${t("deviceDetails")}: ${d.name}`}
+                aria-label={`${t("deviceDetails")}: ${d.name}`}
+              >
+                <ExternalLink className="size-3.5" aria-hidden="true" />
+              </a>
               <HealthBadges health={d.health} />
             </div>
           );
@@ -387,6 +409,134 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
   });
+
+  if (selectedDeviceId) {
+    if (state.status === "loading") {
+      return (
+        <div className="space-y-4">
+          <a
+            href="#/devices"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs sm:text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors shadow-2xs"
+          >
+            <ArrowLeft className="size-4" />
+            <span>{t("backToDevices")}</span>
+          </a>
+          <p className="text-sm text-[var(--muted-foreground)]">{t("loading")}</p>
+        </div>
+      );
+    }
+    if (state.status === "ready") {
+      const selectedDevice = state.data.items.find((d) => d.id === selectedDeviceId || d.address === selectedDeviceId);
+      if (!selectedDevice) {
+        return (
+          <div className="space-y-4">
+            <a
+              href="#/devices"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs sm:text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors shadow-2xs"
+            >
+              <ArrowLeft className="size-4" />
+              <span>{t("backToDevices")}</span>
+            </a>
+            <p className="text-sm text-[var(--muted-foreground)]">{t("deviceNotFound")}</p>
+          </div>
+        );
+      }
+
+      const devName = text(selectedDevice.name, strings);
+      const devDesc = describe(selectedDevice);
+      const devIcon = deviceIcon(selectedDevice.type, icons);
+      const devHealth = healthOf(healthDps, selectedDevice.address);
+      const devRooms = (selectedDevice.roomIds ?? []).map((id) => roomMap.get(id)).filter(Boolean) as string[];
+      const devFuncs = (selectedDevice.funcIds ?? []).map((id) => funcMap.get(id)).filter(Boolean) as string[];
+
+      return (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <a
+              href="#/devices"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs sm:text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors shadow-2xs"
+            >
+              <ArrowLeft className="size-4" />
+              <span>{t("backToDevices")}</span>
+            </a>
+          </div>
+
+          <Card className="p-5 sm:p-6 space-y-4 shadow-sm border border-[var(--border)] bg-[var(--card)]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                {devIcon ? (
+                  <img
+                    src={devIcon}
+                    alt=""
+                    aria-hidden="true"
+                    className="size-12 sm:size-14 shrink-0 rounded-lg bg-white object-contain p-1 border border-[var(--border)] shadow-2xs"
+                  />
+                ) : (
+                  <div className="flex size-12 sm:size-14 shrink-0 items-center justify-center rounded-lg bg-[var(--muted)] text-[var(--muted-foreground)]">
+                    <Radio className="size-6" />
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--foreground)]">{devName}</h1>
+                    <HealthBadges health={devHealth} />
+                  </div>
+                  {devDesc && <p className="text-sm text-[var(--muted-foreground)]">{devDesc}</p>}
+                  <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-[var(--muted-foreground)]">
+                    <span className="font-mono bg-[var(--muted)] px-2 py-0.5 rounded text-[var(--foreground)] font-medium">
+                      {selectedDevice.type}
+                    </span>
+                    <span className="font-mono bg-[var(--muted)] px-2 py-0.5 rounded text-[var(--foreground)] font-medium">
+                      {selectedDevice.address}
+                    </span>
+                    <span>{selectedDevice.interface}</span>
+                    {selectedDevice.lastUpdated && (
+                      <span>· {formatLastUpdated(selectedDevice.lastUpdated, lang)}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {(devRooms.length > 0 || devFuncs.length > 0) && (
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border)]">
+                {devRooms.map((r) => (
+                  <span
+                    key={r}
+                    className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[var(--accent)]"
+                  >
+                    {r}
+                  </span>
+                ))}
+                {devFuncs.map((f) => (
+                  <span
+                    key={f}
+                    className="rounded-full bg-[var(--muted)] px-2.5 py-0.5 text-xs font-medium text-[var(--muted-foreground)]"
+                  >
+                    {f}
+                  </span>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* Channels & Controls */}
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+              {t("deviceChannels")} ({selectedDevice.channels.length})
+            </h2>
+            <DeviceDetails
+              device={selectedDevice}
+              sid={sid}
+              mayChange={mayChange}
+              strings={strings}
+              onExpired={onExpired}
+            />
+          </div>
+        </div>
+      );
+    }
+  }
 
   return (
     <Card className="space-y-4">

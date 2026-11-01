@@ -150,7 +150,7 @@ export function CommandMenu({
                   value={`${device.name} ${device.address} ${device.type}`}
                   onSelect={() =>
                     runCommand(() => {
-                      window.location.hash = "#/devices";
+                      window.location.hash = `#/devices/${device.id}`;
                     })
                   }
                 >
