@@ -221,21 +221,24 @@ export function CommandMenu({
           <>
             <CommandSeparator />
             <CommandGroup heading={t("devices")}>
-              {devices.slice(0, 20).map((device) => (
-                <CommandItem
-                  key={device.id}
-                  value={`${device.name} ${device.address} ${device.type}`}
-                  onSelect={() =>
-                    runCommand(() => {
-                      window.location.hash = `#/devices/${device.id}`;
-                    })
-                  }
-                >
-                  <Radio className="size-4 shrink-0 text-[var(--primary)]" aria-hidden="true" />
-                  <span className="flex-1 truncate font-medium">{device.name}</span>
-                  <CommandShortcut>{device.address}</CommandShortcut>
-                </CommandItem>
-              ))}
+              {devices.map((device) => {
+                const devName = text(device.name, strings);
+                return (
+                  <CommandItem
+                    key={device.id}
+                    value={`${devName} ${device.name} ${device.address} ${device.type}`}
+                    onSelect={() =>
+                      runCommand(() => {
+                        window.location.hash = `#/devices/${device.id}`;
+                      })
+                    }
+                  >
+                    <Radio className="size-4 shrink-0 text-[var(--primary)]" aria-hidden="true" />
+                    <span className="flex-1 truncate font-medium">{devName}</span>
+                    <CommandShortcut>{device.address}</CommandShortcut>
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
           </>
         )}
