@@ -9,9 +9,10 @@
 #   programs  also {"description","isOperable","isCopy"}: isOperable is the classic rule for the status page (users may
 #             operate the program), a copy is an editing artefact the classic list leaves out
 #   alarms    the alarm system variables that are triggered (the classic header's alarm messages):
-#             {"id","name","occurredAt"}
+#             {"id","name","occurredAt","canAcknowledge"}; canAcknowledge is the classic rule of ReceiptAlarm: the message
+#             has no trigger datapoint or its trigger datapoint can be written (POST /api/v2/messages acknowledges it)
 #   services  the open service messages (the classic header's service messages):
-#             {"id","occurredAt","channelName","message","isSticky"}; message is the text of the string
+#             {"id","occurredAt","channelName","message","isSticky","canAcknowledge"}; message is the text of the string
 #             table, possibly a ${key} reference that the client translates; a sticky-unreach message
 #             (isSticky) is not counted by the classic header when CCU.getStickyUnreachState says so
 #          limit     1..500, default 100 (model_default_limit / model_max_limit of BD-09)
@@ -349,6 +350,10 @@ proc model_readAlarms { } {
             WriteLine("ID {" # sv.ID() # "}");
             WriteLine("NAME {" # sv.Name() # "}");
             WriteLine("TIME {" # sv.AlOccurrenceTime() # "}");
+            boolean canAck = true;
+            var trig = dom.GetObject(sv.AlTriggerDP());
+            if (trig) { canAck = false; if (OPERATION_WRITE & trig.Operations()) { canAck = true; } }
+            WriteLine("ACK {" # canAck # "}");
             WriteLine("}");
           }
         }
@@ -360,7 +365,8 @@ proc model_readAlarms { } {
     if { [catch { array set a $rec }] || ![info exists a(ID)] } then { array unset a; continue }
     set time ""
     if { [info exists a(TIME)] } then { set time $a(TIME) }
-    lappend items "\{\"id\":[json_toString $a(ID)],\"name\":[json_toString $a(NAME)],\"occurredAt\":[json_toString $time]\}"
+    set ack [expr { [info exists a(ACK)] && [string is true -strict $a(ACK)] ? "true" : "false" }]
+    lappend items "\{\"id\":[json_toString $a(ID)],\"name\":[json_toString $a(NAME)],\"occurredAt\":[json_toString $time],\"canAcknowledge\":$ack\}"
     array unset a
   }
   return $items
@@ -421,6 +427,10 @@ proc model_readServices { } {
             WriteLine("CHANNEL {" # channelName # "}");
             WriteLine("MESSAGE {" # message # "}");
             WriteLine("STICKY {" # sticky # "}");
+            boolean canAck = true;
+            var own = dom.GetObject(alarm.AlTriggerDP());
+            if (own) { canAck = false; if (OPERATION_WRITE & own.Operations()) { canAck = true; } }
+            WriteLine("ACK {" # canAck # "}");
             WriteLine("}");
           }
         }
@@ -430,8 +440,9 @@ proc model_readServices { } {
   set items {}
   foreach rec [hmscript $script] {
     if { [catch { array set m $rec }] || ![info exists m(ID)] } then { array unset m; continue }
-    foreach k {TIME CHANNEL MESSAGE STICKY} { if { ![info exists m($k)] } then { set m($k) "" } }
-    lappend items "\{\"id\":[json_toString $m(ID)],\"occurredAt\":[json_toString $m(TIME)],\"channelName\":[json_toString $m(CHANNEL)],\"message\":[json_toString $m(MESSAGE)],\"isSticky\":[model_bool $m(STICKY)]\}"
+    foreach k {TIME CHANNEL MESSAGE STICKY ACK} { if { ![info exists m($k)] } then { set m($k) "" } }
+    set ack [expr { [string is true -strict $m(ACK)] ? "true" : "false" }]
+    lappend items "\{\"id\":[json_toString $m(ID)],\"occurredAt\":[json_toString $m(TIME)],\"channelName\":[json_toString $m(CHANNEL)],\"message\":[json_toString $m(MESSAGE)],\"isSticky\":[model_bool $m(STICKY)],\"canAcknowledge\":$ack\}"
     array unset m
   }
   return $items

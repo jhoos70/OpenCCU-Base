@@ -1,0 +1,105 @@
+package require tcltest
+namespace import ::tcltest::*
+
+# POST /api/v2/messages {id}: acknowledges an alarm or service message with the classic rule of ReceiptAlarm. The ReGa
+# script is proven on a real ReGa (see the commit message); here: the rules, the error codes, that nothing is written when
+# a rule refuses, that the id reaches ReGa as a string variable and is only looked up in the two alarm collections.
+set here [file dirname [file normalize [info script]]]
+set gen [file dirname [file dirname $here]]
+source [file join $gen schema-harness tests helpers mocks.tcl]
+set gen $::mock::generated
+source [file join $gen schema-harness tests helpers golden.tcl]
+
+set CAND only:dispatcher,security-session,rega-model
+proc status {r} {
+  if {[regexp {Status: (\d+)} [dict get $r headers] -> s]} { return $s }
+  return 200
+}
+proc err {r} {
+  if {[regexp {"code": (\d+),\s*"message": "((?:[^"\\]|\\.)*)"} [dict get $r body] -> c m]} { return [list [status $r] $c $m] }
+  return [list [status $r] none]
+}
+set GUEST {{AbCdEf1234 1 1000 Guest}}
+set USER  {{AbCdEf1234 2 1000 User}}
+set ADMIN {{AbCdEf1234 8 1000 Admin}}
+set FIND {*AlReceipt*}
+proc found {args} {
+  set d [dict create KIND SYSVAR ON true CAN true FULL true STILL false]
+  foreach {k v} $args { dict set d $k $v }
+  set s ""
+  dict for {k v} $d { append s [list $k $v] " " }
+  return [string trimright $s]
+}
+proc ack {body args} {
+  array set o [list -sessions $::ADMIN -rega {} -method POST]
+  array set o $args
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -method $o(-method) -contenttype application/json -setenv {REQUEST_URI /api/v2/messages} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
+}
+proc run {out args} { return [ack {{"id":"18385"}} -rega [list [list $::FIND $out]] {*}$args] }
+proc body {r} { return [string trim [dict get $r body]] }
+proc scripts {r} { return [join [dict get $r rega_calls] \n] }
+proc receipts {r} { return [regexp -all {var doReceipt = "true";} [scripts $r]] }
+
+test acknowledge-0 {the handler file exists, is complete Tcl and is registered as a POST route} -body {
+  set fd [open [file join $gen rega-model v2 messages.tcl] r]; set c [read $fd]; close $fd
+  set fd [open [file join $gen dispatcher v2 router.tcl] r]; set r [read $fd]; close $fd
+  list [info complete $c] [regexp {/messages\s+\{POST\s+messages.tcl\s+v2_messages_handle\}} $r]
+} -result {1 1}
+
+test acknowledge-1 {a triggered alarm that can be acknowledged is acknowledged: the first run only looks, the second receipts; the answer says acknowledged} -body {
+  set r [run [found]]
+  list [status $r] [body $r] [regexp -all {var doReceipt = "false";} [scripts $r]] [receipts $r]
+} -result {200 {{"id":"18385","acknowledged":true}} 1 1}
+
+test acknowledge-2 {a service message works the same way; a message that the device raises again (still triggered after the receipt) says acknowledged false} -body {
+  set a [run [found KIND SERVICE]]
+  set b [run [found STILL true]]
+  list [body $a] [body $b]
+} -result {{{"id":"18385","acknowledged":true}} {{"id":"18385","acknowledged":false}}}
+
+test acknowledge-3 {an id that is no alarm, or an alarm that is not triggered (any more), is HTTP 404 and nothing is acknowledged} -body {
+  set none [run {}]
+  set off [run [found ON false]]
+  list [err $none] [err $off] [receipts $none] [receipts $off]
+} -result {{404 501 {message not found}} {404 501 {message not found}} 0 0}
+
+test acknowledge-4 {a message whose trigger datapoint cannot be written is refused (HTTP 403) before anything is written, as in the classic UI} -body {
+  set r [run [found CAN false]]
+  list [err $r] [receipts $r]
+} -result {{403 400 {access denied (message)}} 0}
+
+test acknowledge-5 {a user needs the full access right of an alarm variable, an administrator does not; a guest never acknowledges} -body {
+  set a [run [found FULL false] -sessions $::USER]
+  set b [run [found FULL false] -sessions $::ADMIN]
+  set c [run [found] -sessions $::USER]
+  set d [run [found] -sessions $::GUEST]
+  list [err $a] [receipts $a] [status $b] [status $c] [err $d] [regexp {AlReceipt} [scripts $d]]
+} -result {{403 400 {access denied (message)}} 0 200 200 {403 400 {access denied (\"USER\" needed, session level 1)}} 0}
+
+test acknowledge-6 {the body: not JSON is 400, a missing or odd id and unknown keys are 422} -body {
+  set out {}
+  foreach b [list {{nope}} {{}} {{"id":"18x"}} {{"id":18385,"all":true}} {{"id":""}}] { lappend out [err [ack $b]] }
+  set out
+} -result {{400 100 {invalid request (\" expected)}} {422 403 {invalid argument (id)}} {422 403 {invalid argument (id)}} {422 403 {invalid argument (all)}} {422 403 {invalid argument (id)}}}
+
+test acknowledge-7 {only POST is allowed (405); without a session HTTP 401 and no ReGa script runs} -body {
+  set out {}
+  foreach m {GET PUT DELETE} { lappend out [status [ack {} -method $m]] }
+  set n [golden::call_raw {{"id":"1"}} [golden::prepare [list -candidate $::CAND -method POST -contenttype application/json -setenv {REQUEST_URI /api/v2/messages} -header {X-Requested-With XMLHttpRequest}]]]
+  lappend out [status $n] [llength [dict get $n rega_calls]]
+} -result {405 405 405 401 0}
+
+test acknowledge-8 {the id is only ever a string variable of the script, never part of its code, and the lookup runs through the two alarm collections} -body {
+  set r [run [found] -rega [list [list $::FIND [found]]]]
+  set fd [open [file join $gen rega-model v2 messages.tcl] r]; set c [read $fd]; close $fd
+  list [regexp {var msgId = "18385";} [scripts $r]] [regexp {dom.GetObject\(ID_SYSTEM_VARIABLES\).EnumIDs} [scripts $r]] [regexp {dom.GetObject\(ID_SERVICES\).EnumIDs} [scripts $r]] [regexp {dom.GetObject\(\$} $c]
+} -result {1 1 1 0}
+
+test acknowledge-9 {the scripts nest their ifs (a chain of && is not short-circuited by ReGa)} -body {
+  set fd [open [file join $gen rega-model v2 messages.tcl] r]; set c [read $fd]; close $fd
+  regexp {set MESSAGES_FIND \{(.*?)\n\}\n} $c -> script
+  regexp -all {&&} $script
+} -result {0}
+
+cleanupTests

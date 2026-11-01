@@ -29,9 +29,9 @@ proc model {query args} {
 
 set ALARMS {*ID_SYSTEM_VARIABLES*OT_ALARMDP*}
 set SERVICES {*ID_SERVICES*}
-proc alarm {id name time} { return [list ID $id NAME $name TIME $time] }
+proc alarm {id name time {ack true}} { return [list ID $id NAME $name TIME $time ACK $ack] }
 proc svc {id args} {
-  set d [dict create ID $id TIME {2026-10-31 19:35:05} CHANNEL {Kitchen:0} MESSAGE {Low battery} STICKY false]
+  set d [dict create ID $id TIME {2026-10-31 19:35:05} CHANNEL {Kitchen:0} MESSAGE {Low battery} STICKY false ACK true]
   foreach {k v} $args { dict set d $k $v }
   set s ""
   dict for {k v} $d { append s [list $k $v] " " }
@@ -42,7 +42,7 @@ proc body {r} { return [string trim [dict get $r body]] }
 test messages-0 {the alarm section lists the triggered alarms as {id,name,occurredAt}} -body {
   set r [model "sections=alarms" -rega [list [list $::ALARMS [list [alarm 1034 {WatchDog: udevd-restart} {2026-10-31 19:35:05}] [alarm 1035 {Alarm 2} {2026-10-31 20:00:00}]]]]]
   list [status $r] [body $r]
-} -result [list 200 {{"alarms":{"total":2,"offset":0,"limit":100,"items":[{"id":"1034","name":"WatchDog: udevd-restart","occurredAt":"2026-10-31 19:35:05"},{"id":"1035","name":"Alarm 2","occurredAt":"2026-10-31 20:00:00"}]}}}]
+} -result [list 200 {{"alarms":{"total":2,"offset":0,"limit":100,"items":[{"id":"1034","name":"WatchDog: udevd-restart","occurredAt":"2026-10-31 19:35:05","canAcknowledge":true},{"id":"1035","name":"Alarm 2","occurredAt":"2026-10-31 20:00:00","canAcknowledge":true}]}}}]
 
 test messages-1 {no alarm and no service message: both sections are empty, not missing} -body {
   set r [model "sections=alarms,services" -rega [list [list $::ALARMS {}] [list $::SERVICES {}]]]
@@ -52,12 +52,12 @@ test messages-1 {no alarm and no service message: both sections are empty, not m
 test messages-2 {the service section lists the open service messages with channel, message and the sticky flag} -body {
   set r [model "sections=services" -rega [list [list $::SERVICES [list [svc 7] [svc 8 CHANNEL {Bad "Room":1} MESSAGE {${unknownMessage} (HM-X|UNREACH=TRUE)} STICKY true]]]]]
   body $r
-} -result {{"services":{"total":2,"offset":0,"limit":100,"items":[{"id":"7","occurredAt":"2026-10-31 19:35:05","channelName":"Kitchen:0","message":"Low battery","isSticky":false},{"id":"8","occurredAt":"2026-10-31 19:35:05","channelName":"Bad \"Room\":1","message":"${unknownMessage} (HM-X|UNREACH=TRUE)","isSticky":true}]}}}
+} -result {{"services":{"total":2,"offset":0,"limit":100,"items":[{"id":"7","occurredAt":"2026-10-31 19:35:05","channelName":"Kitchen:0","message":"Low battery","isSticky":false,"canAcknowledge":true},{"id":"8","occurredAt":"2026-10-31 19:35:05","channelName":"Bad \"Room\":1","message":"${unknownMessage} (HM-X|UNREACH=TRUE)","isSticky":true,"canAcknowledge":true}]}}}
 
 test messages-3 {a service record without optional attributes gets empty texts and isSticky false} -body {
   set r [model "sections=services" -rega [list [list $::SERVICES [list {ID 9}]]]]
   body $r
-} -result {{"services":{"total":1,"offset":0,"limit":100,"items":[{"id":"9","occurredAt":"","channelName":"","message":"","isSticky":false}]}}}
+} -result {{"services":{"total":1,"offset":0,"limit":100,"items":[{"id":"9","occurredAt":"","channelName":"","message":"","isSticky":false,"canAcknowledge":false}]}}}
 
 test messages-4 {limit and offset page both sections} -body {
   set recs {}
@@ -83,5 +83,11 @@ test messages-7 {the ReGa scripts nest their ifs: a chain of && with IsTypeOf an
   set fd [open $p r]; set c [read $fd]; close $fd
   list [regexp {IsTypeOf\(OT_ALARMDP\)\s*&&} $c] [regexp {AlState\(\)\s*==\s*asOncoming\)\s*&&\s*\(\w+\.State} $c]
 } -result {0 1}
+
+test messages-8 {an alarm whose trigger datapoint cannot be written is listed with canAcknowledge false (the classic rule), one without or with a writable trigger with true} -body {
+  set r [model "sections=alarms" -rega [list [list $::ALARMS [list [alarm 1 A {2026-10-31 19:00:00} false] [alarm 2 B {2026-10-31 19:00:00} true]]]]]
+  set j [body $r]
+  list [regexp {"id":"1","name":"A","occurredAt":"[^"]*","canAcknowledge":false} $j] [regexp {"id":"2","name":"B","occurredAt":"[^"]*","canAcknowledge":true} $j]
+} -result {1 1}
 
 cleanupTests

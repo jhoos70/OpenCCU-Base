@@ -157,6 +157,7 @@ rega-model	methods/sysvar/setfloat.tcl	src/webui/www/api/methods/sysvar/setfloat
 rega-model	v2/model.tcl	src/webui/www/api/v2/model.tcl
 rega-model	v2/system.tcl	src/webui/www/api/v2/system.tcl
 rega-model	v2/log.tcl	src/webui/www/api/v2/log.tcl
+rega-model	v2/messages.tcl	src/webui/www/api/v2/messages.tcl
 rega-model	v2/favourites.tcl	src/webui/www/api/v2/favourites.tcl
 rega-model	v2/programs.tcl	src/webui/www/api/v2/programs.tcl
 rega-model	v2/sysvars.tcl	src/webui/www/api/v2/sysvars.tcl
