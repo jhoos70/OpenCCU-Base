@@ -105,6 +105,14 @@ proc values_readDevice { deviceId channelFilter } {
           {
             if (dom.GetObject(dev.Interface()))
             {
+              boolean wantHealth = false;
+              if (channelFilter != "")
+              {
+                foreach(cId, dev.Channels())
+                {
+                  if (channelFilter.Find("," # cId # ",") >= 0) { wantHealth = true; }
+                }
+              }
               foreach(cId, dev.Channels())
               {
                 var channel = dom.GetObject(cId);
@@ -116,6 +124,33 @@ proc values_readDevice { deviceId channelFilter } {
                     takeChannel = false;
                     if (channelFilter.Find("," # cId # ",") >= 0) { takeChannel = true; }
                   }
+                  if (channel.Internal())
+                  {
+                    if (wantHealth)
+                    {
+                      if (channel.ChnNumber() == 0)
+                      {
+                        foreach(pId, channel.DPs())
+                        {
+                          var dp = dom.GetObject(pId);
+                          if (dp)
+                          {
+                            if (dp.TypeName() == "HSSDP")
+                            {
+                              boolean health = false;
+                              if (dp.HSSID() == "UNREACH") { health = true; }
+                              if (dp.HSSID() == "LOWBAT") { health = true; }
+                              if (dp.HSSID() == "LOW_BAT") { health = true; }
+                              if (health)
+                              {
+                                DESCRIBE
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                   if (takeChannel)
                   {
                     if (false == channel.Internal())
@@ -125,9 +160,12 @@ proc values_readDevice { deviceId channelFilter } {
                         var dp = dom.GetObject(pId);
                         if (dp)
                         {
-                          if (false == dp.Internal())
+                          if (dp.TypeName() == "HSSDP")
                           {
-                            DESCRIBE
+                            if (false == dp.Internal())
+                            {
+                              DESCRIBE
+                            }
                           }
                         }
                       }
@@ -162,7 +200,8 @@ proc values_item { rec } {
 
 ##
 # The fixed script that finds one datapoint through the devices and describes it; "" if it is not a datapoint of a channel
-# of a device that is ready
+# of a device that is ready (a channel's DPs() can also hold other objects, e.g. a program that uses the channel: only
+# real datapoints are described, or the script stops half way through a record)
 ##
 proc values_readOne { dpId } {
   global VALUES_DESCRIBE

@@ -182,4 +182,18 @@ test values-13 {channels that match nothing answer an empty list (200, not 404);
   set out
 } -result [list 200 1 {422 403 {invalid argument (channels)}} {422 403 {invalid argument (channels)}} {422 403 {invalid argument (channels)}} {422 403 {invalid argument (channels)}} {422 403 {invalid argument (device)}}]
 
+test values-14 {the read only describes real datapoints: a channel's DPs() can hold other objects (e.g. a program that uses the channel), which stopped the script half way through a record} -body {
+  set fd [open [file join $gen rega-model v2 values.tcl] r]; set c [read $fd]; close $fd
+  regexp {proc values_readDevice.*?\nproc values_item} $c body
+  list [regexp {var dp = dom.GetObject\(pId\);\s*if \(dp\)\s*\{\s*if \(dp.TypeName\(\) == "HSSDP"\)} $body]
+} -result {1}
+
+test values-15 {the maintenance channel (internal) is read only for the health of the devices of the selected channels: UNREACH, LOWBAT and LOW_BAT and nothing else of it} -body {
+  set fd [open [file join $gen rega-model v2 values.tcl] r]; set c [read $fd]; close $fd
+  regexp {proc values_readDevice.*?\nproc values_item} $c body
+  list [regexp {boolean wantHealth = false;} $body] [regexp {channel.ChnNumber\(\) == 0} $body] \
+    [regexp {HSSID\(\) == "UNREACH"} $body] [regexp {HSSID\(\) == "LOWBAT"} $body] [regexp {HSSID\(\) == "LOW_BAT"} $body] \
+    [regexp -all {HSSID\(\) == "} $body]
+} -result {1 1 1 1 1 3}
+
 cleanupTests
