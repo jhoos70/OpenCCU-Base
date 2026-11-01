@@ -1,0 +1,66 @@
+#!/bin/sh
+ADDON_NAME="openccu-next"
+ADDON_DIR="/usr/local/addons/${ADDON_NAME}"
+WWW_DIR="/usr/local/etc/config/addons/www/${ADDON_NAME}"
+RC_FILE="/usr/local/etc/config/rc.d/${ADDON_NAME}"
+
+case "$1" in
+  ""|start)
+    # Ensure /www/webui/next symlink exists if root was remounted or refreshed
+    if [ ! -e /www/webui/next ]; then
+      ro_before=0
+      grep -q " / [^ ]* ro[, ]" /proc/mounts && ro_before=1
+      [ "$ro_before" = 1 ] && mount -o remount,rw /
+      mkdir -p /www/webui
+      ln -sfn "${WWW_DIR}" /www/webui/next
+      [ "$ro_before" = 1 ] && mount -o remount,ro /
+    fi
+    ;;
+  stop)
+    ;;
+  restart)
+    $0 stop
+    $0 start
+    ;;
+  info)
+    VERSION=$(cat "${ADDON_DIR}/VERSION" 2>/dev/null || echo "0.1.0")
+    echo "Info: <b>OpenCCU NextGen WebUI</b><br>"
+    echo "Info: Modern React & Tailwind WebUI with dark mode for OpenCCU & CCU3.<br>"
+    echo "Version: ${VERSION}"
+    echo "Name: OpenCCU NextGen"
+    echo "Operations: uninstall"
+    echo "Config-Url: /webui/next/"
+    ;;
+  uninstall)
+    echo "Uninstalling OpenCCU NextGen WebUI..."
+    ro_before=0
+    grep -q " / [^ ]* ro[, ]" /proc/mounts && ro_before=1
+    [ "$ro_before" = 1 ] && mount -o remount,rw /
+
+    # Restore backed-up API files if backup tar exists
+    LATEST_BACKUP=$(ls -1t /usr/local/webui-api-backup-*.tar 2>/dev/null | head -n1 || true)
+    if [ -n "$LATEST_BACKUP" ] && [ -x "${ADDON_DIR}/install.sh" ]; then
+      "${ADDON_DIR}/install.sh" restore "$LATEST_BACKUP" || true
+    fi
+
+    # Disable v2 in apiconfig.conf
+    if [ -f "/www/api/apiconfig.conf" ]; then
+      sed -i "s/^  v2_enabled true/  v2_enabled false/" /www/api/apiconfig.conf 2>/dev/null || true
+    fi
+
+    # Remove symlink and installed marker
+    rm -rf /www/webui/next /usr/local/webui-api-installed.txt
+
+    [ "$ro_before" = 1 ] && mount -o remount,ro /
+
+    # Remove addon directories and rc script
+    rm -rf "${ADDON_DIR}" "${WWW_DIR}" "${RC_FILE}"
+    echo "Uninstallation complete."
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|info|uninstall}"
+    exit 1
+    ;;
+esac
+
+exit 0

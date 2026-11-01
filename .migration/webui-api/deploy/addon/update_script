@@ -1,0 +1,85 @@
+#!/bin/sh
+# update_script - HomeMatic / CCU Add-on installer for OpenCCU NextGen WebUI
+set -eu
+
+ADDON_NAME="openccu-next"
+ADDON_DIR="/usr/local/addons/${ADDON_NAME}"
+WWW_DIR="/usr/local/etc/config/addons/www/${ADDON_NAME}"
+RC_DIR="/usr/local/etc/config/rc.d"
+SRC_DIR=$(cd "$(dirname "$0")" && pwd)
+
+echo "=========================================================="
+echo "Installing OpenCCU NextGen WebUI Addon..."
+echo "=========================================================="
+
+# 1. Create persistent addon directories on /usr/local
+mkdir -p "${ADDON_DIR}" "${WWW_DIR}" "${RC_DIR}"
+
+# 2. Record version
+if [ -f "${SRC_DIR}/VERSION" ]; then
+  cp "${SRC_DIR}/VERSION" "${ADDON_DIR}/VERSION"
+else
+  echo "0.1.0" > "${ADDON_DIR}/VERSION"
+fi
+
+# 3. Extract NextGen WebUI frontend into addon www directory
+echo "-> Installing NextGen WebUI frontend assets..."
+rm -rf "${WWW_DIR:?}"/*
+tar -C "${WWW_DIR}" -xzf "${SRC_DIR}/www/webui-next-dist.tar.gz"
+
+# 4. Check if root filesystem is mounted read-only
+ro_before=0
+grep -q " / [^ ]* ro[, ]" /proc/mounts && ro_before=1
+if [ "$ro_before" = 1 ]; then
+  mount -o remount,rw /
+fi
+
+cleanup() {
+  if [ "$ro_before" = 1 ]; then
+    mount -o remount,ro / 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+# 5. Install /api/v2/ backend files
+echo "-> Installing API v2 backend endpoints..."
+rm -rf /tmp/webui-api-bundle
+tar -C /tmp -xzf "${SRC_DIR}/api/webui-api-bundle.tar.gz"
+
+(
+  cd /tmp/webui-api-bundle
+  ./install.sh install --patch
+)
+
+# Keep install.sh in addon dir for clean uninstallation
+cp /tmp/webui-api-bundle/install.sh "${ADDON_DIR}/install.sh"
+chmod 755 "${ADDON_DIR}/install.sh"
+rm -rf /tmp/webui-api-bundle
+
+# 6. Enable API v2 in apiconfig.conf
+if [ -f "/www/api/apiconfig.conf" ]; then
+  sed -i "s/^  v2_enabled false/  v2_enabled true/" /www/api/apiconfig.conf
+  grep -q "^  v2_enabled true" /www/api/apiconfig.conf || printf "\n  v2_enabled true\n" >> /www/api/apiconfig.conf
+fi
+
+# 7. Symlink /www/webui/next to the addon WWW directory
+rm -rf /www/webui/next
+mkdir -p /www/webui
+ln -sfn "${WWW_DIR}" /www/webui/next
+
+# 8. Install control script for Zusatzsoftware integration
+cp "${SRC_DIR}/rc.d/openccu-next" "${RC_DIR}/openccu-next"
+chmod 755 "${RC_DIR}/openccu-next"
+
+# 9. Copy logo icon
+if [ -f "${WWW_DIR}/logo.png" ]; then
+  cp "${WWW_DIR}/logo.png" "${ADDON_DIR}/logo.png"
+fi
+
+echo "=========================================================="
+echo "OpenCCU NextGen WebUI successfully installed!"
+echo "Version: $(cat "${ADDON_DIR}/VERSION")"
+echo "Open directly at: http://$(hostname -i 2>/dev/null || echo '<ccu-ip>')/webui/next/"
+echo "Or via Control Panel: Einstellungen -> Zusatzsoftware"
+echo "=========================================================="
+exit 0
