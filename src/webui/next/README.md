@@ -119,12 +119,21 @@ The data is `GET /api/v2/favourites` (the lists and their members), `GET /api/v2
 channel is and which device it belongs to) and `GET /api/v2/values?channels=1,2,3` (the datapoints of up to 100 channels
 in one request; in chunks if a list is longer). Lists are read every 60 s, values every 10 s.
 
+**Editing favourite lists.** A user or administrator gets **New list**, **Edit list** and **Delete list** on the Favourites
+page (also when they have no lists yet). New list and Edit list open `FavouriteListDialog` (name, description, the ordered
+members with up / down / remove buttons and **Add separator**, and a searchable picker to add channels, system variables or
+programs). Saving calls `POST /api/v2/favourites {"id"?,"name","info"?,"items":[{"type","id"?}]}`; the server checks every
+channel, variable and program against its ReGa collection before writing, deletes old `OT_OBJECT` separators so they do not
+leak, refuses edits to lists shared with another user when the caller is not an administrator (HTTP 403, as in the classic
+`favOverview.htm`), and logs one syslog line. Delete list asks first (`ConfirmDialog`, Cancel focused) and calls
+`DELETE /api/v2/favourites?id=ID`.
+
 **Not yet / unproven:** the heating modes are taken from the classic control code for the HM groups (`CONTROL_MODE` 0 auto,
 1 manual, 2 party, 3 boost; the `AUTO_MODE`, `MANU_MODE`, `BOOST_MODE` datapoints). For HmIP heating the Auto / Manual
 chips write `SET_POINT_MODE` 0 and 1 and Boost writes `BOOST_MODE`; that is what the datapoints allow (they are writable)
 but **it could not be tried on a real HmIP thermostat** (the classic JS that does it is not in the repository). Nothing
 was seen to succeed on real hardware at all: no interface works on any test system. Party mode, comfort / lowering
-temperature, the week schedule, heating/cooling and the window-open state are not offered. Lists cannot be edited here.
+temperature, the week schedule, heating/cooling and the window-open state are not offered.
 No dark mode yet (the colour tokens are in `index.css`). Rooms and functions that hold hundreds of channels are not paged (the largest on the test copy, 52 channels, is one request of 0.3 s and 270 KB); the server reads at most 100 channels per request and the page asks in chunks.
 
 ## System log: read, export and clear

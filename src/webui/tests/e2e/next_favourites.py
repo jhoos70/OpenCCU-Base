@@ -108,8 +108,37 @@ def main():
     ok = lambda body: dict(status=200, content_type="application/json", body=json.dumps(body))
 
     def on_favs(route):
+        req = route.request
         if st["favs_status"] != 200:
             return route.fulfill(status=st["favs_status"], content_type="application/json", body=json.dumps({"error": {"code": 400, "message": "x"}}))
+        if req.method == "POST":
+            body = json.loads(req.post_data)
+            posts.append(("favs_post", body))
+            lid = body.get("id") or "99"
+            name_map = {
+                ("CHANNEL", "101"): "Wohnzimmer Gruppe:1",
+                ("CHANNEL", "102"): "Bad:1",
+                ("CHANNEL", "202"): "Steckdose Server:3",
+                ("SYSVAR", "950"): "Anwesenheit",
+                ("PROGRAM", "300"): "Abendlicht",
+            }
+            items = []
+            for idx, it in enumerate(body.get("items", [])):
+                if it["type"] == "SEPARATOR":
+                    items.append({"id": str(900 + idx), "type": "SEPARATOR", "name": ""})
+                else:
+                    items.append({"id": it["id"], "type": it["type"], "name": name_map.get((it["type"], it["id"]), it["id"])})
+            saved = {"id": lid, "name": body["name"], "info": body.get("info", ""), "items": items}
+            if body.get("id"):
+                st["lists"] = [saved if x["id"] == lid else x for x in st["lists"]]
+            else:
+                st["lists"] = st["lists"] + [saved]
+            return route.fulfill(**ok(saved))
+        if req.method == "DELETE":
+            lid = req.url.split("id=")[-1]
+            posts.append(("favs_delete", lid))
+            st["lists"] = [x for x in st["lists"] if x["id"] != lid]
+            return route.fulfill(**ok({"id": lid, "deleted": True}))
         route.fulfill(**ok({"lists": st["lists"]}))
 
     def on_values(route):
@@ -139,11 +168,12 @@ def main():
         pg = browser.new_page(viewport={"width": 1280, "height": 1000})
         pg.on("console", lambda m: m.type == "error" and not any(n in m.text for n in NOISE) and console.append(m.text[:140]))
         pg.on("pageerror", lambda e: console.append("pageerror: " + str(e)[:140]))
-        pg.route("**/v2/favourites", on_favs)
+        pg.route("**/v2/favourites*", on_favs)
         pg.route("**/v2/values*", on_values)
         pg.route("**/v2/sysvars", on_sysvars_post)
         pg.route("**/v2/model?sections=devices*", lambda r: r.fulfill(**ok({"devices": {"total": len(DEVICES), "offset": 0, "limit": 500, "items": DEVICES}})))
         pg.route("**/v2/model?sections=sysvars*", lambda r: r.fulfill(**ok({"sysvars": {"total": 1, "offset": 0, "limit": 500, "items": [SYSVAR]}})))
+        pg.route("**/v2/model?sections=programs*", lambda r: r.fulfill(**ok({"programs": {"total": 1, "offset": 0, "limit": 500, "items": [{"id": "300", "name": "Abendlicht", "description": "", "lastExecuteTime": "", "isActive": True, "isInternal": False, "isOperable": True, "isCopy": False}]}})))
         pg.route("**/v2/profile", lambda r: r.fulfill(**ok(PROFILE)))
         tile = lambda title: pg.locator("article", has=pg.get_by_role("heading", name=title, exact=True))
         try:
@@ -252,11 +282,48 @@ def main():
             pg.get_by_role("button", name="Open the list Leer").click()
             check("an empty list says so", pg.get_by_text("This list is empty.").is_visible())
 
-            # ---- empty, German, expired
+            # ---- empty, create, edit, delete, German, expired
             st["lists"] = []
             pg.get_by_role("button", name="Refresh").click()
             pg.get_by_text("You have no favourite lists").wait_for()
-            check("no lists: says where they are made", "classic UI" in pg.get_by_text("You have no favourite lists").inner_text())
+            check("no lists: offers New list button", pg.get_by_role("button", name="New list").is_visible())
+
+            # create a new list from empty state
+            pg.get_by_role("button", name="New list").click()
+            dlg = pg.get_by_role("dialog")
+            dlg.get_by_label("Name", exact=True).fill("Abend")
+            dlg.get_by_label("Description", exact=True).fill("Abendroutine")
+            dlg.get_by_role("button", name="Add Wohnzimmer Gruppe:1").click()
+            dlg.get_by_role("button", name="Add separator").click()
+            dlg.get_by_role("group", name="Add to list").get_by_role("button", name="System variables").click()
+            dlg.get_by_role("button", name="Add Anwesenheit").click()
+            dlg.get_by_role("button", name="OK").click()
+            pg.get_by_role("button", name="Open the list Abend").wait_for()
+            check("creating a list sends POST /favourites and opens the created list", posts[-1] == ("favs_post", {"name": "Abend", "info": "Abendroutine", "items": [{"type": "CHANNEL", "id": "101"}, {"type": "SEPARATOR"}, {"type": "SYSVAR", "id": "950"}]}) and pg.get_by_text("Abendroutine").is_visible(), repr(posts[-1]))
+
+            # edit the list: reorder, remove separator, add program
+            pg.get_by_role("button", name="Edit list").click()
+            dlg = pg.get_by_role("dialog")
+            dlg.get_by_label("Name", exact=True).fill("Abend 2")
+            dlg.get_by_role("button", name="Remove Separator").click()
+            dlg.get_by_role("button", name="Move Anwesenheit up").click()
+            dlg.get_by_role("group", name="Add to list").get_by_role("button", name="Programs").click()
+            dlg.get_by_role("button", name="Add Abendlicht").click()
+            dlg.get_by_role("button", name="OK").click()
+            pg.get_by_role("button", name="Open the list Abend 2").wait_for()
+            check("editing a list sends id and reordered items", posts[-1] == ("favs_post", {"id": "99", "name": "Abend 2", "info": "Abendroutine", "items": [{"type": "SYSVAR", "id": "950"}, {"type": "CHANNEL", "id": "101"}, {"type": "PROGRAM", "id": "300"}]}), repr(posts[-1]))
+
+            # delete the list: Cancel is focused first, then confirm Delete
+            pg.get_by_role("button", name="Delete list").click()
+            cdlg = pg.get_by_role("dialog")
+            check("delete dialog focuses Cancel first", cdlg.get_by_role("button", name="Cancel").evaluate("el => el === document.activeElement"))
+            cdlg.get_by_role("button", name="Cancel").click()
+            check("cancelling delete keeps the list", pg.get_by_role("button", name="Open the list Abend 2").is_visible())
+            pg.get_by_role("button", name="Delete list").click()
+            pg.get_by_role("dialog").get_by_role("button", name="Delete").click()
+            pg.get_by_text("You have no favourite lists").wait_for()
+            check("confirming delete sends DELETE /favourites?id=99", posts[-1] == ("favs_delete", "99"), repr(posts[-1]))
+
             st["lists"] = LISTS
             pg.reload(); pg.get_by_role("button", name="Open the list Heizung").wait_for()
             pg.get_by_role("button", name="Account menu").click(); pg.get_by_role("menuitemradio", name="Deutsch").click()
@@ -269,6 +336,50 @@ def main():
             pg.get_by_role("link", name="Favoriten", exact=True).first.click()
             pg.wait_for_selector("#user", timeout=20000)
             check("an expired session returns to the sign-in form", pg.evaluate("sessionStorage.length") == 0)
+
+            # ---- real ReGa round-trip (unmocked /favourites on the test CCU)
+            pg.unroute_all()
+            pg.fill("#user", a.user); pg.fill("#password", a.password); pg.keyboard.press("Enter")
+            pg.get_by_role("link", name="Favoriten", exact=True).first.wait_for(timeout=20000)
+            sid = pg.evaluate("JSON.parse(sessionStorage.getItem('openccu.next.session')).sid")
+            real_id = None
+            try:
+                res = pg.evaluate("""async (sid) => {
+                  const h = {'X-Requested-With': 'XMLHttpRequest', 'X-Session-Id': sid, 'Content-Type': 'application/json'};
+                  const r1 = await fetch('/api/homematic.cgi/v2/favourites', {
+                    method: 'POST', headers: h,
+                    body: JSON.stringify({name: 'ZZTestFav', info: 'Real ReGa', items: [{type: 'SEPARATOR'}, {type: 'SYSVAR', id: '950'}]})
+                  });
+                  const created = await r1.json();
+                  const r2 = await fetch('/api/homematic.cgi/v2/favourites', {headers: {'X-Requested-With': 'XMLHttpRequest', 'X-Session-Id': sid}});
+                  const listed = await r2.json();
+                  const r3 = await fetch('/api/homematic.cgi/v2/favourites', {
+                    method: 'POST', headers: h,
+                    body: JSON.stringify({id: created.id, name: 'ZZTestFav2', info: 'Updated', items: [{type: 'SYSVAR', id: '950'}]})
+                  });
+                  const updated = await r3.json();
+                  const r4 = await fetch('/api/homematic.cgi/v2/favourites', {
+                    method: 'POST', headers: h,
+                    body: JSON.stringify({id: created.id, name: 'ZZTestFav2', items: [{type: 'CHANNEL', id: '999999'}]})
+                  });
+                  const r5 = await fetch('/api/homematic.cgi/v2/favourites?id=' + encodeURIComponent(created.id), {
+                    method: 'DELETE', headers: {'X-Requested-With': 'XMLHttpRequest', 'X-Session-Id': sid}
+                  });
+                  const deleted = await r5.json();
+                  const r6 = await fetch('/api/homematic.cgi/v2/favourites', {headers: {'X-Requested-With': 'XMLHttpRequest', 'X-Session-Id': sid}});
+                  const after = await r6.json();
+                  return {s1: r1.status, created, listed, s3: r3.status, updated, s4: r4.status, s5: r5.status, deleted, after};
+                }""", sid)
+                real_id = res.get("created", {}).get("id")
+                check("real ReGa: POST creates list with separator and sysvar", res["s1"] == 200 and res["created"]["name"] == "ZZTestFav" and [i["type"] for i in res["created"]["items"]] == ["SEPARATOR", "SYSVAR"], repr(res["created"]))
+                check("real ReGa: GET lists the created list for the user", any(x["id"] == real_id for x in res["listed"]["lists"]))
+                check("real ReGa: POST with id updates name, info and members", res["s3"] == 200 and res["updated"]["name"] == "ZZTestFav2" and [i["id"] for i in res["updated"]["items"]] == ["950"], repr(res["updated"]))
+                check("real ReGa: unknown channel member is rejected with 422", res["s4"] == 422)
+                check("real ReGa: DELETE removes the list", res["s5"] == 200 and res["deleted"] == {"id": real_id, "deleted": True} and not any(x["id"] == real_id for x in res["after"]["lists"]))
+            finally:
+                if real_id:
+                    pg.evaluate("async ([sid, id]) => fetch('/api/homematic.cgi/v2/favourites?id=' + id, {method: 'DELETE', headers: {'X-Requested-With': 'XMLHttpRequest', 'X-Session-Id': sid}})", [sid, real_id])
+
             check("no browser errors", not console, "; ".join(console[:3]))
         finally:
             try:

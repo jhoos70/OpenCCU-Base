@@ -1,9 +1,10 @@
 package require tcltest
 namespace import ::tcltest::*
 
-# GET /api/v2/favourites: the favourite lists of the signed-in user. The ReGa script itself is proven on a real ReGa
-# (see the commit message); here: the shape of the answer, the grouping and order, the access rules and that the user
-# id is the session's own and reaches ReGa as a string variable.
+# GET, POST and DELETE /api/v2/favourites: the favourite lists of the signed-in user and creating, editing and deleting
+# a list. The ReGa scripts themselves are proven on a real ReGa (see the commit message); here: the shape of the
+# answers, the grouping and order, the validation, the access rules and that the user id is the session's own and all
+# inputs reach ReGa as string variables.
 set here [file dirname [file normalize [info script]]]
 set gen [file dirname [file dirname $here]]
 source [file join $gen schema-harness tests helpers mocks.tcl]
@@ -22,15 +23,32 @@ proc err {r} {
 set GUEST {{AbCdEf1234 1 1000 Guest}}
 set USER  {{AbCdEf1234 2 1004 User}}
 set ADMIN {{AbCdEf1234 8 1000 Admin}}
-set FAV {*EnumEnabledVisibleIDs*}
+set FAV   {*EnumEnabledVisibleIDs*}
+set CHECK {*FOUND*UNERASABLE*SHARED*}
+set MEM   {*allOk*}
+set SAVE  {*list.RemoveAll*}
+set DEL   {*DELETED*}
 proc get {args} {
   array set o [list -sessions $::USER -rega {} -method GET -query {}]
   array set o $args
   return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method $o(-method) -contenttype {} -setenv {REQUEST_URI /api/v2/favourites} -query $o(-query) \
     -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
 }
+proc post {body args} {
+  array set o [list -sessions $::USER -rega {}]
+  array set o $args
+  return [golden::call_raw $body [golden::prepare [list -candidate $::CAND -method POST -contenttype application/json -setenv {REQUEST_URI /api/v2/favourites} \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
+}
+proc del {query args} {
+  array set o [list -sessions $::USER -rega {}]
+  array set o $args
+  return [golden::call_raw {} [golden::prepare [list -candidate $::CAND -method DELETE -contenttype {} -setenv {REQUEST_URI /api/v2/favourites} -query $query \
+    -header {X-Requested-With XMLHttpRequest} -header {X-Session-Id AbCdEf1234} -sessions $o(-sessions) -rega $o(-rega)]]]
+}
 proc body {r} { return [string trim [dict get $r body]] }
 proc scripts {r} { return [join [dict get $r rega_calls] \n] }
+proc syslog {r} { return [join [dict get $r syslog] \n] }
 
 set RECS [list \
   {LIST 1587 NAME Heizung INFO {}} \
@@ -40,10 +58,10 @@ set RECS [list \
   {ITEM 12019 ID 15789 TYPE SEPARATOR NAME {}} \
   {ITEM 12019 ID 15306 TYPE CHANNEL NAME {Rollladen AZ:4}}]
 
-test favourites-0 {the handler file exists, is complete Tcl and is registered as a GET route} -body {
+test favourites-0 {the handler file exists, is complete Tcl and is registered for GET, POST and DELETE} -body {
   set fd [open [file join $gen rega-model v2 favourites.tcl] r]; set c [read $fd]; close $fd
   set fd [open [file join $gen dispatcher v2 router.tcl] r]; set r [read $fd]; close $fd
-  list [info complete $c] [regexp {/favourites\s+\{GET\s+favourites.tcl\s+v2_favourites_handle\}} $r]
+  list [info complete $c] [regexp {/favourites\s+\{\{GET POST DELETE\}\s+favourites.tcl\s+v2_favourites_handle\}} $r]
 } -result {1 1}
 
 test favourites-1 {the lists and their members come back in order, grouped by list, as strict JSON} -body {
@@ -69,10 +87,77 @@ test favourites-4 {the user is the session's own and reaches ReGa as a string va
   list [regexp {var uid = "25526";} [scripts $r]] [regexp {var uid = "1";} [scripts $r]]
 } -result {1 0}
 
-test favourites-5 {only GET is allowed (405)} -body {
-  set out {}
-  foreach m {POST PUT DELETE} { lappend out [status [get -method $m]] }
-  set out
-} -result {405 405 405}
+test favourites-5 {PUT is not allowed (405)} -body {
+  status [get -method PUT]
+} -result 405
+
+test favourites-6 {POST creates a new favourite list, checks the members, logs one syslog line and answers the saved list} -body {
+  set saved [list \
+    {LIST 2001 NAME {Meine Liste} INFO {Wohnbereich}} \
+    {ITEM 2001 ID 4477 TYPE CHANNEL NAME {Arbeitszimmer Gruppe:1}} \
+    {ITEM 2001 ID 2002 TYPE SEPARATOR NAME {}} \
+    {ITEM 2001 ID 950 TYPE SYSVAR NAME Anwesenheit}]
+  set r [post {{"name":"Meine Liste","info":"Wohnbereich","items":[{"type":"CHANNEL","id":"4477"},{"type":"SEPARATOR"},{"type":"SYSVAR","id":"950"}]}} \
+    -rega [list [list $::MEM {OK {true}}] [list $::SAVE $saved]]]
+  list [status $r] [body $r] [regexp {action=create favourite list 2001} [syslog $r]] [regexp {var itemSpec = "CHANNEL:4477,SEPARATOR:0,SYSVAR:950";} [scripts $r]]
+} -result [list 200 {{"id":"2001","name":"Meine Liste","info":"Wohnbereich","items":[{"id":"4477","type":"CHANNEL","name":"Arbeitszimmer Gruppe:1"},{"id":"2002","type":"SEPARATOR","name":""},{"id":"950","type":"SYSVAR","name":"Anwesenheit"}]}} 1 1]
+
+test favourites-7 {POST with id updates an existing list of the user and logs the update} -body {
+  set saved [list \
+    {LIST 1587 NAME {Heizung Neu} INFO {}} \
+    {ITEM 1587 ID 1053 TYPE PROGRAM NAME {Nachtmodus}}]
+  set r [post {{"id":"1587","name":"Heizung Neu","items":[{"type":"PROGRAM","id":"1053"}]}} \
+    -rega [list [list $::CHECK {FOUND {true} UNERASABLE {false} SHARED {false}}] [list $::MEM {OK {true}}] [list $::SAVE $saved]]]
+  list [status $r] [body $r] [regexp {action=update favourite list 1587} [syslog $r]]
+} -result [list 200 {{"id":"1587","name":"Heizung Neu","info":"","items":[{"id":"1053","type":"PROGRAM","name":"Nachtmodus"}]}} 1]
+
+test favourites-8 {POST validation and permissions: malformed JSON (400), invalid arguments (422), unknown list (404), shared/unerasable (403), failed ReGa (502)} -body {
+  set badJson [post {{not json}}]
+  set badName [post {{"name":"   ","items":[]}}]
+  set sysName [post {{"name":"_USER1000","items":[]}}]
+  set badInfo [post "{\"name\":\"Ok\",\"info\":\"a\nb\",\"items\":\[\]}"]
+  set badItems1 [post {{"name":"Ok","items":"not-an-array"}}]
+  set badItems2 [post {{"name":"Ok","items":[{"type":"CHANNEL"}]}}]
+  set badItems3 [post {{"name":"Ok","items":[{"type":"DEVICE","id":"10"}]}}]
+  set badMember [post {{"name":"Ok","items":[{"type":"CHANNEL","id":"99999"}]}} -rega [list [list $::MEM {OK {false}}]]]
+  set notFound [post {{"id":"9999","name":"Ok","items":[]}} -rega [list [list $::CHECK {FOUND {false} UNERASABLE {false} SHARED {false}}]]]
+  set unerasable [post {{"id":"202","name":"Ok","items":[]}} -rega [list [list $::CHECK {FOUND {true} UNERASABLE {true} SHARED {false}}]]]
+  set sharedUser [post {{"id":"1587","name":"Ok","items":[]}} -sessions $::USER -rega [list [list $::CHECK {FOUND {true} UNERASABLE {false} SHARED {true}}]]]
+  set sharedAdmin [post {{"id":"1587","name":"Ok","items":[]}} -sessions $::ADMIN -rega [list [list $::CHECK {FOUND {true} UNERASABLE {false} SHARED {true}}] [list $::SAVE [list {LIST 1587 NAME Ok INFO {}}]]]]
+  set regaFail [post {{"name":"Ok","items":[]}} -rega [list [list $::SAVE {}]]]
+  list [lindex [err $badJson] 0] [err $badName] [err $sysName] [err $badInfo] \
+       [err $badItems1] [err $badItems2] [err $badItems3] [err $badMember] \
+       [err $notFound] [err $unerasable] [err $sharedUser] [status $sharedAdmin] [err $regaFail]
+} -result [list 400 \
+  {422 403 {invalid argument (name)}} \
+  {422 403 {invalid argument (name)}} \
+  {422 403 {invalid argument (info)}} \
+  {422 403 {invalid argument (items)}} \
+  {422 403 {invalid argument (items)}} \
+  {422 403 {invalid argument (items)}} \
+  {422 403 {invalid argument (items)}} \
+  {404 501 {favourite list not found}} \
+  {403 400 {access denied (favourite list)}} \
+  {403 400 {access denied (favourite list)}} \
+  200 \
+  {502 501 {the CCU did not take the change}}]
+
+test favourites-9 {DELETE deletes a favourite list of the user, logs one syslog line and enforces ownership and unerasable flags} -body {
+  set ok [del id=1587 -rega [list [list $::CHECK {FOUND {true} UNERASABLE {false} SHARED {false}}] [list $::DEL {DELETED {true}}]]]
+  set badId [del id=abc]
+  set missing [del id=9999 -rega [list [list $::CHECK {FOUND {false} UNERASABLE {false} SHARED {false}}]]]
+  set unerasable [del id=202 -sessions $::ADMIN -rega [list [list $::CHECK {FOUND {true} UNERASABLE {true} SHARED {false}}]]]
+  set sharedUser [del id=1587 -sessions $::USER -rega [list [list $::CHECK {FOUND {true} UNERASABLE {false} SHARED {true}}]]]
+  set sharedAdmin [del id=1587 -sessions $::ADMIN -rega [list [list $::CHECK {FOUND {true} UNERASABLE {false} SHARED {true}}] [list $::DEL {DELETED {true}}]]]
+  set regaFail [del id=1587 -rega [list [list $::CHECK {FOUND {true} UNERASABLE {false} SHARED {false}}] [list $::DEL {}]]]
+  list [status $ok] [body $ok] [regexp {action=delete favourite list 1587} [syslog $ok]] \
+       [err $badId] [err $missing] [err $unerasable] [err $sharedUser] [status $sharedAdmin] [err $regaFail]
+} -result [list 200 {{"id":"1587","deleted":true}} 1 \
+  {422 403 {invalid argument (id)}} \
+  {404 501 {favourite list not found}} \
+  {403 400 {access denied (favourite list)}} \
+  {403 400 {access denied (favourite list)}} \
+  200 \
+  {502 501 {the CCU did not take the change}}]
 
 cleanupTests

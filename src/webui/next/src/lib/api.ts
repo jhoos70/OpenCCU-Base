@@ -314,6 +314,50 @@ export function makeGetFavourites(doFetch: Fetch = defaultFetch): (sid: string) 
 const getFavouritesDefault = makeGetFavourites();
 export const getFavourites = (sid: string): Promise<FavouriteList[]> => getFavouritesDefault(sid);
 
+export interface FavouriteItemInput {
+  type: "CHANNEL" | "SYSVAR" | "PROGRAM" | "SEPARATOR";
+  id?: string;
+}
+
+export interface SaveFavouriteInput {
+  id?: string;
+  name: string;
+  info?: string;
+  items: FavouriteItemInput[];
+}
+
+/** POST /favourites: creates (when id is omitted) or updates a favourite list of the signed-in user. */
+export function makeSaveFavourite(doFetch: Fetch = defaultFetch): (sid: string, list: SaveFavouriteInput) => Promise<FavouriteList> {
+  return async function saveFavourite(sid: string, list: SaveFavouriteInput): Promise<FavouriteList> {
+    const payload = {
+      ...(list.id ? { id: list.id } : {}),
+      name: list.name,
+      info: list.info ?? "",
+      items: list.items.map((i) => (i.type === "SEPARATOR" ? { type: "SEPARATOR" as const } : { type: i.type, id: i.id })),
+    };
+    const { doc, status } = await send(doFetch, "/favourites", { method: "POST", headers: headersFor(sid, true), body: JSON.stringify(payload) });
+    throwIfError(doc, status);
+    const d = doc as Partial<FavouriteList> | null;
+    if (!d || typeof d.id !== "string" || typeof d.name !== "string" || !Array.isArray(d.items)) throw new ApiError(0, "unexpected answer", status);
+    return { id: d.id, name: d.name, info: String(d.info ?? ""), items: d.items };
+  };
+}
+const saveFavouriteDefault = makeSaveFavourite();
+export const saveFavourite = (sid: string, list: SaveFavouriteInput): Promise<FavouriteList> => saveFavouriteDefault(sid, list);
+
+/** DELETE /favourites?id=: deletes one favourite list of the signed-in user. */
+export function makeDeleteFavourite(doFetch: Fetch = defaultFetch): (sid: string, id: string) => Promise<{ id: string; deleted: boolean }> {
+  return async function deleteFavourite(sid: string, id: string): Promise<{ id: string; deleted: boolean }> {
+    const { doc, status } = await send(doFetch, `/favourites?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const d = doc as { id?: string; deleted?: boolean } | null;
+    if (!d || typeof d.deleted !== "boolean") throw new ApiError(0, "unexpected answer", status);
+    return { id: String(d.id ?? id), deleted: d.deleted };
+  };
+}
+const deleteFavouriteDefault = makeDeleteFavourite();
+export const deleteFavourite = (sid: string, id: string): Promise<{ id: string; deleted: boolean }> => deleteFavouriteDefault(sid, id);
+
 /** The server reads at most this many channels in one request. */
 export const CHANNELS_PER_REQUEST = 100;
 

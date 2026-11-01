@@ -1,8 +1,10 @@
 import * as React from "react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FavouriteListDialog, type EditableFavouriteList } from "@/components/FavouriteListDialog";
 import { TileBoard } from "@/components/TileBoard";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import { describeError, getFavourites, getModel, type FavouriteItem } from "@/lib/api";
+import { deleteFavourite, describeChangeError, describeError, getFavourites, getModel, isSessionExpired, type FavouriteItem } from "@/lib/api";
 import { text } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { useCurrentProfile } from "@/lib/profile-context";
@@ -46,6 +48,15 @@ export default function Collection({ kind, sid, onExpired }: { kind: CollectionK
   const groups = usePolled(loadGroups, GROUPS_MS, onExpired);
   const [picked, setPicked] = React.useState<string | null>(null);
   const [refreshSignal, setRefreshSignal] = React.useState(0);
+  const [editing, setEditing] = React.useState<EditableFavouriteList | null>(null);
+  const [deleting, setDeleting] = React.useState<Group | null>(null);
+  const opener = React.useRef<HTMLElement | null>(null);
+
+  const restoreFocus = () => {
+    const back = opener.current;
+    window.setTimeout(() => back?.isConnected && back.focus(), 0);
+  };
+
   const group = groups.data?.find((g) => g.id === picked) ?? groups.data?.[0] ?? null;
   // a room or function holds channels in no useful order: by name, so the channels of one device are together
   const items = React.useMemo(() => {
@@ -58,11 +69,69 @@ export default function Collection({ kind, sid, onExpired }: { kind: CollectionK
   const none = kind === "favourites" ? t("noFavourites") : kind === "rooms" ? t("noRooms") : t("noFunctions");
   const ready = groups.loaded && devices.loaded;
 
+  async function confirmDelete(target: Group): Promise<string | null> {
+    try {
+      await deleteFavourite(sid, target.id);
+      if (picked === target.id) setPicked(null);
+      groups.refresh();
+      return null;
+    } catch (e) {
+      if (isSessionExpired(e)) {
+        onExpired();
+        return null;
+      }
+      return describeChangeError(e, t);
+    }
+  }
+
   return (
     <Card className="space-y-4">
-      <div>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{mayChange ? t("devicesControl") : t("readOnly")}</CardDescription>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>{mayChange ? t("devicesControl") : t("readOnly")}</CardDescription>
+        </div>
+        {kind === "favourites" && mayChange && ready && (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 px-3"
+              onClick={(e) => {
+                opener.current = e.currentTarget;
+                setEditing({ name: "", description: "", items: [] });
+              }}
+            >
+              {t("newList")}
+            </Button>
+            {group && (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 px-3"
+                  onClick={(e) => {
+                    opener.current = e.currentTarget;
+                    setEditing({ id: group.id, name: group.name, description: group.description, items: group.items });
+                  }}
+                >
+                  {t("editList")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 px-3"
+                  onClick={(e) => {
+                    opener.current = e.currentTarget;
+                    setDeleting(group);
+                  }}
+                >
+                  {t("deleteList")}
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
       {Boolean(groups.error) && (
         <p role="alert" className="text-sm text-[var(--destructive)]">
@@ -98,6 +167,37 @@ export default function Collection({ kind, sid, onExpired }: { kind: CollectionK
           {group && items.length === 0 && <p className="text-sm text-[var(--muted-foreground)]">{kind === "favourites" ? t("emptyList") : t("emptyCollection")}</p>}
           {group && items.length > 0 && <TileBoard key={group.id} items={items} info={info} sid={sid} mayChange={mayChange} strings={strings} refreshSignal={refreshSignal} onExpired={onExpired} />}
         </>
+      )}
+      {editing && mayChange && (
+        <FavouriteListDialog
+          key={editing.id ?? "new"}
+          initial={editing}
+          devices={devices.data ?? []}
+          sid={sid}
+          strings={strings}
+          onClose={() => {
+            setEditing(null);
+            restoreFocus();
+          }}
+          onSaved={(saved) => {
+            setPicked(saved.id);
+            groups.refresh();
+          }}
+          onExpired={onExpired}
+        />
+      )}
+      {deleting && mayChange && (
+        <ConfirmDialog
+          key={deleting.id}
+          title={t("deleteListTitle")}
+          message={t("deleteListWarning", { name: text(deleting.name, strings) })}
+          confirmLabel={t("delete")}
+          onConfirm={() => confirmDelete(deleting)}
+          onClose={() => {
+            setDeleting(null);
+            restoreFocus();
+          }}
+        />
       )}
     </Card>
   );

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Translate } from "./i18n";
-import { ApiError, describeError, getHideSticky, isSessionExpired, login, makeGetMessages, makeGetModel, makeGetProfile, makeGetSystem, makeRpc } from "./api";
+import { isValidFavouriteName } from "@/components/FavouriteListDialog";
+import { ApiError, describeError, getHideSticky, isSessionExpired, login, makeDeleteFavourite, makeGetMessages, makeGetModel, makeGetProfile, makeGetSystem, makeRpc, makeSaveFavourite } from "./api";
 
 const reply = (status: number, body: unknown) => async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
 
@@ -154,5 +155,32 @@ describe("getSystem", () => {
     expect(await makeGetSystem(reply(200, { time: "" }))("x")).toEqual({ time: "", sunrise: "", sunset: "", firmwareVersion: "" });
     await expect(makeGetSystem(reply(200, {}))("x")).rejects.toBeInstanceOf(ApiError);
     expect(isSessionExpired(await makeGetSystem(reply(401, { error: { code: 400, message: "x" } }))("x").catch((e) => e))).toBe(true);
+  });
+});
+
+describe("saveFavourite and deleteFavourite", () => {
+  it("POSTs a favourite list without id for creation and strips separator ids", async () => {
+    let url = "", init: RequestInit | undefined;
+    const saved = { id: "2001", name: "Heizung", info: "OG", items: [{ id: "4477", type: "CHANNEL", name: "AZ:1" }, { id: "2002", type: "SEPARATOR", name: "" }] };
+    const save = makeSaveFavourite(async (u, i) => ((url = String(u)), (init = i), new Response(JSON.stringify(saved))));
+    const out = await save("AbCdEf1234", { name: "Heizung", info: "OG", items: [{ type: "CHANNEL", id: "4477" }, { type: "SEPARATOR", id: "999" }] });
+    expect(url).toBe("/api/homematic.cgi/v2/favourites");
+    expect(init!.method).toBe("POST");
+    expect(JSON.parse(String(init!.body))).toEqual({ name: "Heizung", info: "OG", items: [{ type: "CHANNEL", id: "4477" }, { type: "SEPARATOR" }] });
+    expect(out).toEqual(saved);
+  });
+
+  it("DELETEs a favourite list by id", async () => {
+    let url = "", init: RequestInit | undefined;
+    const del = makeDeleteFavourite(async (u, i) => ((url = String(u)), (init = i), new Response('{"id":"1587","deleted":true}')));
+    expect(await del("AbCdEf1234", "1587")).toEqual({ id: "1587", deleted: true });
+    expect([url, init!.method]).toEqual(["/api/homematic.cgi/v2/favourites?id=1587", "DELETE"]);
+  });
+
+  it("validates favourite list names", () => {
+    expect(isValidFavouriteName("Heizung")).toBe(true);
+    expect(isValidFavouriteName("   ")).toBe(false);
+    expect(isValidFavouriteName("_USER1004")).toBe(false);
+    expect(isValidFavouriteName("a\nb")).toBe(false);
   });
 });
