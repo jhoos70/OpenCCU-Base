@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DataTableColumnHeader, DataTableViewOptions } from "@/components/ui/data-table";
+import { Button } from "@/components/ui/button";
+import { DeviceEditDrawer } from "@/components/DeviceEditDrawer";
 import { DeviceValues } from "@/components/DeviceValues";
 import { TileBoard } from "@/components/TileBoard";
 import { HealthBadges, type Health } from "@/components/tiles/TileShell";
@@ -29,7 +31,7 @@ import { useModel } from "@/lib/use-model";
 import { usePolled } from "@/lib/use-polled";
 import { healthOf, type ChannelInfo } from "@/lib/widgets";
 import { Status } from "./Status";
-import { ArrowLeft, ExternalLink, Radio } from "lucide-react";
+import { ArrowLeft, ExternalLink, Pencil, Radio } from "lucide-react";
 
 const HEALTH_MS = 10_000;
 const STORAGE_KEY = "openccu.next.devices.columns";
@@ -126,9 +128,14 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
   const profile = useCurrentProfile();
   // a guest only looks, as in the classic UI
   const mayChange = profile?.level === "USER" || profile?.level === "ADMIN";
-  const state = useModel("devices", sid, onExpired);
-  const roomsState = useModel("rooms", sid, onExpired);
-  const functionsState = useModel("functions", sid, onExpired);
+  const mayEdit = profile?.level === "ADMIN";
+
+  const [refreshSignal, setRefreshSignal] = React.useState(0);
+  const [editingDevice, setEditingDevice] = React.useState<Device | null>(null);
+
+  const state = useModel("devices", sid, onExpired, refreshSignal);
+  const roomsState = useModel("rooms", sid, onExpired, refreshSignal);
+  const functionsState = useModel("functions", sid, onExpired, refreshSignal);
   const strings = useCcuStrings("deviceDescription", "extension", "stringtable");
   const icons = useDeviceIcons();
 
@@ -368,8 +375,34 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
         meta: { className: "text-right" },
         enableHiding: true,
       },
+      ...(mayEdit
+        ? [
+            {
+              id: "actions",
+              header: () => null,
+              cell: ({ row }: { row: { original: DeviceTableRow } }) => (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingDevice(row.original.device);
+                    }}
+                    title={t("editDevice")}
+                    aria-label={t("editDevice")}
+                    className="rounded-md p-1.5 text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+                  >
+                    <Pencil className="size-4" />
+                  </button>
+                </div>
+              ),
+              meta: { className: "w-10 text-right" },
+              enableHiding: false,
+            } as ColumnDef<DeviceTableRow>,
+          ]
+        : []),
     ];
-  }, [t, lang, open, toggle]);
+  }, [t, lang, open, toggle, mayEdit]);
 
   const columnLabels = React.useMemo<Record<string, string>>(
     () => ({
@@ -496,6 +529,18 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
                   </div>
                 </div>
               </div>
+              {mayEdit && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditingDevice(selectedDevice)}
+                  className="self-start sm:self-center gap-1.5 shrink-0"
+                >
+                  <Pencil className="size-4" />
+                  <span>{t("editDevice")}</span>
+                </Button>
+              )}
             </div>
 
             {(devRooms.length > 0 || devFuncs.length > 0) && (
@@ -533,6 +578,19 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
               onExpired={onExpired}
             />
           </div>
+
+          {editingDevice && (
+            <DeviceEditDrawer
+              open={Boolean(editingDevice)}
+              onClose={() => setEditingDevice(null)}
+              device={editingDevice}
+              allRooms={roomsState.status === "ready" ? roomsState.data.items : []}
+              allFunctions={functionsState.status === "ready" ? functionsState.data.items : []}
+              sid={sid}
+              onSaved={() => setRefreshSignal((s) => s + 1)}
+              strings={strings}
+            />
+          )}
         </div>
       );
     }
@@ -618,6 +676,19 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
           );
         }}
       </Status>
+
+      {editingDevice && (
+        <DeviceEditDrawer
+          open={Boolean(editingDevice)}
+          onClose={() => setEditingDevice(null)}
+          device={editingDevice}
+          allRooms={roomsState.status === "ready" ? roomsState.data.items : []}
+          allFunctions={functionsState.status === "ready" ? functionsState.data.items : []}
+          sid={sid}
+          onSaved={() => setRefreshSignal((s) => s + 1)}
+          strings={strings}
+        />
+      )}
     </Card>
   );
 }

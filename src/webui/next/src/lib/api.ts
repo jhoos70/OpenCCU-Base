@@ -101,6 +101,18 @@ export interface Channel {
   index: number;
   channelType: string;
   category: string;
+  partnerId?: string;
+  mode?: "MODE_DEFAULT" | "MODE_AES" | string;
+  isReady?: boolean;
+  isUsable?: boolean;
+  isVisible?: boolean;
+  isLogged?: boolean;
+  isLogable?: boolean;
+  isReadable?: boolean;
+  isWritable?: boolean;
+  isEventable?: boolean;
+  isAesAvailable?: boolean;
+  isVirtual?: boolean;
 }
 
 export interface Device {
@@ -509,6 +521,66 @@ const rpc = makeRpc();
 export const login = (username: string, password: string, call: Rpc = rpc) => call<string>("Session.login", { username, password });
 export const logout = (sid: string, call: Rpc = rpc) => call<boolean>("Session.logout", {}, sid);
 export const renew = (sid: string, call: Rpc = rpc) => call<unknown>("Session.renew", {}, sid);
+
+export interface ChannelConfigDelta {
+  channelId: string;
+  name?: string;
+  isLogged?: boolean;
+  mode?: "MODE_DEFAULT" | "MODE_AES";
+  addRoomIds?: string[];
+  removeRoomIds?: string[];
+  addFuncIds?: string[];
+  removeFuncIds?: string[];
+}
+
+export interface SaveDeviceConfigParams {
+  deviceId: string;
+  name?: string;
+  channels?: ChannelConfigDelta[];
+}
+
+export async function saveDeviceConfig(
+  sid: string,
+  params: SaveDeviceConfigParams,
+  call: Rpc = rpc,
+): Promise<void> {
+  if (params.name !== undefined) {
+    await call<string>("Device.setName", { id: params.deviceId, name: params.name }, sid);
+  }
+  if (params.channels && params.channels.length > 0) {
+    for (const ch of params.channels) {
+      if (ch.name !== undefined) {
+        await call<string>("Channel.setName", { id: ch.channelId, name: ch.name }, sid);
+      }
+      if (ch.isLogged !== undefined) {
+        await call<boolean>("Channel.setLogging", { id: ch.channelId, isLogged: ch.isLogged ? "true" : "false" }, sid);
+      }
+      if (ch.mode !== undefined) {
+        await call<string>("Channel.setMode", { id: ch.channelId, mode: ch.mode }, sid);
+      }
+      if (ch.addRoomIds && ch.addRoomIds.length > 0) {
+        for (const rId of ch.addRoomIds) {
+          await call<boolean>("Room.addChannel", { id: rId, channelId: ch.channelId }, sid);
+        }
+      }
+      if (ch.removeRoomIds && ch.removeRoomIds.length > 0) {
+        for (const rId of ch.removeRoomIds) {
+          await call<boolean>("Room.removeChannel", { id: rId, channelId: ch.channelId }, sid);
+        }
+      }
+      if (ch.addFuncIds && ch.addFuncIds.length > 0) {
+        for (const fId of ch.addFuncIds) {
+          await call<boolean>("Subsection.addChannel", { id: fId, channelId: ch.channelId }, sid);
+        }
+      }
+      if (ch.removeFuncIds && ch.removeFuncIds.length > 0) {
+        for (const fId of ch.removeFuncIds) {
+          await call<boolean>("Subsection.removeChannel", { id: fId, channelId: ch.channelId }, sid);
+        }
+      }
+    }
+  }
+}
 
 /** What went wrong with a change, for the user: the server's refusals have their own words, the rest is the common ones. */
 export function describeChangeError(e: unknown, t: Translate): string {

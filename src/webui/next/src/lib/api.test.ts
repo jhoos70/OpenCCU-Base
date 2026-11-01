@@ -184,3 +184,47 @@ describe("saveFavourite and deleteFavourite", () => {
     expect(isValidFavouriteName("a\nb")).toBe(false);
   });
 });
+
+describe("saveDeviceConfig", () => {
+  it("calls appropriate RPC methods for device name, channel properties, and room/function memberships", async () => {
+    const calls: { method: string; params: unknown; sid: string | undefined }[] = [];
+    const mockRpc = async <T>(method: string, params?: Record<string, unknown>, sid?: string): Promise<T> => {
+      calls.push({ method, params, sid });
+      return true as T;
+    };
+
+    const { saveDeviceConfig } = await import("./api");
+    await saveDeviceConfig(
+      "sid123",
+      {
+        deviceId: "dev1",
+        name: "New Dev Name",
+        channels: [
+          {
+            channelId: "ch1",
+            name: "New Ch Name",
+            isLogged: true,
+            mode: "MODE_AES",
+            addRoomIds: ["r1", "r2"],
+            removeRoomIds: ["r3"],
+            addFuncIds: ["f1"],
+            removeFuncIds: ["f2"],
+          },
+        ],
+      },
+      mockRpc,
+    );
+
+    expect(calls).toEqual([
+      { method: "Device.setName", params: { id: "dev1", name: "New Dev Name" }, sid: "sid123" },
+      { method: "Channel.setName", params: { id: "ch1", name: "New Ch Name" }, sid: "sid123" },
+      { method: "Channel.setLogging", params: { id: "ch1", isLogged: "true" }, sid: "sid123" },
+      { method: "Channel.setMode", params: { id: "ch1", mode: "MODE_AES" }, sid: "sid123" },
+      { method: "Room.addChannel", params: { id: "r1", channelId: "ch1" }, sid: "sid123" },
+      { method: "Room.addChannel", params: { id: "r2", channelId: "ch1" }, sid: "sid123" },
+      { method: "Room.removeChannel", params: { id: "r3", channelId: "ch1" }, sid: "sid123" },
+      { method: "Subsection.addChannel", params: { id: "f1", channelId: "ch1" }, sid: "sid123" },
+      { method: "Subsection.removeChannel", params: { id: "f2", channelId: "ch1" }, sid: "sid123" },
+    ]);
+  });
+});

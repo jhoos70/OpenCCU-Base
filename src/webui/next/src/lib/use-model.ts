@@ -5,12 +5,11 @@ import { useI18n } from "./i18n";
 export type ModelState<S extends ModelSection> = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: Model[S] };
 
 /** Loads one section of the bulk model. An expired session calls onExpired (back to the sign-in form). */
-export function useModel<S extends ModelSection>(section: S, sid: string, onExpired: () => void): ModelState<S> {
+export function useModel<S extends ModelSection>(section: S, sid: string, onExpired: () => void, refreshSignal = 0): ModelState<S> {
   const { t } = useI18n();
   const [state, setState] = React.useState<ModelState<S>>({ status: "loading" });
   React.useEffect(() => {
     let live = true;
-    setState({ status: "loading" });
     getModel(section, sid)
       .then((data) => live && setState({ status: "ready", data }))
       .catch((e) => {
@@ -21,6 +20,6 @@ export function useModel<S extends ModelSection>(section: S, sid: string, onExpi
     return () => {
       live = false;
     };
-  }, [section, sid, onExpired, t]);
+  }, [section, sid, onExpired, t, refreshSignal]);
   return state;
 }
