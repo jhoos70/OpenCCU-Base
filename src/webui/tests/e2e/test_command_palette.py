@@ -1,3 +1,4 @@
+import json
 import re
 import sys
 from playwright.sync_api import sync_playwright
@@ -95,6 +96,20 @@ def main():
         back_btn.click()
         page.wait_for_url("**/webui/next/#/devices")
         print("PASS  Back button returned to devices list")
+
+        # 10. Test Room search and navigation in Command Palette
+        page.route("**/v2/model?sections=rooms*", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps({"rooms": {"total": 1, "offset": 0, "limit": 500, "items": [{"id": "r100", "name": "Wohnzimmer", "description": "", "channelIds": ["1", "2"]}]}})))
+        page.keyboard.press("Control+k")
+        page.wait_for_selector("[cmdk-input-wrapper]")
+        input_el = page.locator("[cmdk-input-wrapper] input")
+        input_el.fill("Wohnzimmer")
+        page.wait_for_timeout(300)
+        room_item = page.locator("[cmdk-item]", has_text="Wohnzimmer").first
+        assert room_item.is_visible(), "Room search item should be visible"
+        print("PASS  Room found in command palette")
+        room_item.click()
+        page.wait_for_url("**/webui/next/#/rooms/r100")
+        print("PASS  Selecting room navigated to #/rooms/r100")
 
         browser.close()
         print("ALL COMMAND PALETTE TESTS PASSED!")

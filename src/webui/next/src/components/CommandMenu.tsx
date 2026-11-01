@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Bell,
   Check,
+  DoorOpen,
   ExternalLink,
   Languages,
   Laptop,
@@ -10,6 +11,7 @@ import {
   Moon,
   Radio,
   Sun,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -23,7 +25,9 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import { NAV_ICONS } from "@/components/NavList";
-import { getModel, type Device } from "@/lib/api";
+import { getModel, type Device, type Room } from "@/lib/api";
+import { text } from "@/lib/format";
+import { useCcuStrings } from "@/lib/use-ccu-strings";
 import { useI18n, type Lang } from "@/lib/i18n";
 import type { NavView } from "@/lib/nav";
 import { useTheme, type Theme } from "@/lib/theme";
@@ -49,9 +53,12 @@ export function CommandMenu({
 }) {
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme } = useTheme();
+  const strings = useCcuStrings("extension", "stringtable");
   const [devices, setDevices] = React.useState<Device[]>([]);
+  const [rooms, setRooms] = React.useState<Room[]>([]);
+  const [functions, setFunctions] = React.useState<Room[]>([]);
 
-  // Load devices lazily when palette opens or session is provided
+  // Load items lazily when palette opens or session is provided
   React.useEffect(() => {
     if (!sid || !open) return;
     let live = true;
@@ -61,9 +68,21 @@ export function CommandMenu({
           setDevices(res.items);
         }
       })
-      .catch(() => {
-        /* ignore */
-      });
+      .catch(() => {});
+    getModel("rooms", sid)
+      .then((res) => {
+        if (live && res?.items) {
+          setRooms(res.items);
+        }
+      })
+      .catch(() => {});
+    getModel("functions", sid)
+      .then((res) => {
+        if (live && res?.items) {
+          setFunctions(res.items);
+        }
+      })
+      .catch(() => {});
     return () => {
       live = false;
     };
@@ -137,6 +156,64 @@ export function CommandMenu({
               </>
             )}
           </CommandGroup>
+        )}
+
+        {/* Rooms Group */}
+        {rooms.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading={t("rooms")}>
+              {rooms.map((room) => {
+                const roomName = text(room.name, strings);
+                return (
+                  <CommandItem
+                    key={room.id}
+                    value={`${roomName} ${room.name} ${room.description ?? ""}`}
+                    onSelect={() =>
+                      runCommand(() => {
+                        window.location.hash = `#/rooms/${room.id}`;
+                      })
+                    }
+                  >
+                    <DoorOpen className="size-4 shrink-0 text-[var(--primary)]" aria-hidden="true" />
+                    <span className="flex-1 truncate font-medium">{roomName}</span>
+                    <CommandShortcut>
+                      {room.channelIds.length} {t(room.channelIds.length === 1 ? "channel" : "channels").toLowerCase()}
+                    </CommandShortcut>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </>
+        )}
+
+        {/* Functions Group */}
+        {functions.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading={t("functions")}>
+              {functions.map((func) => {
+                const funcName = text(func.name, strings);
+                return (
+                  <CommandItem
+                    key={func.id}
+                    value={`${funcName} ${func.name} ${func.description ?? ""}`}
+                    onSelect={() =>
+                      runCommand(() => {
+                        window.location.hash = `#/functions/${func.id}`;
+                      })
+                    }
+                  >
+                    <Wrench className="size-4 shrink-0 text-[var(--primary)]" aria-hidden="true" />
+                    <span className="flex-1 truncate font-medium">{funcName}</span>
+                    <CommandShortcut>
+                      {func.channelIds.length} {t(func.channelIds.length === 1 ? "channel" : "channels").toLowerCase()}
+                    </CommandShortcut>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </>
         )}
 
         {/* Devices Group */}

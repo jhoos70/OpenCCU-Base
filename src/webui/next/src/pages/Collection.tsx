@@ -24,6 +24,11 @@ interface Group {
 const GROUPS_MS = 60_000;
 const MODEL_MS = 300_000;
 
+const getSubIdFromHash = (expectedKind: string): string | null => {
+  const parts = window.location.hash.replace(/^#\/?/, "").split(/[\/?#]/);
+  return parts[0] === expectedKind && parts[1] ? decodeURIComponent(parts[1]) : null;
+};
+
 /**
  * Favourites, rooms and functions are the same page: a set of named groups of channels, picked as buttons, whose members
  * are shown as tiles with their live values and controls. Only where the groups come from differs.
@@ -46,7 +51,16 @@ export default function Collection({ kind, sid, onExpired }: { kind: CollectionK
     return (await getModel(kind, sid)).items.map((r) => ({ id: r.id, name: r.name, description: r.description, items: r.channelIds.map((id): FavouriteItem => ({ id, type: "CHANNEL", name: "" })) }));
   }, [kind, sid]);
   const groups = usePolled(loadGroups, GROUPS_MS, onExpired);
-  const [picked, setPicked] = React.useState<string | null>(null);
+  const [picked, setPicked] = React.useState<string | null>(() => getSubIdFromHash(kind));
+
+  React.useEffect(() => {
+    const onHash = () => {
+      const sub = getSubIdFromHash(kind);
+      if (sub) setPicked(sub);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [kind]);
   const [refreshSignal, setRefreshSignal] = React.useState(0);
   const [editing, setEditing] = React.useState<EditableFavouriteList | null>(null);
   const [deleting, setDeleting] = React.useState<Group | null>(null);
@@ -152,7 +166,10 @@ export default function Collection({ kind, sid, onExpired }: { kind: CollectionK
                   type="button"
                   aria-pressed={g.id === group?.id}
                   aria-label={t("openList", { name: g.name })}
-                  onClick={() => setPicked(g.id)}
+                  onClick={() => {
+                    setPicked(g.id);
+                    window.location.hash = `#/${kind}/${g.id}`;
+                  }}
                   className={`h-9 rounded-full border px-3.5 text-[15px] ${g.id === group?.id ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--accent)]"}`}
                 >
                   {text(g.name, strings)}
