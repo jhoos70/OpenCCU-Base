@@ -582,6 +582,101 @@ export async function saveDeviceConfig(
   }
 }
 
+export interface ParamDescription {
+  NAME: string;
+  TYPE: "BOOL" | "INTEGER" | "FLOAT" | "ENUM" | "STRING" | "ACTION" | string;
+  DEFAULT?: string | number | boolean;
+  MIN?: string | number;
+  MAX?: string | number;
+  UNIT?: string;
+  OPERATIONS?: number | string;
+  FLAGS?: number | string;
+  TAB_ORDER?: number | string;
+  VALUE_LIST?: string[];
+  ID?: string;
+}
+
+export type Paramset = Record<string, string | number | boolean>;
+
+export interface PutParamsetItem {
+  name: string;
+  type: "bool" | "int" | "double" | "string";
+  value: string;
+}
+
+export function xmlRpcTypeFor(paramType: string): "bool" | "int" | "double" | "string" {
+  switch (paramType.toUpperCase()) {
+    case "BOOL":
+      return "bool";
+    case "INTEGER":
+    case "ENUM":
+      return "int";
+    case "FLOAT":
+      return "double";
+    default:
+      return "string";
+  }
+}
+
+export async function getParamsetDescription(
+  sid: string,
+  iface: string,
+  address: string,
+  paramsetKey: "MASTER" | "VALUES" | "LINK" = "MASTER",
+  call: Rpc = rpc,
+): Promise<ParamDescription[]> {
+  const result = await call<ParamDescription[] | string>(
+    "Interface.getParamsetDescription",
+    { interface: iface, address, paramsetKey },
+    sid,
+  );
+  if (typeof result === "string") {
+    try {
+      return JSON.parse(result);
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(result) ? result : [];
+}
+
+export async function getParamset(
+  sid: string,
+  iface: string,
+  address: string,
+  paramsetKey: "MASTER" | "VALUES" | "LINK" = "MASTER",
+  call: Rpc = rpc,
+): Promise<Paramset> {
+  const result = await call<Paramset | string>(
+    "Interface.getParamset",
+    { interface: iface, address, paramsetKey },
+    sid,
+  );
+  if (typeof result === "string") {
+    try {
+      return JSON.parse(result);
+    } catch {
+      return {};
+    }
+  }
+  return result && typeof result === "object" ? result : {};
+}
+
+export async function putParamset(
+  sid: string,
+  iface: string,
+  address: string,
+  set: PutParamsetItem[],
+  paramsetKey: "MASTER" | "LINK" = "MASTER",
+  call: Rpc = rpc,
+): Promise<boolean> {
+  return await call<boolean>(
+    "Interface.putParamset",
+    { interface: iface, address, paramsetKey, set },
+    sid,
+  );
+}
+
 /** What went wrong with a change, for the user: the server's refusals have their own words, the rest is the common ones. */
 export function describeChangeError(e: unknown, t: Translate): string {
   if (e instanceof ApiError && e.status === 422) return t("errInvalidValue");

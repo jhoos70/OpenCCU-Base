@@ -17,6 +17,7 @@ import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components
 import { DataTableColumnHeader, DataTableViewOptions } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
 import { DeviceEditDrawer } from "@/components/DeviceEditDrawer";
+import { DeviceParameters } from "@/components/DeviceParameters";
 import { DeviceValues } from "@/components/DeviceValues";
 import { TileBoard } from "@/components/TileBoard";
 import { HealthBadges, type Health } from "@/components/tiles/TileShell";
@@ -31,7 +32,7 @@ import { useModel } from "@/lib/use-model";
 import { usePolled } from "@/lib/use-polled";
 import { healthOf, type ChannelInfo } from "@/lib/widgets";
 import { Status } from "./Status";
-import { ArrowLeft, ExternalLink, Pencil, Radio } from "lucide-react";
+import { ArrowLeft, ExternalLink, LayoutGrid, Link2, Pencil, Radio, SlidersHorizontal, Wrench } from "lucide-react";
 
 const HEALTH_MS = 10_000;
 const STORAGE_KEY = "openccu.next.devices.columns";
@@ -132,6 +133,7 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
 
   const [refreshSignal, setRefreshSignal] = React.useState(0);
   const [editingDevice, setEditingDevice] = React.useState<Device | null>(null);
+  const [activeTab, setActiveTab] = React.useState<"status" | "parameters" | "links" | "maintenance">("status");
 
   const state = useModel("devices", sid, onExpired, refreshSignal);
   const roomsState = useModel("rooms", sid, onExpired, refreshSignal);
@@ -565,19 +567,102 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
             )}
           </Card>
 
-          {/* Channels & Controls */}
-          <div className="space-y-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-              {t("deviceChannels")} ({selectedDevice.channels.length})
-            </h2>
-            <DeviceDetails
+          {/* Navigation Tabs */}
+          <div className="flex items-center gap-1 border-b border-[var(--border)] overflow-x-auto pb-px">
+            <button
+              type="button"
+              onClick={() => setActiveTab("status")}
+              className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs sm:text-sm font-medium transition-colors shrink-0 ${
+                activeTab === "status"
+                  ? "border-[var(--primary)] text-[var(--primary)] font-semibold"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              <LayoutGrid className="size-4" />
+              <span>{t("tabStatus")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("parameters")}
+              className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs sm:text-sm font-medium transition-colors shrink-0 ${
+                activeTab === "parameters"
+                  ? "border-[var(--primary)] text-[var(--primary)] font-semibold"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              <SlidersHorizontal className="size-4" />
+              <span>{t("tabParameters")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("links")}
+              className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors shrink-0 ${
+                activeTab === "links"
+                  ? "border-[var(--primary)] text-[var(--primary)] font-semibold"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              <Link2 className="size-4" />
+              <span>{t("tabLinks")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("maintenance")}
+              className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors shrink-0 ${
+                activeTab === "maintenance"
+                  ? "border-[var(--primary)] text-[var(--primary)] font-semibold"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              <Wrench className="size-4" />
+              <span>{t("tabMaintenance")}</span>
+            </button>
+          </div>
+
+          {/* Tab 1: Status & Control */}
+          {activeTab === "status" && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                {t("deviceChannels")} ({selectedDevice.channels.length})
+              </h2>
+              <DeviceDetails
+                device={selectedDevice}
+                sid={sid}
+                mayChange={mayChange}
+                strings={strings}
+                onExpired={onExpired}
+              />
+            </div>
+          )}
+
+          {/* Tab 2: Parameters & Settings (MASTER) */}
+          {activeTab === "parameters" && (
+            <DeviceParameters
               device={selectedDevice}
               sid={sid}
-              mayChange={mayChange}
+              mayChange={mayEdit}
               strings={strings}
               onExpired={onExpired}
             />
-          </div>
+          )}
+
+          {/* Tab 3: Direct Links (Placeholder for Phase 2b) */}
+          {activeTab === "links" && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-8 text-center space-y-3">
+              <Link2 className="size-8 mx-auto text-[var(--muted-foreground)] opacity-50" />
+              <h3 className="text-base font-semibold text-[var(--foreground)]">{t("tabLinks")}</h3>
+              <p className="text-sm text-[var(--muted-foreground)] max-w-md mx-auto">{t("directLinksPlaceholder")}</p>
+            </div>
+          )}
+
+          {/* Tab 4: Maintenance (Placeholder for Phase 2c) */}
+          {activeTab === "maintenance" && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-8 text-center space-y-3">
+              <Wrench className="size-8 mx-auto text-[var(--muted-foreground)] opacity-50" />
+              <h3 className="text-base font-semibold text-[var(--foreground)]">{t("tabMaintenance")}</h3>
+              <p className="text-sm text-[var(--muted-foreground)] max-w-md mx-auto">{t("maintenancePlaceholder")}</p>
+            </div>
+          )}
 
           {editingDevice && (
             <DeviceEditDrawer

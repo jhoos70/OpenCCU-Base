@@ -228,3 +228,41 @@ describe("saveDeviceConfig", () => {
     ]);
   });
 });
+
+describe("Paramsets API", () => {
+  it("xmlRpcTypeFor maps param types properly", async () => {
+    const { xmlRpcTypeFor } = await import("./api");
+    expect(xmlRpcTypeFor("BOOL")).toBe("bool");
+    expect(xmlRpcTypeFor("INTEGER")).toBe("int");
+    expect(xmlRpcTypeFor("ENUM")).toBe("int");
+    expect(xmlRpcTypeFor("FLOAT")).toBe("double");
+    expect(xmlRpcTypeFor("STRING")).toBe("string");
+    expect(xmlRpcTypeFor("ACTION")).toBe("string");
+  });
+
+  it("getParamsetDescription and getParamset invoke RPC with correct interface and address", async () => {
+    const calls: { method: string; params: unknown }[] = [];
+    const mockRpc = async <T>(method: string, params?: Record<string, unknown>): Promise<T> => {
+      calls.push({ method, params });
+      if (method === "Interface.getParamsetDescription") {
+        return [{ NAME: "PARAM1", TYPE: "BOOL" }] as T;
+      }
+      return { PARAM1: true } as T;
+    };
+
+    const { getParamsetDescription, getParamset, putParamset } = await import("./api");
+    const desc = await getParamsetDescription("sid1", "BidCos-RF", "PEQ001:1", "MASTER", mockRpc);
+    expect(desc).toEqual([{ NAME: "PARAM1", TYPE: "BOOL" }]);
+
+    const values = await getParamset("sid1", "BidCos-RF", "PEQ001:1", "MASTER", mockRpc);
+    expect(values).toEqual({ PARAM1: true });
+
+    await putParamset("sid1", "BidCos-RF", "PEQ001:1", [{ name: "PARAM1", type: "bool", value: "false" }], "MASTER", mockRpc);
+
+    expect(calls).toEqual([
+      { method: "Interface.getParamsetDescription", params: { interface: "BidCos-RF", address: "PEQ001:1", paramsetKey: "MASTER" } },
+      { method: "Interface.getParamset", params: { interface: "BidCos-RF", address: "PEQ001:1", paramsetKey: "MASTER" } },
+      { method: "Interface.putParamset", params: { interface: "BidCos-RF", address: "PEQ001:1", paramsetKey: "MASTER", set: [{ name: "PARAM1", type: "bool", value: "false" }] } },
+    ]);
+  });
+});
