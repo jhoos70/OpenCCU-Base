@@ -333,4 +333,29 @@ describe("Paramsets API", () => {
       { method: "Interface.rssiInfo", params: { interface: "HmIP-RF" } },
     ]);
   });
+
+  it("getHeatingGroupList queries CCU.getHeatingGroupList and parses response", async () => {
+    const mockRpc = async <T>(method: string): Promise<T> => {
+      if (method === "CCU.getHeatingGroupList") {
+        return JSON.stringify({
+          groups: [
+            {
+              id: 9,
+              groupType: { id: "HomeMatic.heating", label: "Heating_Control", version: 3 },
+              groupProperties: { NAME: "Arbeitszimmer", GROUP_DEVICE_NAME: "Arbeitszimmer INT0000009", FORBID_SINGLE_OPERATION: false },
+              groupMembers: [{ id: "MEQ1234567", memberType: { id: "HM-CC-RT-DN" } }],
+            },
+          ],
+        }) as T;
+      }
+      return null as T;
+    };
+
+    const { getHeatingGroupList } = await import("./api");
+    const groups = await getHeatingGroupList("sid1", mockRpc);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].id).toBe(9);
+    expect(groups[0].groupProperties.NAME).toBe("Arbeitszimmer");
+    expect(groups[0].groupMembers[0].id).toBe("MEQ1234567");
+  });
 });

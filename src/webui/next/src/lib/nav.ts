@@ -29,7 +29,7 @@ export const NAV: readonly NavItem[] = [
   { id: "favourites", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFavorites", "menuSettingsPage/submenuFavorites"], ready: true, labelKey: "favourites" },
   { id: "diagrams", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuDiagramListPage", "menuSettingsPage/submenuCreateDiagram"], ready: false },
   { id: "connections", group: "objects", minLevel: "ADMIN", classic: ["menuProgramsLinksPage/submenuDirectLinks"], ready: false },
-  { id: "groups", group: "objects", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuCreateGroups"], ready: false },
+  { id: "groups", group: "objects", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuCreateGroups"], ready: true, labelKey: "groups" },
   { id: "log", group: "system", minLevel: "USER", classic: ["menuControlPage/submenuSysProtocol"], ready: true, labelKey: "log" },
   // adding devices: the inbox of new devices and the teach-in action of the classic header
   { id: "inbox", group: "system", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuDeviceInbox", "menuNewDevicesPage"], ready: false },

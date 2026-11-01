@@ -8,6 +8,7 @@ import {
   Variable,
   Star,
   ScrollText,
+  Flame,
   ExternalLink,
   type LucideIcon,
 } from "lucide-react";
@@ -23,6 +24,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   programs: PlayCircle,
   sysvars: Variable,
   favourites: Star,
+  groups: Flame,
   log: ScrollText,
 };
 

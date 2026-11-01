@@ -402,6 +402,22 @@ export const en = {
   maintenanceDeleteSubmit: "Permanently delete device",
   maintenanceDeleting: "Deleting device...",
   maintenanceDeleteSuccess: "Device deleted successfully.",
+  // heating groups
+  groupsTitle: "Heating Groups",
+  groupsSubtitle: "Central climate and temperature control for grouped thermostats and sensors.",
+  filterGroups: "Filter groups…",
+  noGroupsFound: "No heating groups found.",
+  groupMembersCount: "{count} assigned devices",
+  groupDevice: "Virtual group device",
+  radiatorThermostats: "Radiator thermostats",
+  wallThermostats: "Wall thermostats",
+  windowSensors: "Window sensors",
+  switchActuators: "Floor heating / switch actuators",
+  forbidSingleOperation: "Direct control locked on individual devices",
+  backToGroups: "Back to heating groups",
+  groupNotFound: "Heating group not found",
+  groupMembers: "Group Members",
+  groupControl: "Group Climate Control",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -804,4 +820,20 @@ export const de: Record<MessageKey, string> = {
   maintenanceDeleteSubmit: "Endgültig ablernen und löschen",
   maintenanceDeleting: "Lösche Gerät...",
   maintenanceDeleteSuccess: "Gerät wurde erfolgreich gelöscht.",
+  // heating groups
+  groupsTitle: "Heizgruppen",
+  groupsSubtitle: "Zentrale Temperatur- und Klimasteuerung für verknüpfte Thermostate und Sensoren.",
+  filterGroups: "Heizgruppen filtern…",
+  noGroupsFound: "Keine Heizgruppen vorhanden.",
+  groupMembersCount: "{count} zugeordnete Geräte",
+  groupDevice: "Virtuelles Gruppengerät",
+  radiatorThermostats: "Heizkörperthermostate",
+  wallThermostats: "Wandthermostate",
+  windowSensors: "Fensterkontakte",
+  switchActuators: "Fußbodenheizung / Schaltaktoren",
+  forbidSingleOperation: "Direkte Bedienung an Einzelgeräten gesperrt",
+  backToGroups: "Zurück zur Gruppenübersicht",
+  groupNotFound: "Heizgruppe nicht gefunden",
+  groupMembers: "Zugeordnete Geräte",
+  groupControl: "Gruppen-Klimasteuerung",
 };

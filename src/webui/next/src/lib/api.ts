@@ -866,6 +866,58 @@ export async function getRssiInfo(
   return Array.isArray(res) ? res : [];
 }
 
+export interface HeatingGroupMember {
+  id: string;
+  memberType: {
+    id: string;
+  };
+  properties?: Record<string, unknown>;
+}
+
+export interface HeatingGroupProperties {
+  NAME: string;
+  GROUP_DEVICE_NAME: string;
+  FORBID_SINGLE_OPERATION: boolean;
+}
+
+export interface HeatingGroupType {
+  id: string;
+  label: string;
+  version: number;
+}
+
+export interface HeatingGroup {
+  id: number;
+  groupType: HeatingGroupType;
+  groupProperties: HeatingGroupProperties;
+  groupMembers: HeatingGroupMember[];
+}
+
+export interface HeatingGroupListResponse {
+  groups: HeatingGroup[];
+}
+
+export async function getHeatingGroupList(
+  sid: string,
+  call: Rpc = rpc,
+): Promise<HeatingGroup[]> {
+  const res = await call<HeatingGroupListResponse | string>(
+    "CCU.getHeatingGroupList",
+    {},
+    sid,
+  );
+  if (!res) return [];
+  if (typeof res === "string") {
+    try {
+      const parsed = JSON.parse(res) as HeatingGroupListResponse;
+      return parsed.groups ?? [];
+    } catch {
+      return [];
+    }
+  }
+  return res.groups ?? [];
+}
+
 /** What went wrong with a change, for the user: the server's refusals have their own words, the rest is the common ones. */
 export function describeChangeError(e: unknown, t: Translate): string {
   if (e instanceof ApiError && e.status === 422) return t("errInvalidValue");
