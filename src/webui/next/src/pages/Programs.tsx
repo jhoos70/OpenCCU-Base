@@ -17,6 +17,12 @@ import { usePolled } from "@/lib/use-polled";
 /** A request runs a script on the CCU, so every 10 seconds is enough to keep the last run current. */
 const POLL_MS = 10_000;
 
+const getProgramQueryFromHash = (): string => {
+  const m = window.location.hash.match(/[?&]q=([^&]+)/);
+  if (m) return decodeURIComponent(m[1]);
+  return "";
+};
+
 /** Status and control of the programs: the classic status list and its action, the run. */
 export default function Programs({ sid, onExpired }: { sid: string; onExpired: () => void }) {
   const { t, lang } = useI18n();
@@ -24,7 +30,16 @@ export default function Programs({ sid, onExpired }: { sid: string; onExpired: (
   const profile = useCurrentProfile();
   const load = React.useCallback(async () => (await getModel("programs", sid)).items, [sid]);
   const { data, error, loaded, refresh } = usePolled(load, POLL_MS, onExpired);
-  const [query, setQuery] = React.useState("");
+  const [query, setQuery] = React.useState<string>(getProgramQueryFromHash);
+
+  React.useEffect(() => {
+    const onHash = () => {
+      const q = getProgramQueryFromHash();
+      if (q) setQuery(q);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const [running, setRunning] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<{ text: string; failed: boolean } | null>(null);
   // the time of the last run the CCU reported for a run, shown until the next update has caught up

@@ -9,8 +9,10 @@ import {
   Laptop,
   LogOut,
   Moon,
+  PlayCircle,
   Radio,
   Sun,
+  Variable,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -25,8 +27,8 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import { NAV_ICONS } from "@/components/NavList";
-import { getModel, type Device, type Room } from "@/lib/api";
-import { text } from "@/lib/format";
+import { getModel, type Device, type Program, type Room, type SysVar } from "@/lib/api";
+import { formatSysVarValue, isUserVar, text } from "@/lib/format";
 import { useCcuStrings } from "@/lib/use-ccu-strings";
 import { useI18n, type Lang } from "@/lib/i18n";
 import type { NavView } from "@/lib/nav";
@@ -57,6 +59,8 @@ export function CommandMenu({
   const [devices, setDevices] = React.useState<Device[]>([]);
   const [rooms, setRooms] = React.useState<Room[]>([]);
   const [functions, setFunctions] = React.useState<Room[]>([]);
+  const [programs, setPrograms] = React.useState<Program[]>([]);
+  const [sysvars, setSysvars] = React.useState<SysVar[]>([]);
 
   // Load items lazily when palette opens or session is provided
   React.useEffect(() => {
@@ -80,6 +84,20 @@ export function CommandMenu({
       .then((res) => {
         if (live && res?.items) {
           setFunctions(res.items);
+        }
+      })
+      .catch(() => {});
+    getModel("programs", sid)
+      .then((res) => {
+        if (live && res?.items) {
+          setPrograms(res.items);
+        }
+      })
+      .catch(() => {});
+    getModel("sysvars", sid)
+      .then((res) => {
+        if (live && res?.items) {
+          setSysvars(res.items);
         }
       })
       .catch(() => {});
@@ -239,6 +257,73 @@ export function CommandMenu({
                   </CommandItem>
                 );
               })}
+            </CommandGroup>
+          </>
+        )}
+
+        {/* Programs Group */}
+        {programs.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading={t("programs")}>
+              {programs
+                .filter((p) => p.isOperable && !p.isCopy && !p.isInternal)
+                .map((program) => {
+                  const progName = text(program.name, strings);
+                  return (
+                    <CommandItem
+                      key={program.id}
+                      value={`${progName} ${program.name} ${program.description ?? ""}`}
+                      onSelect={() =>
+                        runCommand(() => {
+                          window.location.hash = `#/programs?q=${encodeURIComponent(program.name)}`;
+                        })
+                      }
+                    >
+                      <PlayCircle className="size-4 shrink-0 text-[var(--primary)]" aria-hidden="true" />
+                      <span className="flex-1 truncate font-medium">{progName}</span>
+                      {program.description ? (
+                        <CommandShortcut className="hidden sm:inline-block max-w-[140px] truncate text-xs text-[var(--muted-foreground)]">
+                          {text(program.description, strings)}
+                        </CommandShortcut>
+                      ) : null}
+                    </CommandItem>
+                  );
+                })}
+            </CommandGroup>
+          </>
+        )}
+
+        {/* System Variables Group */}
+        {sysvars.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading={t("sysvars")}>
+              {sysvars
+                .filter(isUserVar)
+                .map((sv) => {
+                  const svName = text(sv.name, strings);
+                  const formattedVal = formatSysVarValue(sv, t, strings, lang);
+                  return (
+                    <CommandItem
+                      key={sv.id}
+                      value={`${svName} ${sv.name} ${formattedVal} ${sv.description ?? ""}`}
+                      onSelect={() =>
+                        runCommand(() => {
+                          window.location.hash = `#/sysvars?q=${encodeURIComponent(sv.name)}`;
+                        })
+                      }
+                    >
+                      <Variable className="size-4 shrink-0 text-[var(--primary)]" aria-hidden="true" />
+                      <span className="flex-1 truncate font-medium">{svName}</span>
+                      {formattedVal ? (
+                        <CommandShortcut className="font-semibold text-[var(--foreground)]">
+                          {formattedVal}
+                        </CommandShortcut>
+                      ) : null}
+                    </CommandItem>
+                  );
+                })}
             </CommandGroup>
           </>
         )}

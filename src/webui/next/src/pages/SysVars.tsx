@@ -20,6 +20,12 @@ const POLL_MS = 10_000;
 /** "" for a variable that was never set (the epoch), as the classic list shows nothing there. */
 const changedAt = (v: SysVar, lang: string): string => (v.lastModified.startsWith("1970-") ? "" : formatTime(v.lastModified, lang));
 
+const getSysVarQueryFromHash = (): string => {
+  const m = window.location.hash.match(/[?&]q=([^&]+)/);
+  if (m) return decodeURIComponent(m[1]);
+  return "";
+};
+
 /** Status and control of the system variables: the list as the classic one has it, and a dialog to change a value. */
 export default function SysVars({ sid, onExpired }: { sid: string; onExpired: () => void }) {
   const { t, lang } = useI18n();
@@ -28,7 +34,16 @@ export default function SysVars({ sid, onExpired }: { sid: string; onExpired: ()
   const load = React.useCallback(async () => (await getModel("sysvars", sid)).items, [sid]);
   const { data, error, loaded, refresh } = usePolled(load, POLL_MS, onExpired);
   const [internal, setInternal] = React.useState(false);
-  const [query, setQuery] = React.useState("");
+  const [query, setQuery] = React.useState<string>(getSysVarQueryFromHash);
+
+  React.useEffect(() => {
+    const onHash = () => {
+      const q = getSysVarQueryFromHash();
+      if (q) setQuery(q);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const [editing, setEditing] = React.useState<string | null>(null); // the id of the variable in the dialog
   // the button that opened the dialog gets the focus back, so a keyboard user keeps their place in the table
   const opener = React.useRef<HTMLElement | null>(null);
