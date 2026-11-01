@@ -93,7 +93,7 @@ def main():
             check("the cards of the classic start page are there", pg.get_by_role("heading", name="Duty Cycle", level=2).is_visible() and pg.get_by_role("heading", name="Favoriten", level=2).is_visible())
             check("a password is set: no hint", pg.get_by_role("note").count() == 0)
             check("the page has one h1 (for screen readers) and cards with h2", pg.locator("main h1").count() == 1 and pg.locator("main h2").count() >= 3)
-            check("the favourites card links to the classic UI with the session", "/pages/index.htm?sid=@" in pg.get_by_role("link", name="Klassische Oberfläche öffnen").last.get_attribute("href"))
+            check("the favourites card links to the favourites page", pg.get_by_role("link", name="Favoriten").last.get_attribute("href") == "#/favourites")
 
             # ---- mocked: the clock follows the browser clock between two answers
             state["system"] = {"time": "2026-10-31 19:59:45", "sunrise": "07:08", "sunset": "16:32", "firmwareVersion": "9.9.9.20260101"}

@@ -26,7 +26,7 @@ export const NAV: readonly NavItem[] = [
   { id: "functions", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFunction", "menuSettingsPage/submenuFunction"], ready: false },
   { id: "programs", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuPrograms", "menuProgramsLinksPage/submenuProgramsLinks"], ready: true, labelKey: "programs" },
   { id: "sysvars", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuSysVar", "menuSettingsPage/submenuSysVar"], ready: true, labelKey: "sysvars" },
-  { id: "favourites", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFavorites", "menuSettingsPage/submenuFavorites"], ready: false },
+  { id: "favourites", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFavorites", "menuSettingsPage/submenuFavorites"], ready: true, labelKey: "favourites" },
   { id: "diagrams", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuDiagramListPage", "menuSettingsPage/submenuCreateDiagram"], ready: false },
   { id: "connections", group: "objects", minLevel: "ADMIN", classic: ["menuProgramsLinksPage/submenuDirectLinks"], ready: false },
   { id: "groups", group: "objects", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuCreateGroups"], ready: false },

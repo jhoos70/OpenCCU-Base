@@ -43,12 +43,15 @@ def main():
             check("signed in", True)
             shot(pg, "overview")
 
-            def rows_are(expected):
-                """The rows settle when the page has loaded everything: wait for the expected count (or give up after 15 s)."""
-                try:
-                    pg.wait_for_function("([sel, n]) => document.querySelectorAll(sel).length === n", arg=["tbody tr", expected], timeout=15000)
-                except Exception:
-                    pass
+            def rows_are(expected=None):
+                """The rows settle when the page has loaded everything: the expected count, or (if unknown) the same count twice in a row."""
+                last, deadline = -1, time.time() + 20
+                while time.time() < deadline:
+                    n = pg.locator("tbody tr").count()
+                    if n > 0 and (n == expected or (expected is None and n == last)):
+                        return n
+                    last = n
+                    pg.wait_for_timeout(500)
                 return pg.locator("tbody tr").count()
 
             def timed(label, link, selector):
@@ -74,7 +77,7 @@ def main():
 
             timed("System variables", "System variables", "tbody tr")
             sv = [s for s in v1("SysVar.getAll")]
-            rows = pg.locator("tbody tr").count()
+            rows = rows_are()
             check("System variables: rows are the visible, non-internal ones", 0 < rows <= len(sv), "rows=%d of %d variables" % (rows, len(sv)))
             shot(pg, "sysvars")
 

@@ -21,6 +21,7 @@ import Overview from "@/pages/Overview";
 import Programs from "@/pages/Programs";
 import Rooms from "@/pages/Rooms";
 import Services from "@/pages/Services";
+import Favourites from "@/pages/Favourites";
 import SysVars from "@/pages/SysVars";
 
 function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
@@ -72,7 +73,7 @@ function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
   );
 }
 
-const PAGES: Record<string, React.ComponentType<{ sid: string; onExpired: () => void }>> = { overview: Overview, devices: Devices, rooms: Rooms, programs: Programs, sysvars: SysVars, log: Log, alarms: () => <Alarms />, services: () => <Services /> };
+const PAGES: Record<string, React.ComponentType<{ sid: string; onExpired: () => void }>> = { overview: Overview, devices: Devices, rooms: Rooms, programs: Programs, sysvars: SysVars, favourites: Favourites, log: Log, alarms: () => <Alarms />, services: () => <Services /> };
 
 function Shell({ session, onLogout }: { session: Stored; onLogout: () => void }) {
   const { t } = useI18n();

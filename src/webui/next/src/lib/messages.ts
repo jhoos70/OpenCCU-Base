@@ -25,7 +25,7 @@ export const en = {
   sunset: "Sunset",
   firmwareVersion: "Firmware version",
   noPassword: "No password is set for your account.",
-  favouritesLater: "Favourites are not in the new UI yet.",
+  favouritesLater: "Your favourite lists, with their values and controls.",
   notKnown: "—",
   dutyCycle: "Duty cycle",
   dutyCycleHelp: "Share of the transmission time allowed per hour (1 % rule) that each radio interface has used.",
@@ -166,6 +166,14 @@ export const en = {
   setYes: "Set {name} to yes",
   setNo: "Set {name} to no",
   sendCommand: "Send {name}",
+  // favourites
+  noFavourites: "You have no favourite lists. Lists are made in the classic UI (Settings, Favorites).",
+  emptyList: "This list is empty.",
+  favouriteLists: "Favourite lists",
+  moreValues: "More values ({count})",
+  notADevice: "No values: this channel is not available.",
+  programInList: "Program (run it on the Programs page)",
+  openList: "Open the list {name}",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -193,7 +201,7 @@ export const de: Record<MessageKey, string> = {
   sunset: "Sonnenuntergang",
   firmwareVersion: "Firmwareversion",
   noPassword: "Für Ihr Konto ist kein Kennwort gesetzt.",
-  favouritesLater: "Favoriten gibt es in der neuen Oberfläche noch nicht.",
+  favouritesLater: "Ihre Favoritenlisten mit Werten und Bedienung.",
   notKnown: "—",
   dutyCycle: "Duty Cycle",
   dutyCycleHelp: "Anteil der pro Stunde erlaubten Sendezeit (1-%-Regel), den die jeweilige Funkschnittstelle genutzt hat.",
@@ -332,4 +340,12 @@ export const de: Record<MessageKey, string> = {
   setYes: "{name} auf ja setzen",
   setNo: "{name} auf nein setzen",
   sendCommand: "{name} senden",
+  // favourites
+  noFavourites: "Sie haben keine Favoritenlisten. Listen werden in der klassischen Oberfläche angelegt (Einstellungen, Favoriten).",
+  emptyList: "Diese Liste ist leer.",
+  favouriteLists: "Favoritenlisten",
+  moreValues: "Weitere Werte ({count})",
+  notADevice: "Keine Werte: Dieser Kanal ist nicht verfügbar.",
+  programInList: "Programm (auf der Seite Programme ausführen)",
+  openList: "Liste {name} öffnen",
 };

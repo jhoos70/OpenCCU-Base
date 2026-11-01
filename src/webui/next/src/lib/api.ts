@@ -273,6 +273,52 @@ export function makeSetValue(doFetch: Fetch = defaultFetch): (sid: string, id: s
 const setValueDefault = makeSetValue();
 export const setValue = (sid: string, id: string, value: string | boolean): Promise<Datapoint> => setValueDefault(sid, id, value);
 
+/** A member of a favourite list: a channel, a system variable, a program, or a separator (an empty line). */
+export interface FavouriteItem {
+  id: string;
+  type: "CHANNEL" | "SYSVAR" | "PROGRAM" | "SEPARATOR";
+  name: string;
+}
+export interface FavouriteList {
+  id: string;
+  name: string;
+  info: string;
+  items: FavouriteItem[];
+}
+
+export function makeGetFavourites(doFetch: Fetch = defaultFetch): (sid: string) => Promise<FavouriteList[]> {
+  return async function getFavourites(sid: string): Promise<FavouriteList[]> {
+    const { doc, status } = await send(doFetch, "/favourites", { method: "GET", headers: headersFor(sid) });
+    throwIfError(doc, status);
+    const lists = (doc as { lists?: FavouriteList[] } | null)?.lists;
+    if (!Array.isArray(lists)) throw new ApiError(0, "unexpected answer", status);
+    return lists;
+  };
+}
+const getFavouritesDefault = makeGetFavourites();
+export const getFavourites = (sid: string): Promise<FavouriteList[]> => getFavouritesDefault(sid);
+
+/** The server reads at most this many channels in one request. */
+export const CHANNELS_PER_REQUEST = 100;
+
+/** GET /values?channels=: the datapoints of a set of channels (a favourite list's members), in as many requests as needed. */
+export function makeGetChannelValues(doFetch: Fetch = defaultFetch): (sid: string, channelIds: string[]) => Promise<Datapoint[]> {
+  return async function getChannelValues(sid: string, channelIds: string[]): Promise<Datapoint[]> {
+    const out: Datapoint[] = [];
+    for (let i = 0; i < channelIds.length; i += CHANNELS_PER_REQUEST) {
+      const ids = channelIds.slice(i, i + CHANNELS_PER_REQUEST).map(encodeURIComponent).join(",");
+      const { doc, status } = await send(doFetch, `/values?channels=${ids}`, { method: "GET", headers: headersFor(sid) });
+      throwIfError(doc, status);
+      const items = (doc as { items?: Datapoint[] } | null)?.items;
+      if (!Array.isArray(items)) throw new ApiError(0, "unexpected answer", status);
+      out.push(...items);
+    }
+    return out;
+  };
+}
+const getChannelValuesDefault = makeGetChannelValues();
+export const getChannelValues = (sid: string, channelIds: string[]): Promise<Datapoint[]> => getChannelValuesDefault(sid, channelIds);
+
 export interface ProgramRun {
   id: string;
   executed: boolean;

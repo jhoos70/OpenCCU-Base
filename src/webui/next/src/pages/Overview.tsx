@@ -21,7 +21,7 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 /** The classic start page: the time, sunrise and sunset, the firmware version, a hint if the account has no password,
- *  and the load of the radio interfaces. Favourites are not built yet. */
+ *  and the load of the radio interfaces. Favourites link to their page. */
 export default function Overview({ sid, onExpired }: { sid: string; onExpired: () => void }) {
   const { t, lang } = useI18n();
   const profile = useCurrentProfile();
@@ -70,8 +70,8 @@ export default function Overview({ sid, onExpired }: { sid: string; onExpired: (
         <CardTitle as="h2">{t("favourites")}</CardTitle>
         <CardDescription>{t("favouritesLater")}</CardDescription>
         <p className="mt-2 text-sm">
-          <a className="underline" href={`/pages/index.htm?sid=@${sid}@`}>
-            {t("openClassic")}
+          <a className="underline" href="#/favourites">
+            {t("favourites")}
           </a>
         </p>
       </Card>
