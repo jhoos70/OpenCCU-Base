@@ -66,7 +66,7 @@ def main():
             check("a device expands to its channels", pg.locator("tbody tbody tr").count() > 0, "(%d channel rows)" % pg.locator("tbody tbody tr").count())
             shot(pg, "devices-open")
             pg.get_by_role("button", name="Refresh").first.wait_for(timeout=15000)
-            check("an open device shows its live values", pg.get_by_text("Values", exact=True).first.is_visible() and pg.locator("tbody tbody tbody tr").count() > 3, "(%d rows)" % pg.locator("tbody tbody tbody tr").count())
+            check("an open device shows its live values", pg.get_by_text("Values", exact=True).first.is_visible() and pg.locator("table:has(th:text-is('Parameter')) tbody tr").count() > 3, "(%d rows)" % pg.locator("table:has(th:text-is('Parameter')) tbody tr").count())
 
             timed("Rooms", "Rooms", "tbody tr")
             rooms = v1("Room.getAll"); n = rows_are(len(rooms)); check("Rooms: one row per room", n == len(rooms), "rows=%d classic=%d" % (n, len(rooms)))
