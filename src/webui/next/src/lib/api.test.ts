@@ -265,4 +265,30 @@ describe("Paramsets API", () => {
       { method: "Interface.putParamset", params: { interface: "BidCos-RF", address: "PEQ001:1", paramsetKey: "MASTER", set: [{ name: "PARAM1", type: "bool", value: "false" }] } },
     ]);
   });
+
+  it("getDeviceLinks, addDeviceLink, removeDeviceLink, setDeviceLinkInfo call correct methods", async () => {
+    const calls: { method: string; params: unknown }[] = [];
+    const mockRpc = async <T>(method: string, params?: Record<string, unknown>): Promise<T> => {
+      calls.push({ method, params });
+      if (method === "Interface.getLinks") {
+        return [{ name: "Link 1", sender: "S1", receiver: "R1", flags: 0 }] as T;
+      }
+      return true as T;
+    };
+
+    const { getDeviceLinks, addDeviceLink, removeDeviceLink, setDeviceLinkInfo } = await import("./api");
+    const links = await getDeviceLinks("sid1", "BidCos-RF", "S1", mockRpc);
+    expect(links).toEqual([{ name: "Link 1", sender: "S1", receiver: "R1", flags: 0 }]);
+
+    await addDeviceLink("sid1", "BidCos-RF", "S1", "R1", "New Link", "Desc", mockRpc);
+    await removeDeviceLink("sid1", "BidCos-RF", "S1", "R1", mockRpc);
+    await setDeviceLinkInfo("sid1", "BidCos-RF", "S1", "R1", "Renamed Link", "New Desc", mockRpc);
+
+    expect(calls).toEqual([
+      { method: "Interface.getLinks", params: { interface: "BidCos-RF", address: "S1", flags: 6 } },
+      { method: "Interface.addLink", params: { interface: "BidCos-RF", sender: "S1", receiver: "R1", name: "New Link", description: "Desc" } },
+      { method: "Interface.removeLink", params: { interface: "BidCos-RF", sender: "S1", receiver: "R1" } },
+      { method: "Interface.setLinkInfo", params: { interface: "BidCos-RF", sender: "S1", receiver: "R1", name: "Renamed Link", description: "New Desc" } },
+    ]);
+  });
 });

@@ -17,6 +17,7 @@ import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components
 import { DataTableColumnHeader, DataTableViewOptions } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
 import { DeviceEditDrawer } from "@/components/DeviceEditDrawer";
+import { DeviceLinks } from "@/components/DeviceLinks";
 import { DeviceParameters } from "@/components/DeviceParameters";
 import { DeviceValues } from "@/components/DeviceValues";
 import { TileBoard } from "@/components/TileBoard";
@@ -646,13 +647,18 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
             />
           )}
 
-          {/* Tab 3: Direct Links (Placeholder for Phase 2b) */}
+          {/* Tab 3: Direct Links */}
           {activeTab === "links" && (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-8 text-center space-y-3">
-              <Link2 className="size-8 mx-auto text-[var(--muted-foreground)] opacity-50" />
-              <h3 className="text-base font-semibold text-[var(--foreground)]">{t("tabLinks")}</h3>
-              <p className="text-sm text-[var(--muted-foreground)] max-w-md mx-auto">{t("directLinksPlaceholder")}</p>
-            </div>
+            <DeviceLinks
+              device={selectedDevice}
+              allDevices={state.status === "ready" ? state.data.items : []}
+              allRooms={roomsState.status === "ready" ? roomsState.data.items : []}
+              sid={sid}
+              mayChange={mayEdit}
+              strings={strings}
+              icons={icons}
+              onExpired={onExpired}
+            />
           )}
 
           {/* Tab 4: Maintenance (Placeholder for Phase 2c) */}

@@ -677,6 +677,83 @@ export async function putParamset(
   );
 }
 
+export interface DeviceLink {
+  name: string;
+  description: string;
+  flags: number;
+  sender: string;
+  receiver: string;
+  senderParamset?: Paramset;
+  receiverParamset?: Paramset;
+}
+
+export async function getDeviceLinks(
+  sid: string,
+  iface: string,
+  address: string,
+  call: Rpc = rpc,
+): Promise<DeviceLink[]> {
+  const result = await call<DeviceLink[] | string>(
+    "Interface.getLinks",
+    { interface: iface, address, flags: 6 },
+    sid,
+  );
+  if (typeof result === "string") {
+    try {
+      return JSON.parse(result);
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(result) ? result : [];
+}
+
+export async function addDeviceLink(
+  sid: string,
+  iface: string,
+  sender: string,
+  receiver: string,
+  name: string,
+  description: string,
+  call: Rpc = rpc,
+): Promise<boolean> {
+  return await call<boolean>(
+    "Interface.addLink",
+    { interface: iface, sender, receiver, name, description },
+    sid,
+  );
+}
+
+export async function removeDeviceLink(
+  sid: string,
+  iface: string,
+  sender: string,
+  receiver: string,
+  call: Rpc = rpc,
+): Promise<boolean> {
+  return await call<boolean>(
+    "Interface.removeLink",
+    { interface: iface, sender, receiver },
+    sid,
+  );
+}
+
+export async function setDeviceLinkInfo(
+  sid: string,
+  iface: string,
+  sender: string,
+  receiver: string,
+  name: string,
+  description: string,
+  call: Rpc = rpc,
+): Promise<boolean> {
+  return await call<boolean>(
+    "Interface.setLinkInfo",
+    { interface: iface, sender, receiver, name, description },
+    sid,
+  );
+}
+
 /** What went wrong with a change, for the user: the server's refusals have their own words, the rest is the common ones. */
 export function describeChangeError(e: unknown, t: Translate): string {
   if (e instanceof ApiError && e.status === 422) return t("errInvalidValue");
