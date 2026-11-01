@@ -84,11 +84,12 @@ jobs:
           ## OpenCCU NextGen WebUI v${VER}
 
           ### Highlights
-          - **Modern Layout**: Responsive collapsible sidebar, Lucide icons, and sticky top header with status badges.
-          - **TanStack Data Table**: Sorting, column visibility customizer ('Spalten'), and multi-word filter on Devices.
-          - **Dark Mode**: Support for Light, Dark, and System preference with seamless switching.
-          - **Official Branding**: Integrated OpenCCU vector crest logo and SVG favicon.
-          - **Parallel Operation**: Runs alongside classic CCU WebUI at \`/webui/next/\` without touching classic pages.
+          - **Object-Centric Device View**: Eliminate split between status and settings; configure device & channel metadata, room/function assignments, logging, and transmission modes directly in place.
+          - **Hardware Parameter Editor (MASTER)**: Real-time editing of device & channel parameters with battery wakeup indicators, parameter search, and live XML-RPC sync.
+          - **Direct Links Management (Direktverknüpfungen)**: View, edit, create, and remove direct device links with interface-specific channel filtering.
+          - **Device Maintenance & Diagnostics**: Live signal quality (RSSI) in dBm, communication status, config resync (\`restoreConfigToDevice\`), OTA firmware updates, device replacement assistant, and unpairing options.
+          - **Heating Groups (Heizgruppen \`#/groups\`)**: Dedicated top-level smart-home view for Homematic Classic and HmIP heating groups, including interactive climate control tiles, categorized member devices, and weekly schedule configuration.
+          - **Modern Layout & Performance**: Responsive collapsible sidebar, Lucide icons, Dark/Light modes, and sub-second load times alongside the classic WebUI.
 
           ### Installation Instructions
           1. Download \`openccu-nextgen-addon-${VER}.tar.gz\` below.
