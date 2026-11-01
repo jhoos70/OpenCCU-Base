@@ -1,0 +1,110 @@
+# OpenCCU NextGen WebUI CCU Add-on Release Workflow
+# yamllint disable rule:truthy
+---
+name: Release NextGen CCU Addon
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version string (e.g. 0.1.0-beta.1)'
+        required: true
+        default: '0.1.0-beta.1'
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release Addon
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Code
+        # v4
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        # v4
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Determine Version
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            TAG="v${VERSION#v}"
+            IS_PRERELEASE="${{ github.event.inputs.prerelease }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+            case "$TAG" in
+              *alpha*|*beta*|*rc*) IS_PRERELEASE="true" ;;
+              *) IS_PRERELEASE="false" ;;
+            esac
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build NextGen CCU Addon
+        run: |
+          .migration/webui-api/deploy/make-addon.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Generate Checksums
+        working-directory: .migration/webui-api/deploy/out
+        run: |
+          sha256sum openccu-nextgen-addon-${{ steps.meta.outputs.version }}.tar.gz > openccu-nextgen-addon-${{ steps.meta.outputs.version }}.tar.gz.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VER: ${{ steps.meta.outputs.version }}
+          PRE: ${{ steps.meta.outputs.prerelease }}
+        run: |
+          FLAGS=""
+          [ "$PRE" = "true" ] && FLAGS="--prerelease"
+
+          CHECKSUM=$(cat .migration/webui-api/deploy/out/openccu-nextgen-addon-${VER}.tar.gz.sha256)
+
+          cat << EOF > /tmp/release_notes.md
+          ## OpenCCU NextGen WebUI v${VER}
+
+          ### Highlights
+          - **Modern Layout**: Responsive collapsible sidebar, Lucide icons, and sticky top header with status badges.
+          - **TanStack Data Table**: Sorting, column visibility customizer ('Spalten'), and multi-word filter on Devices.
+          - **Dark Mode**: Support for Light, Dark, and System preference with seamless switching.
+          - **Official Branding**: Integrated OpenCCU vector crest logo and SVG favicon.
+          - **Parallel Operation**: Runs alongside classic CCU WebUI at \`/webui/next/\` without touching classic pages.
+
+          ### Installation Instructions
+          1. Download \`openccu-nextgen-addon-${VER}.tar.gz\` below.
+          2. In your CCU WebUI, go to: **Einstellungen → Systemsteuerung → Zusatzsoftware**.
+          3. Select the downloaded \`.tar.gz\` file and click **Installieren**.
+          4. Open the new UI at \`http://<your-ccu-ip>/webui/next/\` or click the button in *Zusatzsoftware*.
+
+          ### Checksums (SHA-256)
+          \`\`\`
+          ${CHECKSUM}
+          \`\`\`
+          EOF
+
+          gh release create "$TAG" \
+            .migration/webui-api/deploy/out/openccu-nextgen-addon-${VER}.tar.gz \
+            .migration/webui-api/deploy/out/openccu-nextgen-addon-${VER}.tar.gz.sha256 \
+            --title "OpenCCU NextGen WebUI v${VER}" \
+            --notes-file /tmp/release_notes.md \
+            $FLAGS
