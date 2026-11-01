@@ -2,55 +2,55 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Theme tokens (shadcn style). */
+/* Theme tokens (shadcn style), aligned to the OpenCCU logo palette. */
 :root {
   color-scheme: light;
-  --background: #f4f6f8;
-  --foreground: #1b2330;
+  --background: #f4f7f9;
+  --foreground: #101c28;
   --card: #ffffff;
-  --card-foreground: #1b2330;
+  --card-foreground: #101c28;
   --popover: #ffffff;
-  --popover-foreground: #1b2330;
-  --primary: #1a2b6d;
+  --popover-foreground: #101c28;
+  --primary: #004e86;
   --primary-foreground: #ffffff;
-  --muted-foreground: #5b6675;
-  --border: #c9d1d9;
+  --muted-foreground: #526375;
+  --border: #c8d5e0;
   --destructive: #b42318;
   --destructive-foreground: #ffffff;
-  --muted: #eef1f4;
-  --accent: #2f4bb8;
-  --accent-soft: #e3eafd;
-  --tile-on: #eef3ff;
+  --muted: #eaf0f5;
+  --accent: #0085be;
+  --accent-soft: #e5f4fa;
+  --tile-on: #ecf6fb;
   --ok: #17794a;
   --warn: #9a5b00;
   --warn-soft: #fdf0d9;
   --bad-soft: #fdeceb;
-  --track: #e6eaef;
+  --track: #dce6ed;
 }
 
 .dark {
   color-scheme: dark;
-  --background: #090d16;
-  --foreground: #f1f5f9;
-  --card: #111827;
-  --card-foreground: #f1f5f9;
-  --popover: #111827;
-  --popover-foreground: #f1f5f9;
-  --primary: #3b82f6;
+  --background: #09111c;
+  --foreground: #f0f6fc;
+  --card: #0f1c2d;
+  --card-foreground: #f0f6fc;
+  --popover: #0f1c2d;
+  --popover-foreground: #f0f6fc;
+  --primary: #009acf;
   --primary-foreground: #ffffff;
-  --muted-foreground: #94a3b8;
-  --border: #1f293d;
+  --muted-foreground: #8fa3b8;
+  --border: #1d334d;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --muted: #1e293b;
-  --accent: #3b82f6;
-  --accent-soft: #172554;
-  --tile-on: #172554;
+  --muted: #16263a;
+  --accent: #00b4ea;
+  --accent-soft: #082842;
+  --tile-on: #0a2740;
   --ok: #22c55e;
   --warn: #f59e0b;
   --warn-soft: #2e2616;
   --bad-soft: #301616;
-  --track: #1e293b;
+  --track: #17273b;
 }
 
 body {
