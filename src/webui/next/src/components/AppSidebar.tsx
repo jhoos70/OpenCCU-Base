@@ -1,5 +1,5 @@
 import * as React from "react";
-import { PanelLeftClose, PanelLeft } from "lucide-react";
+import { PanelLeftClose, PanelLeft, SlidersHorizontal } from "lucide-react";
 import { OpenCCULogo } from "./OpenCCULogo";
 import { useI18n } from "@/lib/i18n";
 import type { NavView } from "@/lib/nav";
@@ -12,12 +12,14 @@ export function AppSidebar({
   classicHref,
   collapsed,
   onToggleCollapse,
+  onOpenCustomize,
 }: {
   nav: NavView;
   current: string;
   classicHref: string;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  onOpenCustomize?: () => void;
 }) {
   const { t } = useI18n();
 
@@ -53,8 +55,24 @@ export function AppSidebar({
         <NavList nav={nav} current={current} classicHref={classicHref} collapsed={collapsed} />
       </div>
 
-      {/* Footer Collapse Toggle */}
-      <div className="border-t border-[var(--border)] p-2">
+      {/* Footer Controls: Customize Navigation & Collapse Toggle */}
+      <div className="border-t border-[var(--border)] p-2 space-y-1">
+        {onOpenCustomize && (
+          <button
+            type="button"
+            onClick={onOpenCustomize}
+            title={t("customizeNav")}
+            aria-label={t("customizeNav")}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-lg p-2 text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)] transition-colors",
+              collapsed && "justify-center px-0",
+            )}
+          >
+            <SlidersHorizontal className="size-4 shrink-0" aria-hidden="true" />
+            {!collapsed && <span>{t("customizeNav")}</span>}
+          </button>
+        )}
+
         <button
           type="button"
           onClick={onToggleCollapse}

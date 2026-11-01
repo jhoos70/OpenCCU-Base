@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Menu, PanelLeft, PanelLeftClose, Radio, Search, X } from "lucide-react";
+import { Menu, PanelLeft, PanelLeftClose, Radio, Search, SlidersHorizontal, X } from "lucide-react";
 import { OpenCCULogo } from "@/components/OpenCCULogo";
 import { useI18n } from "@/lib/i18n";
 import type { NavView } from "@/lib/nav";
@@ -21,6 +21,7 @@ export function AppBar({
   collapsed = false,
   onToggleCollapse,
   onOpenCommand,
+  onOpenCustomize,
 }: {
   profile: Profile | null;
   nav: NavView;
@@ -31,6 +32,7 @@ export function AppBar({
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onOpenCommand?: () => void;
+  onOpenCustomize?: () => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = React.useState(false);
@@ -74,6 +76,21 @@ export function AppBar({
               <div className="flex-1 overflow-y-auto p-4">
                 <NavList nav={nav} current={current} classicHref={classicHref} onNavigate={() => setOpen(false)} />
               </div>
+              {onOpenCustomize && (
+                <div className="border-t border-[var(--border)] p-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      onOpenCustomize();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg p-2 text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+                  >
+                    <SlidersHorizontal className="size-4 shrink-0" aria-hidden="true" />
+                    <span>{t("customizeNav")}</span>
+                  </button>
+                </div>
+              )}
             </SheetContent>
           </Sheet>
         )}
@@ -121,7 +138,13 @@ export function AppBar({
         <StatusIndicators />
         <ThemeToggle className="size-8" />
         <div className="h-4 w-px bg-[var(--border)]" />
-        <UserMenu profile={profile} classicHref={classicHref} onSignOut={onSignOut} busy={busy} />
+        <UserMenu
+          profile={profile}
+          classicHref={classicHref}
+          onSignOut={onSignOut}
+          busy={busy}
+          onOpenCustomizeNav={onOpenCustomize}
+        />
       </div>
     </header>
   );

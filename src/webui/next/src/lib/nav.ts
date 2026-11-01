@@ -21,15 +21,15 @@ export type NavItem = (Base & { ready: true; labelKey: MessageKey }) | (Base & {
 
 export const NAV: readonly NavItem[] = [
   { id: "overview", group: "objects", minLevel: "USER", classic: ["menuStartPage"], ready: true, labelKey: "overview" },
-  { id: "devices", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuDevices", "menuSettingsPage/submenuDevices"], ready: true, labelKey: "devices" },
+  { id: "favourites", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFavorites", "menuSettingsPage/submenuFavorites"], ready: true, labelKey: "favourites" },
   { id: "rooms", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuRooms", "menuSettingsPage/submenuRooms"], ready: true, labelKey: "rooms" },
+  { id: "devices", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuDevices", "menuSettingsPage/submenuDevices"], ready: true, labelKey: "devices" },
+  { id: "groups", group: "objects", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuCreateGroups"], ready: true, labelKey: "groups" },
   { id: "functions", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFunction", "menuSettingsPage/submenuFunction"], ready: true, labelKey: "functions" },
   { id: "programs", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuPrograms", "menuProgramsLinksPage/submenuProgramsLinks"], ready: true, labelKey: "programs" },
   { id: "sysvars", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuSysVar", "menuSettingsPage/submenuSysVar"], ready: true, labelKey: "sysvars" },
-  { id: "favourites", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFavorites", "menuSettingsPage/submenuFavorites"], ready: true, labelKey: "favourites" },
   { id: "diagrams", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuDiagramListPage", "menuSettingsPage/submenuCreateDiagram"], ready: false },
   { id: "connections", group: "objects", minLevel: "ADMIN", classic: ["menuProgramsLinksPage/submenuDirectLinks"], ready: false },
-  { id: "groups", group: "objects", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuCreateGroups"], ready: true, labelKey: "groups" },
   { id: "log", group: "system", minLevel: "USER", classic: ["menuControlPage/submenuSysProtocol"], ready: true, labelKey: "log" },
   // adding devices: the inbox of new devices and the teach-in action of the classic header
   { id: "inbox", group: "system", minLevel: "ADMIN", classic: ["menuSettingsPage/submenuDeviceInbox", "menuNewDevicesPage"], ready: false },
@@ -57,12 +57,35 @@ export interface NavView {
   hasMore: boolean;
 }
 
+export interface NavCustomConfig {
+  order?: string[];
+  hidden?: string[];
+}
+
 /** What the user sees: the built entries of the user's level, in groups; guests get nothing (the classic menu has none). */
-export function navFor(level: Level): NavView {
+export function navFor(level: Level, custom?: NavCustomConfig | null): NavView {
   const visible = NAV.filter((i) => canSee(i, level));
-  const ready = visible.filter((i): i is NavItem & { ready: true } => i.ready);
+  let ready = visible.filter((i): i is NavItem & { ready: true } => i.ready);
+
+  if (custom) {
+    if (custom.hidden && custom.hidden.length > 0) {
+      const hiddenSet = new Set(custom.hidden);
+      ready = ready.filter((i) => i.id === "overview" || !hiddenSet.has(i.id));
+    }
+    if (custom.order && custom.order.length > 0) {
+      const orderMap = new Map(custom.order.map((id, idx) => [id, idx]));
+      ready.sort((a, b) => {
+        const aIdx = orderMap.has(a.id) ? orderMap.get(a.id)! : 999;
+        const bIdx = orderMap.has(b.id) ? orderMap.get(b.id)! : 999;
+        return aIdx - bIdx;
+      });
+    }
+  }
+
   return {
-    groups: (["objects", "system"] as const).map((group) => ({ group, items: ready.filter((i) => i.group === group) })).filter((g) => g.items.length > 0),
+    groups: (["objects", "system"] as const)
+      .map((group) => ({ group, items: ready.filter((i) => i.group === group) }))
+      .filter((g) => g.items.length > 0),
     hasMore: visible.some((i) => !i.ready),
   };
 }

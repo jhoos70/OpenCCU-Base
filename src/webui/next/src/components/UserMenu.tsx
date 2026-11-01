@@ -1,4 +1,4 @@
-import { ChevronDown, ExternalLink, Languages, Laptop, LogOut, Moon, ShieldCheck, Sun, User } from "lucide-react";
+import { ChevronDown, ExternalLink, Languages, Laptop, LogOut, Moon, ShieldCheck, SlidersHorizontal, Sun, User } from "lucide-react";
 import type { Profile } from "@/lib/api";
 import { LANGS, useI18n, type Lang } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
@@ -27,11 +27,13 @@ export function UserMenu({
   classicHref,
   onSignOut,
   busy,
+  onOpenCustomizeNav,
 }: {
   profile: Profile | null;
   classicHref: string;
   onSignOut: () => void;
   busy: boolean;
+  onOpenCustomizeNav?: () => void;
 }) {
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme } = useTheme();
@@ -95,6 +97,12 @@ export function UserMenu({
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        {onOpenCustomizeNav && (
+          <DropdownMenuItem onSelect={onOpenCustomizeNav} className="gap-2">
+            <SlidersHorizontal className="size-3.5 text-[var(--muted-foreground)]" />
+            <span>{t("customizeNav")}</span>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem asChild>
           <a href={classicHref} className="flex items-center justify-between">
             <span>{t("openClassic")}</span>

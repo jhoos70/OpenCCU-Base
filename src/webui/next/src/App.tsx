@@ -3,6 +3,7 @@ import { describeError, login, logout, renew } from "@/lib/api";
 import { clearSession, loadSession, saveSession, type Stored } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
 import { INDICATOR_ROUTES, navFor, showsIndicators } from "@/lib/nav";
+import { useNavOrder } from "@/lib/nav-order";
 import { ProfileContext } from "@/lib/profile-context";
 import { MessagesProvider } from "@/lib/use-messages";
 import { useProfile } from "@/lib/use-profile";
@@ -10,6 +11,7 @@ import { useRoute } from "@/lib/use-route";
 import { AppBar } from "@/components/AppBar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { CommandMenu } from "@/components/CommandMenu";
+import { NavCustomizeDialog } from "@/components/NavCustomizeDialog";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NavList } from "@/components/NavList";
@@ -88,8 +90,11 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
   const { t } = useI18n();
   const state = useProfile(session.sid, onLogout);
   const profile = state.status === "ready" ? state.profile : null;
+  const { custom, moveItem, toggleHide, reset: resetNavOrder } = useNavOrder();
+  const [customizeNavOpen, setCustomizeNavOpen] = React.useState(false);
+
   // No profile (yet), no level, no menu: rights are never assumed.
-  const nav = React.useMemo(() => navFor(profile?.level ?? "NONE"), [profile?.level]);
+  const nav = React.useMemo(() => navFor(profile?.level ?? "NONE", custom), [profile?.level, custom]);
   const indicators = profile !== null && showsIndicators(profile.level);
   const route = useRoute([...nav.groups.flatMap((g) => g.items.map((i) => i.id)), ...(indicators ? INDICATOR_ROUTES : [])]);
   const [busy, setBusy] = React.useState(false);
@@ -151,6 +156,7 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
               classicHref={classicHref}
               collapsed={collapsed}
               onToggleCollapse={toggleCollapsed}
+              onOpenCustomize={() => setCustomizeNavOpen(true)}
             />
           )}
           <div className="flex min-w-0 flex-1 flex-col">
@@ -164,6 +170,7 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
               collapsed={collapsed}
               onToggleCollapse={toggleCollapsed}
               onOpenCommand={() => setCommandOpen(true)}
+              onOpenCustomize={() => setCustomizeNavOpen(true)}
             />
             <main className="min-w-0 flex-1 p-4 md:p-6 lg:p-8">
               <div className="mx-auto max-w-7xl">
@@ -188,6 +195,17 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
             onSignOut={signOut}
             indicators={indicators}
           />
+          {profile && (
+            <NavCustomizeDialog
+              open={customizeNavOpen}
+              onClose={() => setCustomizeNavOpen(false)}
+              level={profile.level}
+              custom={custom}
+              onMoveItem={moveItem}
+              onToggleHide={toggleHide}
+              onReset={resetNavOrder}
+            />
+          )}
         </div>
       </MessagesProvider>
     </ProfileContext.Provider>

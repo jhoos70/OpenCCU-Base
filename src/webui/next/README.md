@@ -18,6 +18,20 @@ menu. Here each has its own place: the slim app bar holds the name and the **use
 expert mode as information, language, the classic UI, sign out); the **navigation** is a sidebar on wide screens and
 a drawer on narrow ones; a page has a title instead of a breadcrumb. There is no global "Save changes" button: dialogs that save have their own buttons.
 
+**Logical Default Order & Custom Navigation:**
+The navigation follows a logical, smart-home daily-use hierarchy:
+1. Overview (Dashboard)
+2. Favourites (Starred controls)
+3. Rooms (Location-based navigation)
+4. Devices (Hardware management)
+5. Heating Groups (Room climate zones)
+6. Functions (Trade categories)
+7. Programs (Automations)
+8. System Variables (States and logic)
+9. System Log (Event history)
+
+Users can customize this ordering individually via the **"Customize menu"** button in the sidebar footer, the mobile drawer, or the user profile menu. The `NavCustomizeDialog` enables reordering items (Up / Down) and hiding unneeded items, persisted in `localStorage` (`openccu.next.nav.custom`) with an instant **"Reset to default"** option.
+
 ## Alarm and service messages
 
 The app bar shows the two counters of the classic header, each a link to its list (`#/alarms`, `#/services`): a

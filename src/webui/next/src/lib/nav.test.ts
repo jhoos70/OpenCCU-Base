@@ -61,11 +61,23 @@ describe("the nav against the classic menu", () => {
 });
 
 describe("navFor", () => {
-  it("shows the built entries of the level, grouped, and points to the classic UI for the rest", () => {
+  it("shows the built entries of the level in logical default order, grouped, and points to the classic UI for the rest", () => {
     const a = navFor("ADMIN");
-    expect(a.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["overview", "devices", "rooms", "functions", "programs", "sysvars", "favourites", "groups", "log"]);
+    expect(a.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["overview", "favourites", "rooms", "devices", "groups", "functions", "programs", "sysvars", "log"]);
     expect(a.hasMore).toBe(true);
-    expect(navFor("USER").groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["overview", "devices", "rooms", "functions", "programs", "sysvars", "favourites", "log"]);
+    expect(navFor("USER").groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["overview", "favourites", "rooms", "devices", "functions", "programs", "sysvars", "log"]);
+  });
+  it("applies custom ordering and hides items when configured", () => {
+    const custom = {
+      order: ["devices", "rooms", "favourites", "overview"],
+      hidden: ["functions", "programs"],
+    };
+    const res = navFor("ADMIN", custom);
+    expect(res.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["devices", "rooms", "favourites", "overview", "groups", "sysvars", "log"]);
+    // overview cannot be hidden
+    const noHideOverview = navFor("USER", { hidden: ["overview", "log"] });
+    expect(noHideOverview.groups.flatMap((g) => g.items.map((i) => i.id))).toContain("overview");
+    expect(noHideOverview.groups.flatMap((g) => g.items.map((i) => i.id))).not.toContain("log");
   });
   it("gives guests and unknown levels nothing, as the classic UI does", () => {
     for (const l of ["GUEST", "NONE"] as const) expect(navFor(l)).toEqual({ groups: [], hasMore: false });

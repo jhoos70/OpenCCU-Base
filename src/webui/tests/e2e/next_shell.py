@@ -70,7 +70,7 @@ def main():
             sign_in(pg)
             groups = [h.strip().lower() for h in pg.locator("aside nav h2").all_inner_texts()]
             check("the sidebar groups the entries", groups == ["objects", "system"], str(groups))
-            check("the sidebar lists the built objects", links(pg) == ["Overview", "Devices", "Rooms", "Functions", "Programs", "System variables", "Favourites", "System log", "More in the classic UI"], str(links(pg)))
+            check("the sidebar lists the built objects", links(pg) == ["Overview", "Favourites", "Rooms", "Devices", "Heating groups", "Functions", "Programs", "System variables", "System log", "More in the classic UI"], str(links(pg)))
             check("the current page is marked", pg.locator("aside nav a[aria-current=page]").inner_text() == "Overview")
             check("the menu button is hidden on a wide screen", not pg.get_by_role("button", name="Menu", exact=True).is_visible())
             check("the classic link carries the session", "/pages/index.htm?sid=@" in pg.locator("aside nav a", has_text="More in the classic UI").get_attribute("href"))
@@ -101,7 +101,7 @@ def main():
                 pg.unroute("**/v2/profile"); mock_profile(pg, **kw); pg.reload(); wait_nav(pg)
 
             with_profile(level="USER")
-            check("a user sees the entries of the user menu of the classic UI", links(pg) == ["Overview", "Devices", "Rooms", "Functions", "Programs", "System variables", "Favourites", "System log", "More in the classic UI"], str(links(pg)))
+            check("a user sees the entries of the user menu of the classic UI", links(pg) == ["Overview", "Favourites", "Rooms", "Devices", "Functions", "Programs", "System variables", "System log", "More in the classic UI"], str(links(pg)))
             pg.get_by_role("button", name="Account menu").click()
             check("the user menu names the level", "User" in pg.get_by_role("menu").inner_text())
             pg.keyboard.press("Escape")
@@ -122,7 +122,7 @@ def main():
 
             # the admin again, then the way out through the menu
             pg.unroute("**/v2/profile"); pg.reload(); wait_nav(pg)
-            check("the real profile restores the navigation", links(pg)[:8] == ["Overview", "Devices", "Rooms", "Functions", "Programs", "System variables", "Favourites", "System log"])
+            check("the real profile restores the navigation", links(pg)[:8] == ["Overview", "Favourites", "Rooms", "Devices", "Heating groups", "Functions", "Programs", "System variables"])
             sign_out(pg)
 
             # ---- an expired session returns to the form (the real session is ended in the cleanup below)
