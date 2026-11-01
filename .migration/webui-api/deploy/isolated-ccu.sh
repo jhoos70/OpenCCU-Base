@@ -59,6 +59,7 @@ case "${1:-}" in
     docker exec "$CCU" sh -c 'cd /tmp && tar xzf webui-api-bundle.tar.gz && cd webui-api-bundle && ./install.sh install --patch' | tail -4
     docker exec "$CCU" sh -c 'sed -i "s/^  v2_enabled false/  v2_enabled true/" /www/api/apiconfig.conf; mkdir -p /www/webui/next'
     [ -d "$repo/src/webui/next/dist" ] || (cd "$repo/src/webui/next" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm run build >/dev/null)
+    docker exec "$CCU" rm -rf /www/webui/next/assets /www/webui/next/index.html   # no stale hashed files of older builds
     docker cp "$repo/src/webui/next/dist/." "$CCU":/www/webui/next/
     echo "installed; the nextGen UI is at http://127.0.0.1:$PORT/webui/next/" ;;
   restore)
