@@ -76,6 +76,21 @@ void HS485Device::ClearChannels()
 	channels.clear();
 }
 
+bool HS485Device::RestoreConfigToDevice()
+{
+	// Send the configuration stored on the CCU (EEPROM cache, paramsets and
+	// links) to the device again, as done for the restore of a replaced device.
+	// Write pending changes first: GetConfig() reads the written cache data and
+	// RestoreConfig() clears the cache, so they would be lost otherwise. If the
+	// device cannot be reached, nothing is restored and nothing is lost.
+	if(!GetEEPromCache()->Flush())return false;
+	XmlRpcValue config;
+	if(!GetConfig(&config))return false;
+	bool retval=RestoreConfig(config, false);
+	RequestSave();
+	return retval;
+}
+
 void HS485Device::ClearConfigCache()
 {
 	eep_cache.Clear();
