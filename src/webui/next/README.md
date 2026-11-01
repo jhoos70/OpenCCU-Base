@@ -154,6 +154,14 @@ page function that a script cannot call), activating and deactivating a program,
 connections" pages). The server runs only a program of the program collection, refuses an internal program (403), and a
 non-admin needs the program's full access right; the v1 `Program.execute` checks none of this.
 
+**Active.** The table has an **Active** column. Administrators get a switch (a user sees yes / no): in the classic UI the
+status page only shows the flag, and switching a program on or off belongs to the *Programs and connections* editor, which
+is administrator-level, so it is administrators only here too (`POST /api/v2/programs {"id","active":true|false}`; internal
+programs are refused). **Activating asks first** ("Activate this program?"): the CCU checks the conditions of a program when
+it is activated and the program can run at once (seen on the restored real CCU: activating "Abwesenheit" ran it and the four
+programs that depend on it, while deactivating ran nothing), so a click on a switch must not be able to switch lamps by
+accident. Deactivating needs no question. Cancel has the focus.
+
 ## System variables: status and control
 
 The first page that **writes**. The list is the classic one: name, description, last modified and status, with a name

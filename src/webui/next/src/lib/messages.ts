@@ -242,6 +242,15 @@ export const en = {
   confirmSome: "{done} of {total} confirmed; the rest could not be.",
   cannotConfirm: "The device reports this by itself; it cannot be confirmed here.",
   confirmWhat: "Confirm: {name}",
+  // program activation
+  programActive: "Active",
+  programActiveSwitch: "Active: {name}",
+  programActivateTitle: "Activate this program?",
+  programActivateWarning: "When a program is activated the CCU checks its conditions, and it can run at once: its actions may switch devices or change variables. Programs that depend on it may run as well.",
+  programActivate: "Activate",
+  programSwitchFailed: "{name} could not be switched: {reason}",
+  programActivated: "{name} is now active.",
+  programDeactivated: "{name} is now inactive.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -484,4 +493,13 @@ export const de: Record<MessageKey, string> = {
   confirmSome: "{done} von {total} bestätigt; die übrigen nicht.",
   cannotConfirm: "Das Gerät meldet dies selbst; es kann hier nicht bestätigt werden.",
   confirmWhat: "Bestätigen: {name}",
+  // program activation
+  programActive: "Aktiv",
+  programActiveSwitch: "Aktiv: {name}",
+  programActivateTitle: "Dieses Programm aktivieren?",
+  programActivateWarning: "Beim Aktivieren prüft die CCU die Bedingungen des Programms, und es kann sofort laufen: Seine Aktionen können Geräte schalten oder Variablen ändern. Programme, die davon abhängen, können ebenfalls laufen.",
+  programActivate: "Aktivieren",
+  programSwitchFailed: "{name} konnte nicht umgeschaltet werden: {reason}",
+  programActivated: "{name} ist jetzt aktiv.",
+  programDeactivated: "{name} ist jetzt inaktiv.",
 };

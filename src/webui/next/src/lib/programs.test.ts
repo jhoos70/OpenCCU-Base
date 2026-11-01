@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, describeChangeError, makeExecuteProgram, type Program } from "./api";
+import { ApiError, describeChangeError, makeExecuteProgram, makeSetProgramActive, type Program } from "./api";
 import { translate, type Translate } from "./i18n";
 import { filterPrograms, isListed, neverRan } from "./programs";
 
@@ -57,5 +57,28 @@ describe("executeProgram", () => {
   });
   it("rejects an answer without executed", async () => {
     await expect(makeExecuteProgram(async () => new Response("{}"))("s", "1")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+
+describe("switching a program on or off", () => {
+  const t: Translate = (k, p) => translate("en", k, p);
+  it("posts id and a boolean and returns the flag the CCU holds", async () => {
+    let init: RequestInit | undefined;
+    let url = "";
+    const set = makeSetProgramActive(async (u, i) => ((url = String(u)), (init = i), new Response(JSON.stringify({ id: "7", isActive: false }))));
+    expect(await set("sid", "7", false)).toEqual({ id: "7", isActive: false });
+    expect(url).toContain("/programs");
+    expect(JSON.parse(String(init?.body))).toEqual({ id: "7", active: false });
+  });
+  it("tells that only an administrator may (403) and that the program is gone (404)", async () => {
+    const refused = await makeSetProgramActive(async () => new Response(JSON.stringify({ error: { code: 400, message: "access denied" } }), { status: 403 }))("sid", "7", true).catch((e) => e);
+    const gone = await makeSetProgramActive(async () => new Response(JSON.stringify({ error: { code: 501, message: "program not found" } }), { status: 404 }))("sid", "7", true).catch((e) => e);
+    expect(refused).toBeInstanceOf(ApiError);
+    expect(describeChangeError(refused, t)).toBe("You are not allowed to do this.");
+    expect(describeChangeError(gone, t)).toBe("This item does not exist any more.");
+  });
+  it("rejects an answer without the flag", async () => {
+    await expect(makeSetProgramActive(async () => new Response(JSON.stringify({ id: "7" })))("sid", "7", true)).rejects.toBeInstanceOf(ApiError);
   });
 });

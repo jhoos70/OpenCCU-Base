@@ -335,6 +335,19 @@ export function makeGetChannelValues(doFetch: Fetch = defaultFetch): (sid: strin
 const getChannelValuesDefault = makeGetChannelValues();
 export const getChannelValues = (sid: string, channelIds: string[]): Promise<Datapoint[]> => getChannelValuesDefault(sid, channelIds);
 
+/** POST /programs {id, active}: switches a program on or off (administrators only); the answer is the flag as the CCU holds it. */
+export function makeSetProgramActive(doFetch: Fetch = defaultFetch): (sid: string, id: string, active: boolean) => Promise<{ id: string; isActive: boolean }> {
+  return async function setProgramActive(sid: string, id: string, active: boolean) {
+    const { doc, status } = await send(doFetch, "/programs", { method: "POST", headers: headersFor(sid, true), body: JSON.stringify({ id, active }) });
+    throwIfError(doc, status);
+    const d = doc as { id?: string; isActive?: boolean } | null;
+    if (!d || typeof d.isActive !== "boolean") throw new ApiError(0, "unexpected answer", status);
+    return { id: String(d.id ?? id), isActive: d.isActive };
+  };
+}
+const setProgramActiveDefault = makeSetProgramActive();
+export const setProgramActive = (sid: string, id: string, active: boolean) => setProgramActiveDefault(sid, id, active);
+
 export interface ProgramRun {
   id: string;
   executed: boolean;

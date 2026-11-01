@@ -1,10 +1,11 @@
 import * as React from "react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { describeChangeError, describeError, executeProgram, getModel, isSessionExpired, type Program } from "@/lib/api";
+import { describeChangeError, describeError, executeProgram, getModel, isSessionExpired, setProgramActive, type Program } from "@/lib/api";
 import { text } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { useCurrentProfile } from "@/lib/profile-context";
@@ -28,6 +29,8 @@ export default function Programs({ sid, onExpired }: { sid: string; onExpired: (
   const [message, setMessage] = React.useState<{ text: string; failed: boolean } | null>(null);
   // the time of the last run the CCU reported for a run, shown until the next update has caught up
   const [lastRuns, setLastRuns] = React.useState<Record<string, string>>({});
+  // the active flag the CCU reported for a switch, shown until the next update has caught up
+  const [actives, setActives] = React.useState<Record<string, boolean>>({});
 
   React.useEffect(() => {
     if (!data) return;
@@ -41,8 +44,23 @@ export default function Programs({ sid, onExpired }: { sid: string; onExpired: (
     });
   }, [data]);
 
+  React.useEffect(() => {
+    if (!data) return;
+    setActives((m) => {
+      const next = { ...m };
+      for (const id of Object.keys(m)) if (data.find((x) => x.id === id)?.isActive === m[id]) delete next[id];
+      return Object.keys(next).length === Object.keys(m).length ? m : next;
+    });
+  }, [data]);
+
   const mayRun = profile?.level === "USER" || profile?.level === "ADMIN";
-  const shown = filterPrograms((data ?? []).map((p): Program => (lastRuns[p.id] ? { ...p, lastExecuteTime: lastRuns[p.id] } : p)), query, lang);
+  // switching a program on or off is the editor's job in the classic UI: administrators only
+  const maySwitch = profile?.level === "ADMIN";
+  const shown = filterPrograms(
+    (data ?? []).map((p): Program => ({ ...p, ...(lastRuns[p.id] ? { lastExecuteTime: lastRuns[p.id] } : {}), ...(p.id in actives ? { isActive: actives[p.id] } : {}) })),
+    query,
+    lang,
+  );
   const any = filterPrograms(data ?? [], "", lang).length > 0;
 
   async function run(p: Program) {
@@ -61,6 +79,33 @@ export default function Programs({ sid, onExpired }: { sid: string; onExpired: (
       setRunning(null);
     }
   }
+
+  /** Switches a program; returns the reason it failed (for a dialog), or null. */
+  async function switchActive(p: Program, active: boolean): Promise<string | null> {
+    const name = text(p.name, strings);
+    setRunning(p.id);
+    setMessage(null);
+    try {
+      const r = await setProgramActive(sid, p.id, active);
+      setActives((m) => ({ ...m, [p.id]: r.isActive }));
+      setMessage({ text: t(r.isActive ? "programActivated" : "programDeactivated", { name }), failed: false });
+      refresh();
+      return null;
+    } catch (e) {
+      if (isSessionExpired(e)) {
+        onExpired();
+        return null;
+      }
+      const reason = describeChangeError(e, t);
+      setMessage({ text: t("programSwitchFailed", { name, reason }), failed: true });
+      return reason;
+    } finally {
+      setRunning(null);
+    }
+  }
+  // activating asks first: the CCU checks the conditions of a program when it is activated, and it can run at once
+  const [activating, setActivating] = React.useState<Program | null>(null);
+  const switchOpener = React.useRef<HTMLElement | null>(null);
 
   return (
     <Card className="space-y-4">
@@ -94,6 +139,7 @@ export default function Programs({ sid, onExpired }: { sid: string; onExpired: (
               <TableHeader>{t("name")}</TableHeader>
               <TableHeader className="hidden md:table-cell">{t("description")}</TableHeader>
               <TableHeader className="hidden sm:table-cell">{t("lastRun")}</TableHeader>
+              <TableHeader>{t("programActive")}</TableHeader>
               {mayRun && <TableHeader className="text-right">{t("action")}</TableHeader>}
             </TableRow>
           </TableHead>
@@ -103,6 +149,23 @@ export default function Programs({ sid, onExpired }: { sid: string; onExpired: (
                 <TableCell>{text(p.name, strings)}</TableCell>
                 <TableCell className="hidden md:table-cell">{text(p.description, strings)}</TableCell>
                 <TableCell className="hidden whitespace-nowrap sm:table-cell">{neverRan(p) ? "—" : formatTime(p.lastExecuteTime, lang)}</TableCell>
+                <TableCell>
+                  {maySwitch ? (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={p.isActive}
+                      aria-label={t("programActiveSwitch", { name: text(p.name, strings) })}
+                      disabled={running !== null}
+                      onClick={(e) => (p.isActive ? void switchActive(p, false) : ((switchOpener.current = e.currentTarget), setActivating(p)))}
+                      className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-50 ${p.isActive ? "bg-[var(--accent)]" : "bg-[var(--track)]"}`}
+                    >
+                      <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${p.isActive ? "translate-x-5" : ""}`} />
+                    </button>
+                  ) : (
+                    <span>{p.isActive ? t("yes") : t("no")}</span>
+                  )}
+                </TableCell>
                 {mayRun && (
                   <TableCell className="text-right">
                     <Button variant="outline" className="h-8 px-3" disabled={running !== null} onClick={() => void run(p)} aria-label={`${t("run")}: ${text(p.name, strings)}`}>
@@ -114,6 +177,20 @@ export default function Programs({ sid, onExpired }: { sid: string; onExpired: (
             ))}
           </tbody>
         </Table>
+      )}
+      {activating && (
+        <ConfirmDialog
+          title={t("programActivateTitle")}
+          message={`${text(activating.name, strings)}: ${t("programActivateWarning")}`}
+          confirmLabel={t("programActivate")}
+          tone="default"
+          onConfirm={() => switchActive(activating, true)}
+          onClose={() => {
+            setActivating(null);
+            const back = switchOpener.current;
+            window.setTimeout(() => back?.isConnected && back.focus(), 0);
+          }}
+        />
       )}
     </Card>
   );

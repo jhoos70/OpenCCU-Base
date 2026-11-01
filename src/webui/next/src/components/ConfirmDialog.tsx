@@ -3,8 +3,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 
-/** Asks before something that cannot be undone. Cancel and Escape close it; a failure stays in the dialog. */
-export function ConfirmDialog({ title, message, confirmLabel, onConfirm, onClose }: { title: string; message: string; confirmLabel: string; onConfirm: () => Promise<string | null>; onClose: () => void }) {
+/** Asks before something that cannot be undone, or that does more than it looks like (tone "default": not a red button). Cancel and Escape close it; a failure stays in the dialog. */
+export function ConfirmDialog({ title, message, confirmLabel, tone = "destructive", onConfirm, onClose }: { title: string; message: string; confirmLabel: string; tone?: "destructive" | "default"; onConfirm: () => Promise<string | null>; onClose: () => void }) {
   const { t } = useI18n();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -38,7 +38,7 @@ export function ConfirmDialog({ title, message, confirmLabel, onConfirm, onClose
               <Button type="button" variant="outline" onClick={onClose} disabled={busy} autoFocus>
                 {t("cancel")}
               </Button>
-              <Button type="button" variant="destructive" onClick={() => void confirm()} disabled={busy}>
+              <Button type="button" variant={tone === "destructive" ? "destructive" : "default"} onClick={() => void confirm()} disabled={busy}>
                 {busy ? t("saving") : confirmLabel}
               </Button>
             </div>

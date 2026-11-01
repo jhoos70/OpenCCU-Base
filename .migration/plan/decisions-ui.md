@@ -179,4 +179,11 @@ OK button or similar in a dialog, not by a global save. First slice: system vari
   is triggered now can be confirmed (404 otherwise, also for any other id), a user needs the full access right of an
   alarm variable, a refusal happens before anything is written. Real ReGa: five container watchdog alarms, one confirmed
   (5 to 4, syslog line written); the watchdog raises "no internet" again at once, so a message can come back.
-- Next for "Status und Bedienung": program activation, Diagrams, editing favourite lists, device health in the list itself (the same route by channel), Diagrams, a "real device" test on a CCU with a radio (not available, so mocks plus the copy).
+- Eleventh: program activation (`POST /api/v2/programs {id, active}`), administrators only. Offered as a small status-and-control
+  item, but reading the classic UI showed that the status page only DISPLAYS the Active flag; switching is done in the
+  Programs-and-connections editor (administrator level), so it is an admin setting and not a status-and-control one. The
+  real CCU showed the consequence: activating a program makes ReGa check its conditions and the program can run at once
+  (activating "Abwesenheit" ran it and four dependent programs; deactivating ran nothing), so the page asks before it
+  activates (a confirm dialog with a plain warning; deactivation is immediate). A route with no such warning in its
+  documentation would invite a one-click switch, so the route's header says it too.
+- Next for "Status und Bedienung": Diagrams, editing favourite lists, device health in the list itself (the same route by channel), Diagrams, a "real device" test on a CCU with a radio (not available, so mocks plus the copy).

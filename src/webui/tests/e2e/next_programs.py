@@ -103,7 +103,7 @@ def main():
             pg.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
             pg.get_by_text(name, exact=True).wait_for()
             heads = [h.strip() for h in pg.locator("thead th").all_inner_texts()]
-            check("the columns are those of the classic list", heads == ["Name", "Description", "Last run", "Action"], str(heads))
+            check("the columns are those of the classic list, plus Active", heads == ["Name", "Description", "Last run", "Active", "Action"], str(heads))
             check("the description is shown", "ein Testprogramm" in row(name).inner_text())
 
             # the classic list is the reference
