@@ -1,6 +1,6 @@
 # OpenCCU-Base & NextGen WebUI
 
-[![Latest Release](https://img.shields.io/github/v/release/jhoos70/OpenCCU-Base?include_prereleases&label=NextGen%20WebUI%20Beta)](https://github.com/jhoos70/OpenCCU-Base/releases)
+[![Latest Release](https://img.shields.io/github/v/release/jhoos70/nextgen-ui?include_prereleases&label=NextGen%20WebUI%20Beta)](https://github.com/jhoos70/nextgen-ui/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0%20%7C%20eQ--3-blue.svg)](licenses/licenses.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](https://react.dev/)
@@ -39,7 +39,7 @@ A clean, responsive landing page displaying CCU system health, real-time duty cy
 
 You can install and test the NextGen WebUI on any CCU3, RaspberryMatic, or OpenCCU instance without risking system stability. It runs as an independent CCU Add-on and does not replace or modify your classic WebUI.
 
-1. Download the latest `openccu-nextgen-addon-*.tar.gz` from the [Releases page](https://github.com/jhoos70/OpenCCU-Base/releases).
+1. Download the latest `openccu-nextgen-addon-*.tar.gz` from the [Releases page](https://github.com/jhoos70/nextgen-ui/releases).
 2. In your CCU WebUI, navigate to **Settings** → **Control Panel** → **Additional Software** (*Einstellungen → Systemsteuerung → Zusatzsoftware*).
 3. Choose the downloaded `.tar.gz` archive and click **Install** (*Installieren*).
 4. After automatic installation (and automatic service restart), access the NextGen WebUI at:
