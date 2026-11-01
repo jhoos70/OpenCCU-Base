@@ -84,6 +84,7 @@ jobs:
           ## OpenCCU NextGen WebUI v${VER}
 
           ### Highlights
+          - **Customizable Navigation & Logical Order**: Reorder menu items (Up/Down) or toggle visibility of unused items via the new "Customize menu" dialog (sidebar footer & user profile), with persistent localStorage saving and a smart-home daily-use default order.
           - **Object-Centric Device View**: Eliminate split between status and settings; configure device & channel metadata, room/function assignments, logging, and transmission modes directly in place.
           - **Hardware Parameter Editor (MASTER)**: Real-time editing of device & channel parameters with battery wakeup indicators, parameter search, and live XML-RPC sync.
           - **Direct Links Management (Direktverknüpfungen)**: View, edit, create, and remove direct device links with interface-specific channel filtering.
