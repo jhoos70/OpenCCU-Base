@@ -94,3 +94,18 @@ switched. `isolated-ccu.sh up | check | install | restore FILE.sbk | down` (the 
   it compares every finished page with the classic API, times it and takes screenshots.
 - Do not run the write tests of `src/webui/tests/e2e` against restored data (they create temporary objects and
   `next_log.py` clears the log); a read-only comparison with the classic UI is the test for real data.
+
+## Reaching the test CCUs over Tailscale: `tailnet-proxy.sh`
+
+The test containers publish their web UI on `127.0.0.1` only (hence the SSH tunnel). `tailnet-proxy.sh up` starts one nginx
+container on the host network that listens **only on this host's Tailscale address** (`100.64.0.2`) on the ports 18080 (the
+empty test CCU) and 18090 (the restored copy) and forwards to the loopback ports; `down` removes it, `status` shows what listens
+and whether it answers. The CCU containers are not touched or recreated, so their isolation stays as it is. It does not listen on
+the LAN address or `0.0.0.0` (checked), it only accepts the Tailscale range `100.64.0.0/10`, the stock A/B container (18081) is not
+exposed, and it does not come back after a reboot by itself.
+
+Then, from any machine on the tailnet: `http://100.64.0.2:18090/webui/next/` (restored copy) and `http://100.64.0.2:18080/webui/next/`.
+
+**Mind who is on the tailnet:** whoever the Tailscale ACLs let reach this host can open these pages, and the restored copy holds
+the data of a real CCU (names, rooms, programs, the accounts of the backup) with a test account (`AdminTest`) that has a weak
+password. Use it on a tailnet you trust, give that account a strong password, or take the proxy down when you are done.
