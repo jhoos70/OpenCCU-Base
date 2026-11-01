@@ -53,7 +53,8 @@ proc messages_script { } {
   foreach {collection kind} $MESSAGES_COLLECTIONS {
     append body [string map [list %COLLECTION% $collection %KIND% $kind] $MESSAGES_FIND]
   }
-  return "string i;\n$body"
+  # DONE says the script ran to its end: "" (hmscript's answer to a failed script) is then a failure, not "no such message"
+  return "string i;\n$body\nWrite(\" DONE {true}\");"
 }
 
 ##
@@ -64,7 +65,8 @@ proc messages_run { id receipt } {
   set script [messages_script]
   array set a [list msgId $id doReceipt [expr { $receipt ? "true" : "false" }] isAdmin [expr { [v2_sessionLevel] >= 8 ? "true" : "false" }]]
   array set r {KIND "" ON false CAN false FULL false STILL false}
-  if { [catch { array set r [hmscript $script a] }] } then { return "" }
+  if { [catch { array set r [hmscript $script a] }] } then { return "failed" }
+  if { ![info exists r(DONE)] } then { return "failed" }
   if { "" == $r(KIND) } then { return "" }
   return [array get r]
 }
@@ -84,6 +86,7 @@ proc v2_messages_handle { } {
 
   # first look only (nothing is acknowledged), so the rules can be checked and refused before ReGa changes anything
   set found [messages_run $body(id) 0]
+  if { "failed" == $found } then { jsonrpc_error 501 "the CCU did not answer" }
   if { "" == $found } then {
     set API_HTTP_STATUS 404
     jsonrpc_error 501 "message not found"
@@ -97,6 +100,7 @@ proc v2_messages_handle { } {
   if { [v2_sessionLevel] < 8 && ![string is true -strict $m(FULL)] } then { jsonrpc_error 400 "access denied (message)" }
 
   set after [messages_run $body(id) 1]
+  if { "failed" == $after } then { jsonrpc_error 501 "the CCU did not answer" }
   api_syslog daemon.notice "cid=[api_cid] method=POST /api/v2/messages uid=[v2_sessionUid] action=acknowledge message $body(id)"
   set acknowledged "true"
   if { "" != $after } then {

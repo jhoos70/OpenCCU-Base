@@ -66,7 +66,7 @@ proc v2_favourites_handle { } {
   array set a [list uid $uid]
   set lists {}
   set order {}
-  foreach rec [hmscript $script a] {
+  foreach rec [v2_records [hmscript $script a]] {
     array unset p
     if { [catch { array set p $rec }] } then { continue }
     if { [info exists p(LIST)] } then {

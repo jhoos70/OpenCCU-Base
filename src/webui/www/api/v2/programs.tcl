@@ -69,8 +69,9 @@ proc programs_execute { id } {
     }
   }
   array set a [list progId $id]
-  array set r {OK false TIME ""}
+  array set r {}
   catch { array set r [hmscript $script a] }
+  if { ![info exists r(OK)] } then { return "" }
   return [array get r]
 }
 
@@ -94,8 +95,9 @@ proc programs_setActive { id active } {
     }
   }
   array set a [list progId $id newActive $active]
-  array set r {ACTIVE ""}
+  array set r {}
   catch { array set r [hmscript $script a] }
+  if { ![info exists r(ACTIVE)] } then { return "" }
   return [array get r]
 }
 
@@ -131,13 +133,23 @@ proc v2_programs_handle { } {
   if { [v2_sessionLevel] < 8 && ![string is true -strict $s(FULL)] } then { jsonrpc_error 400 "access denied (program)" }
 
   if { $switching } then {
-    array set r [programs_setActive $body(id) $body(active)]
+    set switched [programs_setActive $body(id) $body(active)]
+    if { "" == $switched } then {
+      api_syslog daemon.warning "cid=[api_cid] method=POST /api/v2/programs uid=[v2_sessionUid] action=switch program $body(id) failed: the CCU did not answer"
+      jsonrpc_error 501 "the CCU did not take the change"
+    }
+    array set r $switched
     api_syslog daemon.notice "cid=[api_cid] method=POST /api/v2/programs uid=[v2_sessionUid] action=[expr { $body(active) ? "activate" : "deactivate" }] program $body(id)"
     v2_respondJson "\{\"id\":[json_toString $body(id)],\"isActive\":[expr { [string is true -strict $r(ACTIVE)] ? "true" : "false" }]\}"
     return
   }
 
-  array set r [programs_execute $body(id)]
+  set ran [programs_execute $body(id)]
+  if { "" == $ran } then {
+    api_syslog daemon.warning "cid=[api_cid] method=POST /api/v2/programs uid=[v2_sessionUid] action=execute program $body(id) failed: the CCU did not answer"
+    jsonrpc_error 501 "the CCU did not answer"
+  }
+  array set r $ran
   api_syslog daemon.notice "cid=[api_cid] method=POST /api/v2/programs uid=[v2_sessionUid] action=execute program $body(id)"
   v2_respondJson "\{\"id\":[json_toString $body(id)],\"executed\":[expr { [string is true -strict $r(OK)] ? "true" : "false" }],\"lastExecuteTime\":[json_toString $r(TIME)]\}"
 }

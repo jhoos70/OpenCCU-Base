@@ -181,7 +181,7 @@ proc values_readDevice { deviceId channelFilter } {
   }
   set script [string map [list DESCRIBE $VALUES_DESCRIBE] $script]
   array set a [list deviceId $deviceId channelFilter $channelFilter isAdmin [values_isAdmin]]
-  return [hmscript $script a]
+  return [v2_records [hmscript $script a]]
 }
 
 proc values_item { rec } {
@@ -244,7 +244,7 @@ proc values_readOne { dpId } {
   }
   set script [string map [list DESCRIBE $VALUES_DESCRIBE] $script]
   array set a [list dpId $dpId isAdmin [values_isAdmin]]
-  foreach rec [hmscript $script a] { return [list $rec] }
+  foreach rec [v2_records [hmscript $script a]] { return [list $rec] }
   return ""
 }
 
@@ -300,8 +300,10 @@ proc values_write { dpId type value } {
     Write("RESULT {" # ok # "}");
   }
   array set a [list dpId $dpId kind $type newValue $value]
-  array set r {RESULT true}
+  array set r {}
   catch { array set r [hmscript $script a] }
+  # no answer at all (the script failed) is "not sent", as an explicit false is
+  if { ![info exists r(RESULT)] } then { return 0 }
   return [expr { ![string is false -strict [string trim $r(RESULT)]] }]
 }
 

@@ -28,10 +28,17 @@ proc profile_userId { } {
 ##
 proc profile_read { userId } {
   set script {
-    var user = dom.GetObject(userId);
-    if (user)
+    string i;
+    foreach(i, dom.GetObject(ID_USERS).EnumIDs())
     {
-      Write("NAME {" # user.Name() # "} FIRST {" # user.UserFirstName() # "} PWD {" # (user.UserPwd() != "") # "} NOEXPERT {" # user.UserEasyLinkMode() # "} LEVEL {" # user.UserLevel() # "}");
+      if (i == userId)
+      {
+        var user = dom.GetObject(i);
+        if (user)
+        {
+        Write("NAME {" # user.Name() # "} FIRST {" # user.UserFirstName() # "} PWD {" # (user.UserPwd() != "") # "} NOEXPERT {" # user.UserEasyLinkMode() # "} LEVEL {" # user.UserLevel() # "}");
+        }
+      }
     }
   }
   array set a [list userId $userId]

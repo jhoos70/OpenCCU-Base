@@ -90,7 +90,7 @@ proc v2_noSid { } {
 ##
 # IC002: is the session valid? session_isValid of security-session takes the sid with its '@'
 # wrappers; the header carries the id as returned by Session.login (inner id), so both forms are
-# tried. Without the library every sid is accepted here (the privilege check decides).
+# tried. Without the library no sid is accepted here (fail closed: this check only runs under sid_shape_strict).
 ##
 proc v2_sessionValid { sid } {
   global env
@@ -102,7 +102,11 @@ proc v2_sessionValid { sid } {
       uplevel #0 [list source [file join $env(DOCUMENT_ROOT) tcl/eq3/session.tcl]]
     }
   }
-  if { 0 == [llength [info commands session_isValid]] } then { return true }
+  # the strict gate (sid_shape_strict) is the only caller: without the library it must not turn into "accept anything"
+  if { 0 == [llength [info commands session_isValid]] } then {
+    catch { api_syslog daemon.err "cid=[api_cid] method=session uid=- code=0 errorInfo=sid_shape_strict is on but the session library cannot be loaded: sessions are refused" }
+    return false
+  }
   if { "true" == [session_isValid $sid] } then { return true }
   if { "@" != [string index $sid 0] && "true" == [session_isValid "@$sid@"] } then { return true }
   return false

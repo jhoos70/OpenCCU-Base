@@ -40,7 +40,8 @@ proc log_count { } {
     Write(n);
   }
   set n [string trim [hmscript $script]]
-  if { ![regexp {^[0-9]{1,9}$} $n] } then { return 0 }
+  # hmscript answers "" when the script failed: that is no empty log (and must never read as "cleared")
+  if { ![regexp {^[0-9]{1,9}$} $n] } then { jsonrpc_error 501 "the system log could not be read" }
   scan $n %d n
   return $n
 }
@@ -97,7 +98,7 @@ proc log_records { start count } {
     }
   }
   array set a [list logStart $start logCount $count]
-  return [hmscript $script a]
+  return [v2_records [hmscript $script a]]
 }
 
 ##

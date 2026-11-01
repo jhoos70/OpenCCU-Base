@@ -116,6 +116,45 @@ proc v2_sessionUid { } {
 }
 
 ##
+# The records of a ReGa script's output: per record a line "{", lines "KEY {value}", a line "}". The output is a Tcl list of
+# lists, and when it is well formed that is what comes back, unchanged. A value that holds a brace (a text a user may type
+# into a system variable, a name with a "{") breaks the list syntax: one such value must not make the whole answer fail for
+# everybody, so the output is then read line by line, where the value of "KEY {value}" is everything up to the last "}" of
+# its line (a value may run over several lines). A record is a flat list KEY value KEY value ...
+##
+proc v2_records { out } {
+  if { ![catch { llength $out }] } then {
+    set wellFormed 1
+    foreach r $out { if { [catch { llength $r } n] || 1 == ($n % 2) } then { set wellFormed 0; break } }
+    if { $wellFormed } then { return $out }
+  }
+  set records {}
+  set rec {}
+  set inRecord 0
+  set open 0
+  set key ""
+  set val ""
+  foreach line [split $out "\n"] {
+    set line [string trimright $line "\r"]
+    if { $open } then {
+      append val "\n$line"
+      if { "\}" eq [string index $line end] } then { lappend rec $key [string range $val 0 end-1]; set open 0 }
+      continue
+    }
+    if { "\{" eq $line } then { set rec {}; set inRecord 1; continue }
+    if { "\}" eq $line } then { if { $inRecord } then { lappend records $rec }; set inRecord 0; continue }
+    if { $inRecord && [regexp {^([A-Za-z][A-Za-z0-9_]*) \{(.*)$} $line -> k rest] } then {
+      if { "\}" eq [string index $rest end] } then {
+        lappend rec $k [string range $rest 0 end-1]
+      } else {
+        set key $k; set val $rest; set open 1
+      }
+    }
+  }
+  return $records
+}
+
+##
 # Answers a provider route with a plain JSON document (HTTP 200): the document is not a
 # JSON-RPC envelope
 ##

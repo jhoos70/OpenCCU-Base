@@ -21,7 +21,10 @@
 ##
 proc v2_readBody { } {
   global env
-  return [read stdin $env(CONTENT_LENGTH)]
+  # a request without a usable Content-Length has no body for us (the handler then answers "invalid request")
+  if { ![info exists env(CONTENT_LENGTH)] || ![regexp {^[0-9]{1,9}$} $env(CONTENT_LENGTH)] } then { return "" }
+  scan $env(CONTENT_LENGTH) %d n
+  return [read stdin $n]
 }
 
 ##

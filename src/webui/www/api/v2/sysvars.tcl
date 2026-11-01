@@ -113,8 +113,10 @@ proc sysvars_write { id type value } {
     }
   }
   array set a [list varId $id kind $type newValue $value]
-  array set r {VALUE "" TIME ""}
+  array set r {}
+  # hmscript answers "" when the script failed: that is no answer, and must not read as "the value is empty"
   catch { array set r [hmscript $script a] }
+  if { ![info exists r(VALUE)] } then { return "" }
   return [array get r]
 }
 
@@ -148,7 +150,12 @@ proc v2_sysvars_handle { } {
   sysvars_validate $sv $body(value) reason
   if { "" != $reason } then { jsonrpc_error 403 "invalid argument ($reason)" }
 
-  array set r [sysvars_write $body(id) $s(TYPE) $body(value)]
+  set written [sysvars_write $body(id) $s(TYPE) $body(value)]
+  if { "" == $written } then {
+    api_syslog daemon.warning "cid=[api_cid] method=POST /api/v2/sysvars uid=[v2_sessionUid] action=set system variable $body(id) failed: the CCU did not answer"
+    jsonrpc_error 501 "the CCU did not take the change"
+  }
+  array set r $written
   api_syslog daemon.notice "cid=[api_cid] method=POST /api/v2/sysvars uid=[v2_sessionUid] action=set system variable $body(id)"
   v2_respondJson "\{\"id\":[json_toString $body(id)],\"value\":[json_toString $r(VALUE)],\"lastModified\":[json_toString $r(TIME)]\}"
 }

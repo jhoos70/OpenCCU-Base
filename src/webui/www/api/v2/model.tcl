@@ -17,7 +17,7 @@
 #             (isSticky) is not counted by the classic header when CCU.getStickyUnreachState says so
 #          limit     1..500, default 100 (model_default_limit / model_max_limit of BD-09)
 #          offset    >= 0, default 0
-# GUEST or higher; without a valid session HTTP 401 before any ReGa script runs; a malformed
+# GUEST or higher (the sections sysvars and programs: USER or higher); without a valid session HTTP 401 before any ReGa script runs; a malformed
 # parameter is HTTP 422 with error 403 "invalid argument (<name>)". The devices and the channels
 # come from ONE bulk ReGa script (not one script per device); the scripts are fixed and read
 # only (they never write metadata, unlike Device.listAllDetail of v1). The items use real JSON
@@ -73,13 +73,17 @@ proc model_devicesScript { } {
         foreach(cId, dev.Channels())
         {
           var channel = dom.GetObject(cId);
-          if (channel && (false == channel.Internal()))
+          boolean takeCh = false;
+          if (channel) { if (false == channel.Internal()) { takeCh = true; } }
+          if (takeCh)
           {
             var readable = false; var writable = false; var eventable = false; var logable = false;
             foreach(pId, channel.DPs())
             {
               var dp = dom.GetObject(pId);
-              if (!dp.Internal())
+              boolean takeDp = false;
+              if (dp) { if (dp.TypeName() == "HSSDP") { if (!dp.Internal()) { takeDp = true; } } }
+              if (takeDp)
               {
                 logable = true;
                 if (OPERATION_READ  & dp.Operations()) { readable  = true; }
@@ -191,7 +195,7 @@ proc model_readGroups { idObject } {
     }
   "
   set items {}
-  foreach rec [hmscript $script] {
+  foreach rec [v2_records [hmscript $script]] {
     if { [catch { array set g $rec }] || ![info exists g(ID)] } then { array unset g; continue }
     set ids {}
     foreach c $g(CHANNELS) { lappend ids [json_toString $c] }
@@ -238,7 +242,7 @@ proc model_readSysvars { } {
     }
   }
   set items {}
-  foreach rec [hmscript $script] {
+  foreach rec [v2_records [hmscript $script]] {
     if { [catch { array set s $rec }] || ![info exists s(ID)] } then { array unset s; continue }
     set type $s(TYPE)
     set j "\{\"id\":[json_toString $s(ID)],\"name\":[json_toString $s(NAME)],\"type\":[json_toString $type],\"unit\":[json_toString $s(UNIT)],\"value\":[json_toString $s(VALUE)],\"channelId\":[json_toString $s(CHANNEL_ID)]"
@@ -278,7 +282,7 @@ proc model_readPrograms { } {
     }
   }
   set items {}
-  foreach rec [hmscript $script] {
+  foreach rec [v2_records [hmscript $script]] {
     if { [catch { array set p $rec }] || ![info exists p(ID)] } then { array unset p; continue }
     foreach k {INFO OPERABLE COPY} { if { ![info exists p($k)] } then { set p($k) "" } }
     lappend items "\{\"id\":[json_toString $p(ID)],\"name\":[json_toString $p(NAME)],\"isActive\":[model_bool $p(ACTIVE)],\"isInternal\":[model_bool $p(INTERNAL)],\"lastExecuteTime\":[json_toString $p(TIME)],\"description\":[json_toString $p(INFO)],\"isOperable\":[model_bool $p(OPERABLE)],\"isCopy\":[model_bool $p(COPY)]\}"
@@ -305,7 +309,9 @@ proc model_readDatapoints { } {
             foreach(pId, channel.DPs())
             {
               var dp = dom.GetObject(pId);
-              if (dp && (!dp.Internal()))
+              boolean takeDp = false;
+              if (dp) { if (dp.TypeName() == "HSSDP") { if (!dp.Internal()) { takeDp = true; } } }
+              if (takeDp)
               {
                 WriteLine("{");
                 WriteLine("ID {" # dp.ID() # "}");
@@ -321,7 +327,7 @@ proc model_readDatapoints { } {
     }
   }
   set items {}
-  foreach rec [hmscript $script] {
+  foreach rec [v2_records [hmscript $script]] {
     if { [catch { array set p $rec }] || ![info exists p(ID)] } then { array unset p; continue }
     set channelId ""
     if { [info exists p(CHANNEL)] } then { set channelId $p(CHANNEL) }
@@ -361,7 +367,7 @@ proc model_readAlarms { } {
     }
   }
   set items {}
-  foreach rec [hmscript $script] {
+  foreach rec [v2_records [hmscript $script]] {
     if { [catch { array set a $rec }] || ![info exists a(ID)] } then { array unset a; continue }
     set time ""
     if { [info exists a(TIME)] } then { set time $a(TIME) }
@@ -438,7 +444,7 @@ proc model_readServices { } {
     }
   }
   set items {}
-  foreach rec [hmscript $script] {
+  foreach rec [v2_records [hmscript $script]] {
     if { [catch { array set m $rec }] || ![info exists m(ID)] } then { array unset m; continue }
     foreach k {TIME CHANNEL MESSAGE STICKY ACK} { if { ![info exists m($k)] } then { set m($k) "" } }
     set ack [expr { [string is true -strict $m(ACK)] ? "true" : "false" }]
@@ -462,6 +468,9 @@ proc v2_model_handle { } {
   } else {
     set sections $MODEL_DEFAULT_SECTIONS
   }
+
+  # the values of the system variables and the list of programs are not for a guest (the classic UI shows a guest neither)
+  if { "sysvars" in $sections || "programs" in $sections } then { v2_requireLevel USER }
 
   lassign [model_param limit] hasLimit limit
   if { !$hasLimit } then { set limit $MODEL_DEFAULT_LIMIT }
