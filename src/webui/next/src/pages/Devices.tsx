@@ -18,6 +18,7 @@ import { DataTableColumnHeader, DataTableViewOptions } from "@/components/ui/dat
 import { Button } from "@/components/ui/button";
 import { DeviceEditDrawer } from "@/components/DeviceEditDrawer";
 import { DeviceLinks } from "@/components/DeviceLinks";
+import { DeviceMaintenance } from "@/components/DeviceMaintenance";
 import { DeviceParameters } from "@/components/DeviceParameters";
 import { DeviceValues } from "@/components/DeviceValues";
 import { TileBoard } from "@/components/TileBoard";
@@ -661,13 +662,23 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
             />
           )}
 
-          {/* Tab 4: Maintenance (Placeholder for Phase 2c) */}
+          {/* Tab 4: Maintenance */}
           {activeTab === "maintenance" && (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-8 text-center space-y-3">
-              <Wrench className="size-8 mx-auto text-[var(--muted-foreground)] opacity-50" />
-              <h3 className="text-base font-semibold text-[var(--foreground)]">{t("tabMaintenance")}</h3>
-              <p className="text-sm text-[var(--muted-foreground)] max-w-md mx-auto">{t("maintenancePlaceholder")}</p>
-            </div>
+            <DeviceMaintenance
+              device={selectedDevice}
+              allDevices={state.status === "ready" ? state.data.items : []}
+              sid={sid}
+              mayChange={mayEdit}
+              strings={strings}
+              onExpired={onExpired}
+              onDeleted={() => {
+                setRefreshSignal((s) => s + 1);
+                window.location.hash = "#/devices";
+              }}
+              onUpdated={() => {
+                setRefreshSignal((s) => s + 1);
+              }}
+            />
           )}
 
           {editingDevice && (

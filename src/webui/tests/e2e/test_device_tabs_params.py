@@ -51,15 +51,15 @@ def main():
         assert target_btn.is_visible(), "Target selector button should be visible"
         print("PASS  Target selector pills visible")
 
-        # 8. Check Tab 3: Direktverknüpfungen placeholder
+        # 8. Check Tab 3: Direktverknüpfungen
         tab_links.click()
-        page.wait_for_selector("text=Direktverknüpfungen dieses Geräts")
-        print("PASS  Tab 3 (Direktverknüpfungen) loaded with placeholder")
+        page.wait_for_selector("h3:has-text('Direktverknüpfungen'), h3:has-text('Direct Links')")
+        print("PASS  Tab 3 (Direktverknüpfungen) loaded")
 
-        # 9. Check Tab 4: Wartung placeholder
+        # 9. Check Tab 4: Wartung
         tab_maint.click()
-        page.wait_for_selector("text=Geräte-Firmware-Updates (OTA)")
-        print("PASS  Tab 4 (Wartung) loaded with placeholder")
+        page.wait_for_selector("h2:has-text('Gerätewartung und Diagnose'), h2:has-text('Device Maintenance & Diagnostics')")
+        print("PASS  Tab 4 (Wartung) loaded")
 
         # 10. Switch back to Tab 1
         tab_status.click()

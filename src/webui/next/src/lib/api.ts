@@ -754,6 +754,118 @@ export async function setDeviceLinkInfo(
   );
 }
 
+export interface DeviceDescription {
+  type: string;
+  address: string;
+  version: number;
+  flags: number;
+  children?: string[];
+  firmware?: string;
+  availableFirmware?: string;
+  updatable?: string | boolean | number;
+  firmwareUpdateState?: string;
+  parent?: string;
+  parentType?: string;
+  index?: number;
+}
+
+export async function getDeviceDescription(
+  sid: string,
+  iface: string,
+  address: string,
+  call: Rpc = rpc,
+): Promise<DeviceDescription> {
+  return await call<DeviceDescription>(
+    "Interface.getDeviceDescription",
+    { interface: iface, address },
+    sid,
+  );
+}
+
+export async function restoreConfigToDevice(
+  sid: string,
+  iface: string,
+  address: string,
+  call: Rpc = rpc,
+): Promise<boolean> {
+  return await call<boolean>(
+    "Interface.restoreConfigToDevice",
+    { interface: iface, address },
+    sid,
+  );
+}
+
+export async function updateDeviceFirmware(
+  sid: string,
+  iface: string,
+  device: string,
+  call: Rpc = rpc,
+): Promise<boolean> {
+  return await call<boolean>(
+    "Interface.updateFirmware",
+    { interface: iface, device },
+    sid,
+  );
+}
+
+export async function changeDevice(
+  sid: string,
+  iface: string,
+  addressOldDevice: string,
+  addressNewDevice: string,
+  call: Rpc = rpc,
+): Promise<boolean> {
+  return await call<boolean>(
+    "Interface.changeDevice",
+    { interface: iface, addressOldDevice, addressNewDevice },
+    sid,
+  );
+}
+
+export async function deleteDevice(
+  sid: string,
+  iface: string,
+  address: string,
+  flags: number,
+  call: Rpc = rpc,
+): Promise<boolean> {
+  return await call<boolean>(
+    "Interface.deleteDevice",
+    { interface: iface, address, flags },
+    sid,
+  );
+}
+
+export interface RssiPartner {
+  name: string;
+  rssiData: [number, number];
+}
+
+export interface RssiDeviceEntry {
+  name: string;
+  partner: RssiPartner[];
+}
+
+export async function getRssiInfo(
+  sid: string,
+  iface: string,
+  call: Rpc = rpc,
+): Promise<RssiDeviceEntry[]> {
+  const res = await call<RssiDeviceEntry[] | string>(
+    "Interface.rssiInfo",
+    { interface: iface },
+    sid,
+  );
+  if (typeof res === "string") {
+    try {
+      return JSON.parse(res);
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(res) ? res : [];
+}
+
 /** What went wrong with a change, for the user: the server's refusals have their own words, the rest is the common ones. */
 export function describeChangeError(e: unknown, t: Translate): string {
   if (e instanceof ApiError && e.status === 422) return t("errInvalidValue");

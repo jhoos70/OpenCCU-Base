@@ -291,4 +291,46 @@ describe("Paramsets API", () => {
       { method: "Interface.setLinkInfo", params: { interface: "BidCos-RF", sender: "S1", receiver: "R1", name: "Renamed Link", description: "New Desc" } },
     ]);
   });
+
+  it("maintenance methods invoke correct RPCs with appropriate parameters", async () => {
+    const calls: { method: string; params: unknown }[] = [];
+    const mockRpc = async <T>(method: string, params?: Record<string, unknown>): Promise<T> => {
+      calls.push({ method, params });
+      if (method === "Interface.getDeviceDescription") {
+        return { type: "HMIP-WRC2", address: "0001", version: 2, flags: 1, firmware: "1.0.0" } as T;
+      }
+      if (method === "Interface.rssiInfo") {
+        return [{ name: "0001", partner: [{ name: "CCU", rssiData: [-60, -70] }] }] as T;
+      }
+      return true as T;
+    };
+
+    const {
+      getDeviceDescription,
+      restoreConfigToDevice,
+      updateDeviceFirmware,
+      changeDevice,
+      deleteDevice,
+      getRssiInfo,
+    } = await import("./api");
+
+    const desc = await getDeviceDescription("sid1", "HmIP-RF", "0001", mockRpc);
+    expect(desc.firmware).toBe("1.0.0");
+
+    await restoreConfigToDevice("sid1", "HmIP-RF", "0001", mockRpc);
+    await updateDeviceFirmware("sid1", "HmIP-RF", "0001", mockRpc);
+    await changeDevice("sid1", "HmIP-RF", "0001", "0002", mockRpc);
+    await deleteDevice("sid1", "HmIP-RF", "0001", 1, mockRpc);
+    const rssi = await getRssiInfo("sid1", "HmIP-RF", mockRpc);
+    expect(rssi).toHaveLength(1);
+
+    expect(calls).toEqual([
+      { method: "Interface.getDeviceDescription", params: { interface: "HmIP-RF", address: "0001" } },
+      { method: "Interface.restoreConfigToDevice", params: { interface: "HmIP-RF", address: "0001" } },
+      { method: "Interface.updateFirmware", params: { interface: "HmIP-RF", device: "0001" } },
+      { method: "Interface.changeDevice", params: { interface: "HmIP-RF", addressOldDevice: "0001", addressNewDevice: "0002" } },
+      { method: "Interface.deleteDevice", params: { interface: "HmIP-RF", address: "0001", flags: 1 } },
+      { method: "Interface.rssiInfo", params: { interface: "HmIP-RF" } },
+    ]);
+  });
 });
