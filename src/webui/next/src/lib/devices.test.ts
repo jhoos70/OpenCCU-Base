@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Device } from "./api";
-import { filterDevices, sortByName } from "./devices";
+import { filterDevices, healthChannelIds, sortByName } from "./devices";
 
 const d = (o: Partial<Device>): Device => ({ id: "1", name: "x", address: "A", interface: "HmIP-RF", type: "T", isReady: true, channels: [], ...o });
 const devices = [
@@ -29,5 +29,12 @@ describe("sortByName", () => {
   it("sorts by name in the language of the user, numbers numerically, without changing the input", () => {
     expect(sortByName(devices, "de").map((x) => x.name)).toEqual(["Aktor 2", "Aktor 10", "Büro Licht", "Küche Heizung"]);
     expect(devices[0].name).toBe("Küche Heizung");
+  });
+});
+
+describe("healthChannelIds", () => {
+  it("picks the first channel of each device that has channels", () => {
+    const ch = (id: string) => ({ id, name: "n", address: "A:1", deviceId: "1", index: 1, channelType: "SWITCH", category: "CATEGORY_NONE" });
+    expect(healthChannelIds([d({ id: "1", channels: [ch("10"), ch("11")] }), d({ id: "2", channels: [] }), d({ id: "3", channels: [ch("30")] })])).toEqual(["10", "30"]);
   });
 });

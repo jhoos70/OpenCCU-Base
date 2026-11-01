@@ -26,6 +26,10 @@ DEVICES = {"devices": {"total": 3, "offset": 0, "limit": 500, "items": [
      "channels": [ch(0, "Büro Licht:0", "MAINTENANCE", "2002"), ch(1, "Büro Licht:1", "SWITCH", "2002")]},
     {"id": "2003", "name": "Fenster 10", "address": "0003", "interface": "HmIP-RF", "type": "HmIP-SWDO", "isReady": True, "channels": []},
 ]}}
+HEALTH_DPS = [
+    {"id": "901", "name": "HmIP-RF.0001:0.UNREACH", "channelId": "200100", "channel": "Küche Heizung:0", "param": "UNREACH", "type": "LOGIC", "value": "true", "unit": "", "min": "", "max": "", "valueList": "", "timestamp": "2026-11-01 10:00:00", "integer": False, "readable": True, "writable": False},
+    {"id": "902", "name": "HmIP-RF.0001:0.LOW_BAT", "channelId": "200100", "channel": "Küche Heizung:0", "param": "LOW_BAT", "type": "LOGIC", "value": "true", "unit": "", "min": "", "max": "", "valueList": "", "timestamp": "2026-11-01 10:00:00", "integer": False, "readable": True, "writable": False},
+]
 
 
 def main():
@@ -87,11 +91,14 @@ def main():
                 else:
                     route.continue_()
             pg.route("**/v2/model?*", fulfil)
-            pg.route("**/v2/values*", lambda r: r.fulfill(status=200, content_type="application/json", body='{"device":"0","items":[]}'))  # the values of a mocked device
+            pg.route("**/v2/values*", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps({"channels": "", "items": HEALTH_DPS} if "channels=" in r.request.url else {"device": "0", "items": []})))  # the values of a mocked device
             pg.get_by_role("link", name="Geräte").click(); pg.get_by_label("Filter").wait_for()
             pg.wait_for_function("document.body.innerText.includes('Funk-Schaltaktor')", timeout=10000)  # descriptions load after the table
-            names = [r.split("\t")[0].strip("▸▾ \n") for r in pg.locator("tbody > tr").all_inner_texts()]
+            names = [b.strip("▸▾ \n") for b in pg.locator("tbody > tr td:first-child button").all_inner_texts()]
             check("devices are sorted by name in German order", names == ["Büro Licht", "Fenster 10", "Küche Heizung"], str(names))
+            kueche_row = pg.locator("tbody > tr", has_text="Küche Heizung")
+            buero_row = pg.locator("tbody > tr", has_text="Büro Licht")
+            check("a device row shows its unreachable and low-battery badges without opening it", "Nicht erreichbar" in kueche_row.inner_text() and "Batterie schwach" in kueche_row.inner_text() and "Nicht erreichbar" not in buero_row.inner_text())
             body = pg.inner_text("main")
             check("a known device type shows its German description", "Funk-Schaltaktor 1-fach, Zwischenstecker" in body and "Homematic IP Fenster- und Türkontakt - optisch" in body)
             check("an unknown device type is shown without a description", "HmIP-eTRV-B" in body and "undefined" not in body)

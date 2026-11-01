@@ -5,15 +5,19 @@ import { Label } from "@/components/ui/label";
 import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DeviceValues } from "@/components/DeviceValues";
 import { TileBoard } from "@/components/TileBoard";
-import type { Device, FavouriteItem } from "@/lib/api";
-import { filterDevices, sortByName } from "@/lib/devices";
+import { HealthBadges, type Health } from "@/components/tiles/TileShell";
+import { getChannelValues, type Datapoint, type Device, type FavouriteItem } from "@/lib/api";
+import { filterDevices, healthChannelIds, sortByName } from "@/lib/devices";
 import { text } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { useCurrentProfile } from "@/lib/profile-context";
 import { useCcuStrings } from "@/lib/use-ccu-strings";
 import { useModel } from "@/lib/use-model";
-import type { ChannelInfo } from "@/lib/widgets";
+import { usePolled } from "@/lib/use-polled";
+import { healthOf, type ChannelInfo } from "@/lib/widgets";
 import { Status } from "./Status";
+
+const HEALTH_MS = 10_000;
 
 /** An opened device: its channels as tiles (as in Rooms), and the technical tables one click away. */
 function DeviceDetails({ device, sid, mayChange, strings, onExpired }: { device: Device; sid: string; mayChange: boolean; strings: Record<string, string>; onExpired: () => void }) {
@@ -55,23 +59,26 @@ function DeviceDetails({ device, sid, mayChange, strings, onExpired }: { device:
   );
 }
 
-function DeviceRows({ device, description, open, onToggle, sid, mayChange, strings, onExpired }: { device: Device; description: string; open: boolean; onToggle: () => void; sid: string; mayChange: boolean; strings: Record<string, string>; onExpired: () => void }) {
+function DeviceRows({ device, description, health, open, onToggle, sid, mayChange, strings, onExpired }: { device: Device; description: string; health: Health; open: boolean; onToggle: () => void; sid: string; mayChange: boolean; strings: Record<string, string>; onExpired: () => void }) {
   const { t } = useI18n();
   const channels = device.channels;
   return (
     <>
       <TableRow>
         <TableCell>
-          <button
-            type="button"
-            className="flex items-start gap-2 text-left"
-            aria-expanded={open}
-            aria-label={t(open ? "hideChannels" : "showChannels", { name: device.name })}
-            onClick={onToggle}
-          >
-            <span aria-hidden="true" className="w-3 text-[var(--muted-foreground)]">{open ? "▾" : "▸"}</span>
-            <span>{device.name}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="flex items-start gap-2 text-left"
+              aria-expanded={open}
+              aria-label={t(open ? "hideChannels" : "showChannels", { name: device.name })}
+              onClick={onToggle}
+            >
+              <span aria-hidden="true" className="w-3 text-[var(--muted-foreground)]">{open ? "▾" : "▸"}</span>
+              <span>{device.name}</span>
+            </button>
+            <HealthBadges health={health} />
+          </div>
         </TableCell>
         <TableCell>
           <div>{device.type}</div>
@@ -102,6 +109,14 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
   const [query, setQuery] = React.useState("");
   const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
   const describe = React.useCallback((d: Device) => strings[d.type] ?? "", [strings]);
+  const chIds = React.useMemo(() => (state.status === "ready" ? healthChannelIds(state.data.items) : []), [state]);
+  const chKey = chIds.join(",");
+  const healthValues = usePolled(
+    React.useCallback(() => (chIds.length ? getChannelValues(sid, chIds) : Promise.resolve([] as Datapoint[])), [sid, chKey]), // eslint-disable-line react-hooks/exhaustive-deps
+    HEALTH_MS,
+    onExpired,
+  );
+  const healthDps = healthValues.data ?? [];
   const toggle = (id: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -140,7 +155,7 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
                   </TableHead>
                   <tbody>
                     {shown.map((d) => (
-                      <DeviceRows key={d.id} device={{ ...d, name: text(d.name, strings) }} description={describe(d)} open={open.has(d.id)} onToggle={() => toggle(d.id)} sid={sid} mayChange={mayChange} strings={strings} onExpired={onExpired} />
+                      <DeviceRows key={d.id} device={{ ...d, name: text(d.name, strings) }} description={describe(d)} health={healthOf(healthDps, d.address)} open={open.has(d.id)} onToggle={() => toggle(d.id)} sid={sid} mayChange={mayChange} strings={strings} onExpired={onExpired} />
                     ))}
                   </tbody>
                 </Table>

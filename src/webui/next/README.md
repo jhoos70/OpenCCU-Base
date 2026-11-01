@@ -40,7 +40,9 @@ raises again (the watchdog alarm "no internet" on a container without internet) 
 
 ## Devices: live values and operation
 
-Opening a device in the Devices page (the arrow before its name) shows its channels as **tiles**, the same tiles as in
+Each row in the Devices list shows the device's **health badges** (*Unreachable*, *Battery low*) next to its name without
+having to open the device: the page reads the maintenance health of all listed devices through `GET /api/v2/values?channels=`
+(one channel per device, every 10 seconds). Opening a device in the Devices page (the arrow before its name) shows its channels as **tiles**, the same tiles as in
 Rooms and Favourites (heating, shutter, switch, window contact, ... see below), with their live values, the controls and the
 health of the device; channels that carry nothing (helper channels, week profiles) are counted, not shown. Because the
 channels of one device often have the same name, a tile in a device keeps the channel's full name (":2").

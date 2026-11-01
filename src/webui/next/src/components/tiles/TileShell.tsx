@@ -8,9 +8,30 @@ export interface Health {
   lowBattery: boolean;
 }
 
+/** The unreachable and low-battery badges of a device (on a tile, or next to the device's name in the Devices list). */
+export function HealthBadges({ health }: { health?: Health }) {
+  const { t } = useI18n();
+  if (!health?.unreachable && !health?.lowBattery) return null;
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {health.unreachable && (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[var(--bad-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--destructive)]">
+          <Icon name="wifioff" className="h-3 w-3" />
+          {t("unreachable")}
+        </span>
+      )}
+      {health.lowBattery && (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[var(--warn-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--warn)]">
+          <Icon name="battery" className="h-3 w-3" />
+          {t("batteryLow")}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** The card every tile sits in: what kind of thing it is, the health of the device, the name, the content and the status line. */
 export function TileShell({ kind, icon, title, health, on = false, children, status }: { kind: string; icon: IconName; title: string; health?: Health; on?: boolean; children: React.ReactNode; status?: React.ReactNode }) {
-  const { t } = useI18n();
   return (
     <article
       aria-label={title}
@@ -21,20 +42,7 @@ export function TileShell({ kind, icon, title, health, on = false, children, sta
           <Icon name={icon} />
           <span>{kind}</span>
         </span>
-        <span className="inline-flex flex-wrap gap-1">
-          {health?.unreachable && (
-            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[var(--bad-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--destructive)]">
-              <Icon name="wifioff" className="h-3 w-3" />
-              {t("unreachable")}
-            </span>
-          )}
-          {health?.lowBattery && (
-            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[var(--warn-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--warn)]">
-              <Icon name="battery" className="h-3 w-3" />
-              {t("batteryLow")}
-            </span>
-          )}
-        </span>
+        <HealthBadges health={health} />
       </header>
       <h3 className="mb-1 line-clamp-2 min-h-[2.5em] text-[15px] font-semibold leading-tight" title={title}>
         {title}

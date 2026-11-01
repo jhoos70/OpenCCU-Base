@@ -1,5 +1,12 @@
 import type { Device } from "./api";
 
+/** One channel id per device that has a channel: enough for GET /values?channels= to return every device's maintenance health. */
+export function healthChannelIds(devices: Device[]): string[] {
+  const out: string[] = [];
+  for (const d of devices) if (d.channels.length > 0) out.push(d.channels[0].id);
+  return out;
+}
+
 /** Devices whose name, type, description or address contains every word of the query (case-insensitive). */
 export function filterDevices(devices: Device[], query: string, describe: (d: Device) => string): Device[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);

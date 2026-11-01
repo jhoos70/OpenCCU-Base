@@ -186,4 +186,5 @@ OK button or similar in a dialog, not by a global save. First slice: system vari
   (activating "Abwesenheit" ran it and four dependent programs; deactivating ran nothing), so the page asks before it
   activates (a confirm dialog with a plain warning; deactivation is immediate). A route with no such warning in its
   documentation would invite a one-click switch, so the route's header says it too.
-- Next for "Status und Bedienung": Diagrams, editing favourite lists, device health in the list itself (the same route by channel), Diagrams, a "real device" test on a CCU with a radio (not available, so mocks plus the copy).
+- Twelfth: device health badges directly in the Devices list (`HealthBadges`, `healthChannelIds`). `GET /api/v2/values?channels=` already includes `UNREACH`, `LOWBAT` and `LOW_BAT` from channel `:0` for the device of every requested channel, so passing the first channel of each device (polled every 10 s in chunks of 100; 2 requests / 0.38 s for the 160 devices of the restored copy) shows *Unreachable* and *Battery low* next to the device name in the collapsed list row, sharing `HealthBadges` with `TileShell`.
+- Next for "Status und Bedienung": Diagrams, editing favourite lists, a "real device" test on a CCU with a radio (not available, so mocks plus the copy).
