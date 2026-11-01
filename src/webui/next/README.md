@@ -57,25 +57,46 @@ on any test system, so only an explicit `false` is an error.
 string tables and shows only the useful ones), and yes/no is used for every logic value (not "on"/"off", "open"/"closed").
 Rooms and Functions with live values are the next slice. Internal datapoints and channels are left out, as in the classic UI.
 
-## Favourites: the user's lists, with values and operation
+## Favourites: the user's lists, as tiles
 
 The classic "Favorites" (Status and control): a user's own lists of channels, system variables and programs (and
 separators). Every user, an administrator too, sees only the lists assigned to them (the lists under their `_USER<id>`
-object in ReGa, without the editing copies), as in the classic page. The page shows the lists as buttons, the members of
-the open list in list order, and for each channel **the values that matter** with their controls (the same yes/no, Send
-and Change-with-OK controls as in Devices, and the same "sent, not done" answers); the other values of the channel are
-under **More values**. A system variable on a list shows its value and opens the same dialog as the System variables
-page; a program on a list is only named (run it on the Programs page).
+object in ReGa, without the editing copies), as in the classic page. The lists are buttons; the members of the open list
+are **tiles** in list order, a responsive grid (one column on a phone). Each tile is chosen by the channel type
+(`lib/widgets.ts`):
 
-The data is `GET /api/v2/favourites` (the lists and their members: id, type, name) and the extension of
-`GET /api/v2/values?channels=1,2,3` (the datapoints of up to 100 channels in one request; the page reads a list's channels
-with one request, in chunks if a list is longer). Lists are read every 60 seconds, values every 10.
+| Tile | Channel types | Shows / operates |
+|---|---|---|
+| Heating | `CLIMATECONTROL_RT_TRANSCEIVER` (HM, also the heating groups), `HEATING_CLIMATECONTROL_TRANSCEIVER` (HmIP), `CLIMATECONTROL_*_RECEIVER` | target temperature (- / + in steps of 0.5), actual temperature and humidity, mode chips Auto / Manual / Boost, valve opening |
+| Shutter | `SHUTTER_VIRTUAL_RECEIVER`, `BLIND_VIRTUAL_RECEIVER` | percent open (0 closed, 1 open, 1.01 = unknown shown as open), Open / Stop / Close |
+| Switch | `SWITCH`, `SWITCH_TRANSMITTER`, `SWITCH_VIRTUAL_RECEIVER` (+ `POWERMETER`, `ENERGIE_METER_TRANSMITTER` of the same device) | the channels of one device share ONE tile: the state comes from the feedback channel, the control from the channel whose state can be written (HmIP: the virtual receiver), the power from the meter; a meter alone is a read-only power tile |
+| Weather | `WEATHER`, `WEATHER_TRANSMIT` | temperature, humidity; read only |
+| Variable | a system variable on the list | a logic variable is a switch, others show the value and open the System variables dialog |
+| Other | any other channel type, and programs | the channel's values as a table behind "Show values" (as in Devices); a program is only named |
 
-**Simplified / not yet:** *which* values of a channel come first is a short list of usual parameter names
-(`lib/favourites.ts`: STATE, LEVEL, SET_TEMPERATURE, ...), where the classic page chooses its widgets by channel type;
-an unusual channel shows what can be operated, or its first three values. Lists cannot be made or edited here (the
-classic UI: Settings, Favorites). The start-page list, the "Zentrale/PC/PDA" assignment of a list, and the order of a
-list are not used. Programs are not run from a list.
+`BLIND_WEEK_PROFILE` and maintenance channels are not shown; the page says how many were left out and which.
+
+**A command is "sent", never "done".** A tile says *Sending... waiting for the device* until the CCU holds the value that
+was sent (it reads again every 3 s meanwhile), then *confirmed*; after 30 s it says *No confirmation from the device* and
+offers *Try again*; if the CCU's interface refuses (HTTP 502) the tile says so. A button of a device (Boost on a
+virtual group, Stop) is only *sent*. Taps on the target temperature are collected: **one** command goes out 1.2 s after
+the last tap (like the classic UI there is no confirm step). The tile shows the pending target with a dashed line until
+the CCU holds it.
+
+**Health:** an unreachable device and a low battery are marked on the tile (and an unreachable one cannot be operated).
+They come from the device's maintenance channel, which `GET /api/v2/values?channels=` adds (UNREACH, LOWBAT, LOW_BAT only).
+
+The data is `GET /api/v2/favourites` (the lists and their members), `GET /api/v2/model?sections=devices` (which type each
+channel is and which device it belongs to) and `GET /api/v2/values?channels=1,2,3` (the datapoints of up to 100 channels
+in one request; in chunks if a list is longer). Lists are read every 60 s, values every 10 s.
+
+**Not yet / unproven:** the heating modes are taken from the classic control code for the HM groups (`CONTROL_MODE` 0 auto,
+1 manual, 2 party, 3 boost; the `AUTO_MODE`, `MANU_MODE`, `BOOST_MODE` datapoints). For HmIP heating the Auto / Manual
+chips write `SET_POINT_MODE` 0 and 1 and Boost writes `BOOST_MODE`; that is what the datapoints allow (they are writable)
+but **it could not be tried on a real HmIP thermostat** (the classic JS that does it is not in the repository). Nothing
+was seen to succeed on real hardware at all: no interface works on any test system. Party mode, comfort / lowering
+temperature, the week schedule, heating/cooling and the window-open state are not offered. Lists cannot be edited here.
+No dark mode yet (the colour tokens are in `index.css`).
 
 ## System log: read, export and clear
 
@@ -214,8 +235,10 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
 - `src/webui/tests/e2e/next_values.py`: the values and the operation of a device with the device list, `/values` and the
   answers to a command **mocked** (no device and no working interface on a test CCU, so a command can only be mocked);
   login and the page are real. Nothing on the CCU is changed.
-- `src/webui/tests/e2e/next_favourites.py`: the Favourites page with `/favourites`, the channels' values, the system
-  variables and the answers to a command **mocked** (the test CCU has no device and no list); login and the page are real.
+- `src/webui/tests/e2e/next_favourites.py`: the Favourites tiles with `/favourites`, the device model, the channels' values,
+  the system variables and the answers to a command **mocked** (the test CCU has no device and no list); the mocked device
+  confirms a command a moment after it was sent, one command is never confirmed (the browser clock is fast-forwarded to see
+  the 30 s rule); login and the page are real. `--shots DIR` takes screenshots.
 - `src/webui/tests/e2e/next_realdata.py`: READ-ONLY pass over the restored data of a real CCU (`isolated-ccu.sh`).
 - `src/webui/tests/e2e/next_log.py`: **real changes on the test CCU, it CLEARS THE LOG: run it on a test CCU only.** History is
   generated by logging two system variables and changing them, compared with the classic log page, the export is fetched,

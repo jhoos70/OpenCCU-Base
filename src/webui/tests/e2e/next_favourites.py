@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Browser test of the Favourites page of the nextGen UI.
+"""Browser test of the Favourites tiles of the nextGen UI.
 
     python3 next_favourites.py --base http://127.0.0.1:18080 --user Admin --password Admin
 
-The test CCU has no device and no favourite list, so /favourites, the values of the channels, the system variables and
-the answers to a command are mocked (the routes are proven by the Tcl tests and against restored real data); login,
-profile and the page are real. Checks: the lists as buttons, the members in list order, what a channel shows at first
-sight and under "more values", a separator, a system variable with its change dialog, a channel without values, a
-command (yes/no) and a refused one, the empty states, a user, German and an expired session. Nothing on the CCU is
-changed. Always signs out.
+The test CCU has no device and no favourite list, so /favourites, the device model, the values of the channels, the
+system variables and the answers to a command are mocked (the routes are proven by the Tcl tests and against restored
+real data); login, profile and the page are real. The mocked "device" confirms a command a moment after it was sent, as
+a real one does; one command is never confirmed, to see the 30 s rule (the browser clock is fast-forwarded).
+Checks: lists, tiles by channel type (heating, shutter, socket with its meter, weather, other, variable), titles without
+technical suffixes, hidden week profiles, taps collected into one command, the sending / confirmed / no-confirmation /
+refused states, unreachable and low battery, the generic fallback, German and an expired session. Nothing on the CCU
+is changed. Always signs out.
 """
 import argparse, json, sys
 from playwright.sync_api import sync_playwright
@@ -17,44 +19,89 @@ NOISE = ("Synchronous XMLHttpRequest", "Synchrone XMLHttpRequest", "file:///", "
 PROFILE = {"userId": "1004", "userName": "Admin", "firstName": "Admin", "hasPassword": True, "isNoExpert": True, "language": "", "level": "ADMIN"}
 
 
+def chan(id, dev, index, name, ctype):
+    return {"id": id, "name": name, "address": "%s:%d" % (dev["address"], index), "deviceId": dev["id"], "index": index, "partnerId": "", "mode": "MODE_DEFAULT", "category": "CATEGORY_NONE", "isReady": True, "isUsable": True,
+            "isVisible": True, "isLogged": False, "isEventable": True, "isReadable": True, "isWritable": True, "isVirtual": False, "isAesAvailable": False, "channelType": ctype}
+
+
+def device(id, name, address, type, channels):
+    d = {"id": id, "name": name, "address": address, "interface": "BidCos-RF", "type": type, "operateGroupOnly": "false", "isReady": True, "channels": []}
+    d["channels"] = [chan(cid, d, i, n, ct) for cid, i, n, ct in channels]
+    return d
+
+
+DEVICES = [
+    device("10", "Wohnzimmer Gruppe", "INT1", "HM-CC-VG-1", [("101", 1, "Wohnzimmer Gruppe:1", "CLIMATECONTROL_RT_TRANSCEIVER")]),
+    device("11", "Bad", "HM6", "HmIP-HEATING", [("102", 1, "Bad:1", "HEATING_CLIMATECONTROL_TRANSCEIVER")]),
+    device("20", "Steckdose Server", "SOCK1", "HMIP-PSM", [("201", 2, "Steckdose Server:2", "SWITCH_TRANSMITTER"), ("202", 3, "Steckdose Server:3", "SWITCH_VIRTUAL_RECEIVER"), ("203", 6, "Steckdose Server:6", "ENERGIE_METER_TRANSMITTER")]),
+    device("30", "Rollladen Küche", "SH1", "HmIP-BROLL", [("301", 4, "Rollladen Küche:4", "SHUTTER_VIRTUAL_RECEIVER"), ("302", 5, "Rollladen Küche:5", "BLIND_WEEK_PROFILE")]),
+    device("40", "Aussensensor", "W1", "HM-WDS", [("401", 1, "Aussensensor:1", "WEATHER")]),
+    device("50", "Taster Flur", "K1", "HM-RC-4", [("501", 1, "Taster Flur:1", "KEY")]),
+]
+
+
 def item(id, type, name):
     return {"id": id, "type": type, "name": name}
 
 
 LISTS = [
-    {"id": "10", "name": "Heizung", "info": "", "items": [item("101", "CHANNEL", "Wohnzimmer Gruppe:1"), item("0", "SEPARATOR", ""), item("950", "SYSVAR", "Anwesenheit"), item("103", "CHANNEL", "Weg:1")]},
-    {"id": "11", "name": "Licht", "info": "", "items": [item("201", "CHANNEL", "Lampe:1"), item("300", "PROGRAM", "Abendlicht")]},
-    {"id": "12", "name": "Leer", "info": "", "items": []},
+    {"id": "1", "name": "Heizung", "info": "", "items": [item("101", "CHANNEL", "Wohnzimmer Gruppe:1"), item("0", "SEPARATOR", ""), item("950", "SYSVAR", "Anwesenheit"), item("102", "CHANNEL", "Bad:1")]},
+    {"id": "2", "name": "Strom", "info": "", "items": [item("201", "CHANNEL", "Steckdose Server:2"), item("202", "CHANNEL", "Steckdose Server:3"), item("203", "CHANNEL", "Steckdose Server:6"), item("401", "CHANNEL", "Aussensensor:1")]},
+    {"id": "3", "name": "Rollo", "info": "", "items": [item("301", "CHANNEL", "Rollladen Küche:4"), item("302", "CHANNEL", "Rollladen Küche:5"), item("501", "CHANNEL", "Taster Flur:1"), item("300", "PROGRAM", "Abendlicht")]},
+    {"id": "4", "name": "Leer", "info": "", "items": []},
 ]
 
 
-def dp(id, channel, param, type, value, **kw):
-    d = {"id": id, "name": "x." + param, "channelId": channel, "channel": "c", "param": param, "type": type, "value": value, "unit": "", "min": "", "max": "", "valueList": "",
-         "timestamp": "2026-11-01 10:00:00", "integer": False, "readable": True, "writable": True}
+def dp(id, ch, param, type, value, **kw):
+    cid, addr, idx, cname = ch
+    d = {"id": id, "name": "BidCos-RF.%s:%d.%s" % (addr, idx, param), "channelId": cid, "channel": cname, "param": param, "type": type, "value": value, "unit": "", "min": "", "max": "", "valueList": "",
+         "timestamp": "2026-11-01 10:00:00", "integer": False, "readable": True, "writable": False}
     d.update(kw)
     return d
 
 
-VALUES = [
-    dp("1", "101", "RSSI_PEER", "NUMBER", "-70", integer=True, writable=False),
-    dp("2", "101", "ACTUAL_TEMPERATURE", "NUMBER", "19.5", unit="°C", writable=False),
-    dp("3", "101", "SET_TEMPERATURE", "NUMBER", "21.0", unit="°C", min="4.5", max="30.5"),
-    dp("4", "101", "LOWBAT", "LOGIC", "false", writable=False),
-    dp("5", "201", "STATE", "LOGIC", "true"),
-]
+def values():
+    g, bad, sock, sh, w, k = ("101", "INT1", 1, "Wohnzimmer Gruppe:1"), ("102", "HM6", 1, "Bad:1"), ("202", "SOCK1", 3, "Steckdose Server:3"), ("301", "SH1", 4, "Rollladen Küche:4"), ("401", "W1", 1, "Aussensensor:1"), ("501", "K1", 1, "Taster Flur:1")
+    fb, met = ("201", "SOCK1", 2, "Steckdose Server:2"), ("203", "SOCK1", 6, "Steckdose Server:6")
+    return [
+        dp("1", g, "SET_TEMPERATURE", "NUMBER", "21.000000", unit="°C", min="5.0", max="30.0", writable=True),
+        dp("2", g, "ACTUAL_TEMPERATURE", "NUMBER", "19.500000", unit="°C"),
+        dp("3", g, "ACTUAL_HUMIDITY", "NUMBER", "48", unit="%"),
+        dp("4", g, "CONTROL_MODE", "LIST", "0", valueList="AUTO-MODE;MANU-MODE;PARTY-MODE;BOOST-MODE"),
+        dp("5", g, "AUTO_MODE", "ACTION", "", writable=True),
+        dp("6", g, "MANU_MODE", "NUMBER", "", unit="°C", min="4.5", max="30.5", writable=True),
+        dp("7", g, "BOOST_MODE", "ACTION", "", writable=True),
+        dp("11", bad, "SET_POINT_TEMPERATURE", "NUMBER", "20.500000", unit="°C", min="4.500000", max="30.500000", writable=True),
+        dp("12", bad, "ACTUAL_TEMPERATURE", "NUMBER", "20.100000", unit="°C"),
+        dp("13", bad, "SET_POINT_MODE", "NUMBER", "0", writable=True, integer=True),
+        dp("14", bad, "BOOST_MODE", "LOGIC", "false", writable=True),
+        dp("15", ("199", "HM6", 0, "Bad:0"), "UNREACH", "LOGIC", "true"),
+        dp("16", ("199", "HM6", 0, "Bad:0"), "LOWBAT", "LOGIC", "true"),
+        dp("21", fb, "STATE", "LOGIC", "true"),
+        dp("22", sock, "STATE", "LOGIC", "true", writable=True),
+        dp("23", met, "POWER", "NUMBER", "120.000000", unit="W"),
+        dp("24", met, "ENERGY_COUNTER", "NUMBER", "3400.000000", unit="Wh"),
+        dp("31", sh, "LEVEL", "NUMBER", "0.400000", min="0.000000", max="1.010000", writable=True),
+        dp("32", sh, "STOP", "ACTION", "", writable=True),
+        dp("41", w, "TEMPERATURE", "NUMBER", "8.500000", unit="°C"),
+        dp("42", w, "HUMIDITY", "NUMBER", "71", unit="%"),
+        dp("51", k, "PRESS_SHORT", "ACTION", "", writable=True),
+    ]
+
+
 SYSVAR = {"id": "950", "name": "Anwesenheit", "type": "LOGIC", "unit": "", "value": "true", "valueName0": "abwesend", "valueName1": "anwesend", "description": "", "lastModified": "2026-11-01 09:00:00", "isVisible": True, "isInternal": False}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", required=True); ap.add_argument("--user", default="Admin"); ap.add_argument("--password", required=True)
+    ap.add_argument("--base", required=True); ap.add_argument("--user", default="Admin"); ap.add_argument("--password", required=True); ap.add_argument("--shots", default="")
     a = ap.parse_args()
-    results, console, posts, urls = [], [], [], []
+    results, console, posts = [], [], []
 
     def check(name, ok, detail=""):
         results.append(ok); print("%s  %s %s" % ("PASS" if ok else "FAIL", name, detail))
 
-    st = {"lists": LISTS, "profile": None, "post": None, "favs_status": 200}
+    st = {"lists": LISTS, "vals": values(), "post": None, "favs_status": 200, "device_confirms": True}
     ok = lambda body: dict(status=200, content_type="application/json", body=json.dumps(body))
 
     def on_favs(route):
@@ -65,11 +112,18 @@ def main():
     def on_values(route):
         req = route.request
         if req.method == "POST":
-            posts.append(("values", json.loads(req.post_data)))
-            status, body = st["post"]
-            return route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
-        urls.append(req.url)
-        route.fulfill(**ok({"channels": "", "items": VALUES}))
+            body = json.loads(req.post_data)
+            posts.append(("values", body))
+            if st["post"] is not None:
+                status, resp = st["post"]
+                return route.fulfill(status=status, content_type="application/json", body=json.dumps(resp))
+            d = next(x for x in st["vals"] if x["id"] == body["id"])
+            if st["device_confirms"] and d["type"] in ("NUMBER", "LOGIC", "LIST"):
+                d["value"] = ("%f" % float(body["value"])) if d["type"] == "NUMBER" else (str(body["value"]).lower() if d["type"] == "LOGIC" else str(body["value"]))
+            if st["device_confirms"] and body["id"] == "22":  # an HmIP socket: the feedback channel follows the control channel
+                next(x for x in st["vals"] if x["id"] == "21")["value"] = d["value"]
+            return route.fulfill(**ok(d))
+        route.fulfill(**ok({"channels": "", "items": st["vals"]}))
 
     def on_sysvars_post(route):
         if route.request.method != "POST":
@@ -81,62 +135,118 @@ def main():
         browser = p.chromium.launch()
         pg = browser.new_page(viewport={"width": 1280, "height": 1000})
         pg.on("console", lambda m: m.type == "error" and not any(n in m.text for n in NOISE) and console.append(m.text[:140]))
+        pg.on("pageerror", lambda e: console.append("pageerror: " + str(e)[:140]))
         pg.route("**/v2/favourites", on_favs)
         pg.route("**/v2/values*", on_values)
         pg.route("**/v2/sysvars", on_sysvars_post)
+        pg.route("**/v2/model?sections=devices*", lambda r: r.fulfill(**ok({"devices": {"total": len(DEVICES), "offset": 0, "limit": 500, "items": DEVICES}})))
         pg.route("**/v2/model?sections=sysvars*", lambda r: r.fulfill(**ok({"sysvars": {"total": 1, "offset": 0, "limit": 500, "items": [SYSVAR]}})))
-        pg.route("**/v2/profile", lambda r: r.fulfill(**ok({**PROFILE, **(st["profile"] or {})})))
+        pg.route("**/v2/profile", lambda r: r.fulfill(**ok(PROFILE)))
+        tile = lambda title: pg.locator("article", has=pg.get_by_role("heading", name=title, exact=True))
         try:
             pg.goto(a.base + "/webui/next/"); pg.wait_for_selector("#user")
             pg.fill("#user", a.user); pg.fill("#password", a.password); pg.keyboard.press("Enter")
             pg.get_by_role("link", name="Favourites", exact=True).first.click()
-            pg.get_by_role("button", name="Open the list Heizung").wait_for()
-            pg.get_by_role("heading", name="Wohnzimmer Gruppe:1").wait_for()
-            check("the lists are buttons, the first is open", pg.locator("[role=group] button").all_inner_texts() == ["Heizung", "Licht", "Leer"] and pg.get_by_role("button", name="Open the list Heizung").get_attribute("aria-pressed") == "true")
-            check("the members come in list order", [h for h in pg.locator("section h3").all_inner_texts()] == ["Wohnzimmer Gruppe:1", "Anwesenheit", "Weg:1"], repr(pg.locator("section h3").all_inner_texts()))
-            check("one request reads the channels of the list", len(urls) >= 1 and "channels=101,103" in urls[0], urls[0].split("v2/")[-1])
-            block = pg.locator("section", has=pg.get_by_role("heading", name="Wohnzimmer Gruppe:1"))
-            params = block.locator("tbody > tr > td:first-child").all_inner_texts()
-            check("the usual parameters come first, in order", [x for x in params if x.strip() and x.strip().isupper()][:2] == ["SET_TEMPERATURE", "ACTUAL_TEMPERATURE"], repr(params[:3]))
-            check("the rest is under more values", block.get_by_text("More values (2)").is_visible() and not block.get_by_text("RSSI_PEER").is_visible())
-            block.get_by_text("More values (2)").click()
-            check("more values opens and shows them", block.get_by_text("RSSI_PEER").is_visible())
+            pg.get_by_role("heading", name="Wohnzimmer").wait_for()
+
+            def shot(name):
+                if a.shots:
+                    pg.screenshot(path="%s/tiles-%s.png" % (a.shots, name), clip={"x": 0, "y": 60, "width": 1280, "height": 900})
+
+            # ---- heating
+            shot("heizung")
+            check("the lists are buttons, the first is open", pg.locator("[role=group] button").all_inner_texts()[:4] == ["Heizung", "Strom", "Rollo", "Leer"] and pg.get_by_role("button", name="Open the list Heizung").get_attribute("aria-pressed") == "true")
+            check("tiles in list order; the titles lose the suffix and the word Gruppe", pg.locator("article h3").all_inner_texts() == ["Wohnzimmer", "Anwesenheit", "Bad"], repr(pg.locator("article h3").all_inner_texts()))
             check("a separator is a line", pg.locator("hr").count() == 1)
-            check("a channel without values says so", pg.get_by_text("No values: this channel is not available.").count() == 1)
+            heat = tile("Wohnzimmer")
+            txt = heat.inner_text()
+            check("heating shows the target big, the actual value and the humidity", "21,0" in txt.replace(".", ",") and "19" in txt and "48 % humidity" in txt, repr(txt[:120]))
+            check("the current mode is pressed", heat.get_by_role("button", name="Auto").get_attribute("aria-pressed") == "true" and heat.get_by_role("button", name="Manual").get_attribute("aria-pressed") == "false")
+            check("an unreachable device is marked, with a low battery, and cannot be operated", tile("Bad").get_by_text("Unreachable").is_visible() and tile("Bad").get_by_text("Battery low").is_visible() and tile("Bad").get_by_role("button", name="Raise the target temperature").is_disabled())
 
-            # a command from the page
-            st["post"] = (200, VALUES[2])
-            pg.get_by_role("button", name="Change SET_TEMPERATURE").click()
-            pg.get_by_label("SET_TEMPERATURE", exact=True).fill("22")
-            pg.get_by_role("button", name="OK").click()
-            pg.get_by_text("SET_TEMPERATURE: command sent").wait_for()
-            check("a command from a favourite is sent as typed", posts[-1] == ("values", {"id": "3", "value": "22"}), repr(posts[-1]))
+            # two taps are one command, sent after a pause; the device confirms a moment later
+            before = len(posts)
+            heat.get_by_role("button", name="Raise the target temperature").click(); heat.get_by_role("button", name="Raise the target temperature").click()
+            check("taps send nothing at once", len(posts) == before)
+            for _ in range(60):  # the debounce is 1.2 s; the mocked device confirms at once, so "sending" is too short to catch
+                if len(posts) > before:
+                    break
+                pg.wait_for_timeout(100)
+            check("two taps are one command with the final target", len(posts) == before + 1 and posts[-1] == ("values", {"id": "1", "value": "22.0"}), repr(posts[-1]))
+            heat.get_by_text("Target 22,0 °C confirmed", exact=False).or_(heat.get_by_text("Target 22.0 °C confirmed", exact=False)).wait_for(timeout=15000)
+            check("the device's confirmation ends the waiting", True)
+
+            # a mode
+            heat.get_by_role("button", name="Boost").click()
+            heat.get_by_text("Boost sent").wait_for(timeout=5000)
+            check("boost (a button of the device) is sent, not confirmed", posts[-1] == ("values", {"id": "7", "value": True}), repr(posts[-1]))
+            heat.get_by_role("button", name="Manual").click()
+            heat.get_by_text("Manual", exact=False).first.wait_for()
+            check("manual keeps the target temperature", posts[-1] == ("values", {"id": "6", "value": "22"}), repr(posts[-1]))
+
+            # a command nothing confirms: 30 s, then a retry
+            st["device_confirms"] = False
+            pg.clock.install()
+            heat.get_by_role("button", name="Lower the target temperature").click()
+            pg.clock.run_for(1500)
+            heat.get_by_text("Sending… waiting for the device").wait_for(timeout=5000)
+            pg.clock.run_for(32000)
+            heat.get_by_text("No confirmation from the device (30 s).").wait_for(timeout=10000)
+            check("no confirmation after 30 s says so and offers a retry", heat.get_by_role("button", name="Try again").is_visible())
+            n = len(posts)
+            heat.get_by_role("button", name="Try again").click()
+            heat.get_by_text("Sending… waiting for the device").wait_for(timeout=5000)
+            check("a retry sends the same command again", len(posts) == n + 1 and posts[-1] == posts[-2], repr(posts[-2:]))
+            pg.reload(); pg.get_by_role("heading", name="Wohnzimmer").wait_for()
+            st["device_confirms"] = True
+            heat = tile("Wohnzimmer")
+
+            # a refused command
             st["post"] = (502, {"error": {"code": 501, "message": "x"}})
-            pg.get_by_role("button", name="Change SET_TEMPERATURE").click()
-            pg.get_by_label("SET_TEMPERATURE", exact=True).fill("23")
-            pg.get_by_role("button", name="OK").click()
-            pg.get_by_role("alert").filter(has_text="did not pass the command on").wait_for()
-            check("a refused command is an error, not sent", pg.get_by_role("alert").filter(has_text="did not pass the command on").is_visible() and pg.get_by_text("SET_TEMPERATURE: command sent").count() == 0)
-            pg.get_by_role("button", name="Cancel").click()
+            heat.get_by_role("button", name="Raise the target temperature").click()
+            heat.get_by_role("alert").filter(has_text="did not pass the command on").wait_for(timeout=8000)
+            check("a refused command is an error on the tile, with a retry", heat.get_by_role("button", name="Try again").is_visible())
+            st["post"] = None
 
-            # the system variable
-            check("a system variable shows its value name", pg.locator("section", has=pg.get_by_role("heading", name="Anwesenheit")).inner_text().count("anwesend") >= 1)
-            pg.get_by_role("button", name="Change: Anwesenheit").click()
-            pg.get_by_role("dialog").wait_for()
-            pg.get_by_role("dialog").locator("select").select_option("false")
-            pg.get_by_role("button", name="OK").click()
-            pg.get_by_role("dialog").wait_for(state="hidden")
-            check("a system variable is changed with the same dialog", posts[-1] == ("sysvars", {"id": "950", "value": False}), repr(posts[-1]))
+            # the variable
+            check("a variable shows its value name", "anwesend" in tile("Anwesenheit").inner_text())
+            tile("Anwesenheit").get_by_role("switch").click()
+            tile("Anwesenheit").get_by_text("confirmed", exact=False).wait_for(timeout=5000)
+            check("a logic variable is switched like a switch", posts[-1] == ("sysvars", {"id": "950", "value": False}), repr(posts[-1]))
 
-            # the other lists
-            pg.get_by_role("button", name="Open the list Licht").click()
-            pg.get_by_role("heading", name="Lampe:1").wait_for()
-            check("another list opens", pg.get_by_role("button", name="Set STATE to no").is_visible())
+            # ---- sockets and weather
+            pg.get_by_role("button", name="Open the list Strom").click()
+            pg.get_by_role("heading", name="Steckdose Server", exact=True).wait_for()
+            check("a socket, its feedback and its meter are one tile; the weather sensor another", pg.locator("article h3").all_inner_texts() == ["Steckdose Server", "Aussensensor"], repr(pg.locator("article h3").all_inner_texts()))
+            shot("strom")
+            sock = tile("Steckdose Server")
+            check("the socket shows its state and its power", sock.get_by_role("switch").get_attribute("aria-checked") == "true" and "120 W now" in sock.inner_text())
+            sock.get_by_role("switch").click()
+            sock.get_by_text("confirmed", exact=False).wait_for(timeout=15000)
+            check("the switch operates the control channel with a boolean", posts[-1] == ("values", {"id": "22", "value": False}), repr(posts[-1]))
+            check("a weather tile is read only", tile("Aussensensor").locator("button").count() == 0 and "8" in tile("Aussensensor").inner_text())
+
+            # ---- shutter, other, program, hidden
+            pg.get_by_role("button", name="Open the list Rollo").click()
+            pg.get_by_role("heading", name="Rollladen Küche", exact=True).wait_for()
+            shot("rollo")
+            sh = tile("Rollladen Küche")
+            check("a shutter shows percent open", "40" in sh.inner_text() and "% open" in sh.inner_text())
+            st["device_confirms"] = True
+            sh.get_by_role("button", name="Open").click()
+            sh.get_by_text("confirmed", exact=False).wait_for(timeout=15000)
+            check("open sends level 1", posts[-1] == ("values", {"id": "31", "value": "1"}), repr(posts[-1]))
+            sh.get_by_role("button", name="Stop").click()
+            sh.get_by_text("Stop sent").wait_for(timeout=5000)
+            check("stop is a button of the device", posts[-1] == ("values", {"id": "32", "value": True}), repr(posts[-1]))
+            check("the week profile is not a tile, and the page says so", pg.get_by_text("Not shown: 1").is_visible() and pg.locator("article h3").all_inner_texts() == ["Rollladen Küche", "Taster Flur", "Abendlicht"], repr(pg.locator("article h3").all_inner_texts()))
+            tile("Taster Flur").get_by_role("button", name="Show values").click()
+            check("anything else keeps its values as a table", tile("Taster Flur").get_by_text("PRESS_SHORT", exact=True).is_visible())
             check("a program is named, not run", pg.get_by_text("Program (run it on the Programs page)").is_visible())
             pg.get_by_role("button", name="Open the list Leer").click()
             check("an empty list says so", pg.get_by_text("This list is empty.").is_visible())
 
-            # empty and user and German and expired
+            # ---- empty, German, expired
             st["lists"] = []
             pg.get_by_role("button", name="Refresh").click()
             pg.get_by_text("You have no favourite lists").wait_for()
@@ -145,7 +255,8 @@ def main():
             pg.reload(); pg.get_by_role("button", name="Open the list Heizung").wait_for()
             pg.get_by_role("button", name="Account menu").click(); pg.get_by_role("menuitemradio", name="Deutsch").click()
             pg.get_by_role("button", name="Liste Heizung öffnen").wait_for()
-            check("German texts", pg.get_by_text("Weitere Werte (2)").first.is_visible())
+            pg.get_by_role("heading", name="Wohnzimmer").wait_for()
+            check("German texts", pg.get_by_text("Heizung", exact=True).first.is_visible() and tile("Wohnzimmer").get_by_role("button", name="Manuell").is_visible())
             pg.get_by_role("link", name="Übersicht", exact=True).click()
             check("the overview links to the favourites", pg.locator("a[href='#/favourites']").count() >= 1)
             st["favs_status"] = 401
