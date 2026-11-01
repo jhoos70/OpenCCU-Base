@@ -37,6 +37,7 @@ DEVICES = [
     device("30", "Rollladen Küche", "SH1", "HmIP-BROLL", [("301", 4, "Rollladen Küche:4", "SHUTTER_VIRTUAL_RECEIVER"), ("302", 5, "Rollladen Küche:5", "BLIND_WEEK_PROFILE")]),
     device("40", "Aussensensor", "W1", "HM-WDS", [("401", 1, "Aussensensor:1", "WEATHER")]),
     device("50", "Taster Flur", "K1", "HM-RC-4", [("501", 1, "Taster Flur:1", "KEY")]),
+    device("60", "Analog", "AN1", "HM-X", [("601", 1, "Analog:1", "ANALOG_OUTPUT")]),
 ]
 
 
@@ -47,7 +48,7 @@ def item(id, type, name):
 LISTS = [
     {"id": "1", "name": "Heizung", "info": "", "items": [item("101", "CHANNEL", "Wohnzimmer Gruppe:1"), item("0", "SEPARATOR", ""), item("950", "SYSVAR", "Anwesenheit"), item("102", "CHANNEL", "Bad:1")]},
     {"id": "2", "name": "Strom", "info": "", "items": [item("201", "CHANNEL", "Steckdose Server:2"), item("202", "CHANNEL", "Steckdose Server:3"), item("203", "CHANNEL", "Steckdose Server:6"), item("401", "CHANNEL", "Aussensensor:1")]},
-    {"id": "3", "name": "Rollo", "info": "", "items": [item("301", "CHANNEL", "Rollladen Küche:4"), item("302", "CHANNEL", "Rollladen Küche:5"), item("501", "CHANNEL", "Taster Flur:1"), item("300", "PROGRAM", "Abendlicht")]},
+    {"id": "3", "name": "Rollo", "info": "", "items": [item("301", "CHANNEL", "Rollladen Küche:4"), item("302", "CHANNEL", "Rollladen Küche:5"), item("501", "CHANNEL", "Taster Flur:1"), item("601", "CHANNEL", "Analog:1"), item("300", "PROGRAM", "Abendlicht")]},
     {"id": "4", "name": "Leer", "info": "", "items": []},
 ]
 
@@ -86,6 +87,8 @@ def values():
         dp("41", w, "TEMPERATURE", "NUMBER", "8.500000", unit="°C"),
         dp("42", w, "HUMIDITY", "NUMBER", "71", unit="%"),
         dp("51", k, "PRESS_SHORT", "ACTION", "", writable=True),
+        dp("52", k, "PRESS_LONG", "ACTION", "", writable=True),
+        dp("61", ("601", "AN1", 1, "Analog:1"), "OUTPUT_X", "NUMBER", "3", writable=True),
     ]
 
 
@@ -239,9 +242,12 @@ def main():
             sh.get_by_role("button", name="Stop").click()
             sh.get_by_text("Stop sent").wait_for(timeout=5000)
             check("stop is a button of the device", posts[-1] == ("values", {"id": "32", "value": True}), repr(posts[-1]))
-            check("the week profile is not a tile, and the page says so", pg.get_by_text("Not shown: 1").is_visible() and pg.locator("article h3").all_inner_texts() == ["Rollladen Küche", "Taster Flur", "Abendlicht"], repr(pg.locator("article h3").all_inner_texts()))
-            tile("Taster Flur").get_by_role("button", name="Show values").click()
-            check("anything else keeps its values as a table", tile("Taster Flur").get_by_text("PRESS_SHORT", exact=True).is_visible())
+            check("the week profile is not a tile, and the page says so", pg.get_by_text("Not shown: 1").is_visible() and pg.locator("article h3").all_inner_texts() == ["Rollladen Küche", "Taster Flur", "Analog", "Abendlicht"], repr(pg.locator("article h3").all_inner_texts()))
+            tile("Taster Flur").get_by_role("button", name="Short press").click()
+            tile("Taster Flur").get_by_text("Short press sent").wait_for(timeout=5000)
+            check("a button tile presses the key: sent, nothing to confirm", posts[-1] == ("values", {"id": "51", "value": True}), repr(posts[-1]))
+            tile("Analog").get_by_role("button", name="Show values").click()
+            check("anything else keeps its values as a table", tile("Analog").get_by_text("OUTPUT_X", exact=True).is_visible())
             check("a program is named, not run", pg.get_by_text("Program (run it on the Programs page)").is_visible())
             pg.get_by_role("button", name="Open the list Leer").click()
             check("an empty list says so", pg.get_by_text("This list is empty.").is_visible())

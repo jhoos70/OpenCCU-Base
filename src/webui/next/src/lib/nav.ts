@@ -23,7 +23,7 @@ export const NAV: readonly NavItem[] = [
   { id: "overview", group: "objects", minLevel: "USER", classic: ["menuStartPage"], ready: true, labelKey: "overview" },
   { id: "devices", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuDevices", "menuSettingsPage/submenuDevices"], ready: true, labelKey: "devices" },
   { id: "rooms", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuRooms", "menuSettingsPage/submenuRooms"], ready: true, labelKey: "rooms" },
-  { id: "functions", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFunction", "menuSettingsPage/submenuFunction"], ready: false },
+  { id: "functions", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFunction", "menuSettingsPage/submenuFunction"], ready: true, labelKey: "functions" },
   { id: "programs", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuPrograms", "menuProgramsLinksPage/submenuProgramsLinks"], ready: true, labelKey: "programs" },
   { id: "sysvars", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuSysVar", "menuSettingsPage/submenuSysVar"], ready: true, labelKey: "sysvars" },
   { id: "favourites", group: "objects", minLevel: "USER", classic: ["menuControlPage/submenuFavorites", "menuSettingsPage/submenuFavorites"], ready: true, labelKey: "favourites" },

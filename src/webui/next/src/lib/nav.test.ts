@@ -63,9 +63,9 @@ describe("the nav against the classic menu", () => {
 describe("navFor", () => {
   it("shows the built entries of the level, grouped, and points to the classic UI for the rest", () => {
     const a = navFor("ADMIN");
-    expect(a.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["overview", "devices", "rooms", "programs", "sysvars", "favourites", "log"]);
+    expect(a.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["overview", "devices", "rooms", "functions", "programs", "sysvars", "favourites", "log"]);
     expect(a.hasMore).toBe(true);
-    expect(navFor("USER").groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["overview", "devices", "rooms", "programs", "sysvars", "favourites", "log"]);
+    expect(navFor("USER").groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["overview", "devices", "rooms", "functions", "programs", "sysvars", "favourites", "log"]);
   });
   it("gives guests and unknown levels nothing, as the classic UI does", () => {
     for (const l of ["GUEST", "NONE"] as const) expect(navFor(l)).toEqual({ groups: [], hasMore: false });

@@ -71,8 +71,14 @@ def main():
             pg.get_by_role("button", name="Refresh").first.wait_for(timeout=15000)
             check("an open device shows its live values", pg.get_by_text("Values", exact=True).first.is_visible() and pg.locator("table:has(th:text-is('Parameter')) tbody tr").count() > 3, "(%d rows)" % pg.locator("table:has(th:text-is('Parameter')) tbody tr").count())
 
-            timed("Rooms", "Rooms", "tbody tr")
-            rooms = v1("Room.getAll"); n = rows_are(len(rooms)); check("Rooms: one row per room", n == len(rooms), "rows=%d classic=%d" % (n, len(rooms)))
+            timed("Rooms", "Rooms", "[role=group][aria-label=Rooms] button")
+            rooms = v1("Room.getAll"); n = pg.locator("[role=group][aria-label=Rooms] button").count()
+            check("Rooms: one button per room", n == len(rooms), "buttons=%d classic=%d" % (n, len(rooms)))
+            pg.wait_for_selector("article", timeout=30000)
+            check("a room shows its channels as tiles", pg.locator("article").count() > 0, "(%d tiles)" % pg.locator("article").count())
+            timed("Functions", "Functions", "[role=group][aria-label=Functions] button")
+            n = pg.locator("[role=group][aria-label=Functions] button").count()
+            check("Functions: one button per function", n == len(v1("Subsection.getAll")), "buttons=%d" % n)
             shot(pg, "rooms")
 
             timed("System variables", "System variables", "tbody tr")

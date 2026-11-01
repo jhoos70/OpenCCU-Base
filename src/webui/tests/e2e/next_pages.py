@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Browser test of the nextGen pages (Devices, Rooms, System variables) against a CCU with v2_enabled.
+"""Browser test of the nextGen pages (Devices, Rooms as buttons, System variables) against a CCU with v2_enabled.
 
     python3 next_pages.py --base http://127.0.0.1:18080 --user Admin --password Admin
 
@@ -55,9 +55,9 @@ def main():
 
             # ---- rooms
             pg.get_by_role("link", name="Rooms").click()
-            pg.wait_for_selector("tbody tr")
+            pg.wait_for_selector("[role=group][aria-label=Rooms] button")
             check("tab sets the route", "#/rooms" in pg.url)
-            ui_rooms = sorted(column(pg, 1))
+            ui_rooms = sorted(pg.locator("[role=group][aria-label=Rooms] button").all_inner_texts())
             v1_rooms = sorted(r["name"] for r in pg.evaluate(V1, ["Room.getAll", sid]))
             check("rooms equal the classic API", ui_rooms == v1_rooms, "%d rooms" % len(ui_rooms))
             check("umlauts are intact", any("ü" in n or "ä" in n or "ö" in n for n in ui_rooms) and not any("Ã" in n or "\ufffd" in n for n in ui_rooms), str([n for n in ui_rooms if not n.isascii()][:3]))

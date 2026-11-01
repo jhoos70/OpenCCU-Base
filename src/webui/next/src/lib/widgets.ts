@@ -4,15 +4,23 @@
 import type { Datapoint, FavouriteItem } from "./api";
 import { neverReported } from "./datapoints";
 
-export type Kind = "thermostat" | "shutter" | "switch" | "meter" | "sensor" | "hidden" | "generic";
+export type Kind = "thermostat" | "shutter" | "switch" | "meter" | "sensor" | "contact" | "key" | "dimmer" | "hidden" | "generic";
 
 const KINDS: Record<string, Kind> = {
   CLIMATECONTROL_RT_TRANSCEIVER: "thermostat",
   HEATING_CLIMATECONTROL_TRANSCEIVER: "thermostat",
   CLIMATECONTROL_RECEIVER: "thermostat",
   CLIMATECONTROL_RT_RECEIVER: "thermostat",
+  THERMALCONTROL_TRANSMIT: "thermostat", // the wall thermostat's own control channel
   SHUTTER_VIRTUAL_RECEIVER: "shutter",
   BLIND_VIRTUAL_RECEIVER: "shutter",
+  SHUTTER_TRANSMITTER: "shutter", // HmIP: the feedback channel of a shutter (the level it is at)
+  BLIND_TRANSMITTER: "shutter",
+  DIMMER: "dimmer",
+  DIMMER_VIRTUAL_RECEIVER: "dimmer",
+  DIMMER_TRANSMITTER: "dimmer",
+  "VIR-LG-WHITE-DIM-CH": "dimmer",
+  "VIR-LG-RGBW-DIM-CH": "dimmer",
   SWITCH: "switch",
   SWITCH_TRANSMITTER: "switch",
   SWITCH_VIRTUAL_RECEIVER: "switch",
@@ -20,10 +28,20 @@ const KINDS: Record<string, Kind> = {
   ENERGIE_METER_TRANSMITTER: "meter",
   WEATHER: "sensor",
   WEATHER_TRANSMIT: "sensor",
+  MOTION_DETECTOR: "sensor",
+  COND_SWITCH_TRANSMITTER_TEMPERATURE: "sensor",
+  SHUTTER_CONTACT: "contact", // a window or door contact
+  KEY: "key",
+  VIRTUAL_KEY: "key",
   // channels that carry no state worth a tile (the weekly schedule of a shutter, the device's own housekeeping)
   BLIND_WEEK_PROFILE: "hidden",
   MAINTENANCE: "hidden",
   "VIP-MAINTENANCE": "hidden",
+  // channels a thermostat or a wall switch keeps for itself: no datapoint at all, or events only (nothing to show or press)
+  WINDOW_SWITCH_RECEIVER: "hidden",
+  REMOTECONTROL_RECEIVER: "hidden",
+  STATE_RESET_RECEIVER: "hidden",
+  KEY_TRANSCEIVER: "hidden",
 };
 export const kindOf = (channelType: string): Kind => KINDS[channelType] ?? "generic";
 
@@ -40,7 +58,7 @@ export interface ChannelInfo {
 export const tileTitle = (name: string): string => name.replace(/:\d+$/, "").replace(/ Gruppe$/, "");
 
 export type Entry =
-  | { type: "tile"; key: string; kind: Exclude<Kind, "hidden">; title: string; channelIds: string[]; deviceAddress: string }
+  | { type: "tile"; key: string; kind: Exclude<Kind, "hidden">; title: string; fullName: string; channelIds: string[]; deviceAddress: string }
   | { type: "separator"; key: string }
   | { type: "sysvar"; key: string; item: FavouriteItem }
   | { type: "program"; key: string; item: FavouriteItem };
@@ -53,6 +71,12 @@ export function buildEntries(items: FavouriteItem[], info: Map<string, ChannelIn
   const entries: Entry[] = [];
   let hidden = 0;
   const byDevice = new Map<string, Extract<Entry, { type: "tile" }>>();
+  // a heating actuator reports its valve as a switch channel: the heating tile says it, so it is not a tile of its own
+  const heatingDevices = new Set<string>();
+  for (const it of items) {
+    const ch = it.type === "CHANNEL" ? info.get(it.id) : undefined;
+    if (ch && kindOf(ch.channelType) === "thermostat") heatingDevices.add(ch.deviceId);
+  }
   items.forEach((it, i) => {
     const key = `${it.id}-${i}`;
     if (it.type === "SEPARATOR") return void entries.push({ type: "separator", key });
@@ -61,18 +85,28 @@ export function buildEntries(items: FavouriteItem[], info: Map<string, ChannelIn
     const ch = info.get(it.id);
     const kind = kindOf(ch?.channelType ?? "");
     if (kind === "hidden") return void hidden++;
-    if (kind === "switch" || kind === "meter") {
-      const shared = ch ? byDevice.get(ch.deviceId) : undefined;
+    if (ch && kind === "switch" && ch.channelType === "SWITCH_TRANSMITTER" && heatingDevices.has(ch.deviceId)) return void hidden++;
+    // the channels of one device that make up one thing share a tile: a switch with its feedback and its meter, a
+    // shutter or a dimmer with its feedback channel
+    const shares = kind === "switch" || kind === "meter" || kind === "shutter" || kind === "dimmer";
+    if (shares && ch) {
+      const group = `${kind === "meter" ? "switch" : kind}:${ch.deviceId}`;
+      const shared = byDevice.get(group);
       if (shared) {
         if (!shared.channelIds.includes(it.id)) shared.channelIds.push(it.id);
         if (kind === "switch") shared.kind = "switch";
         return;
       }
+      const first: Extract<Entry, { type: "tile" }> = { type: "tile", key, kind, title: tileTitle(it.name), fullName: it.name, channelIds: [it.id], deviceAddress: ch.deviceAddress };
+      byDevice.set(group, first);
+      return void entries.push(first);
     }
-    const tile: Extract<Entry, { type: "tile" }> = { type: "tile", key, kind, title: tileTitle(it.name), channelIds: [it.id], deviceAddress: ch?.deviceAddress ?? "" };
-    entries.push(tile);
-    if (ch && (kind === "switch" || kind === "meter")) byDevice.set(ch.deviceId, tile);
+    entries.push({ type: "tile", key, kind, title: tileTitle(it.name), fullName: it.name, channelIds: [it.id], deviceAddress: ch?.deviceAddress ?? "" });
   });
+  // two different channels that would get the same title (two keys of one device) keep their full names
+  const counts = new Map<string, number>();
+  for (const e of entries) if (e.type === "tile") counts.set(e.title, (counts.get(e.title) ?? 0) + 1);
+  for (const e of entries) if (e.type === "tile" && (counts.get(e.title) ?? 0) > 1) e.title = e.fullName;
   return { entries, hidden };
 }
 
@@ -157,8 +191,10 @@ export interface ShutterModel {
 }
 
 export function shutterModel(dps: Datapoint[]): ShutterModel {
-  const level = pick(dps, "LEVEL") ?? null;
-  const n = num(level ?? undefined);
+  // the control channel's level can be written; the feedback channel's says where the shutter really is
+  const levels = dps.filter((d) => d.param === "LEVEL");
+  const level = levels.find((d) => d.writable) ?? levels[0] ?? null;
+  const n = num(levels.find((d) => !d.writable && !neverReported(d)) ?? level ?? undefined);
   const stop = pick(dps, "STOP");
   const act = pick(dps, "ACTIVITY_STATE");
   const idx = num(act);
@@ -201,17 +237,50 @@ export interface SensorModel {
   temperature: number | null;
   humidity: number | null;
   brightness: number | null;
+  motion: boolean | null;
 }
-export const sensorModel = (dps: Datapoint[]): SensorModel => ({
-  temperature: num(pick(dps, "TEMPERATURE", "ACTUAL_TEMPERATURE")),
-  humidity: num(pick(dps, "HUMIDITY", "ACTUAL_HUMIDITY")),
-  brightness: num(pick(dps, "BRIGHTNESS", "ILLUMINATION")),
-});
+/** A sensor without a probe connected reports about -3276.8; that is no temperature. */
+const plausible = (n: number | null): number | null => (n !== null && n > -273 ? n : null);
+export const sensorModel = (dps: Datapoint[]): SensorModel => {
+  const motion = pick(dps, "MOTION");
+  return {
+    temperature: plausible(num(pick(dps, "TEMPERATURE", "ACTUAL_TEMPERATURE"))),
+    humidity: num(pick(dps, "HUMIDITY", "ACTUAL_HUMIDITY")),
+    brightness: num(pick(dps, "BRIGHTNESS", "ILLUMINATION")),
+    motion: motion && !neverReported(motion) ? motion.value === "true" : null,
+  };
+};
 
-/** Does the datapoint (as the CCU holds it now) have the value that was sent? */
+export interface DimmerModel {
+  level: Datapoint | null; // the one to write, else the one to read
+  percent: number | null;
+  operable: boolean;
+}
+export function dimmerModel(dps: Datapoint[]): DimmerModel {
+  const levels = dps.filter((d) => d.param === "LEVEL");
+  const level = levels.find((d) => d.writable) ?? levels[0] ?? null;
+  const n = num(levels.find((d) => !d.writable && !neverReported(d)) ?? level ?? undefined);
+  return { level, percent: n === null ? null : Math.round(Math.min(Math.max(n, 0), 1) * 100), operable: levels.some((d) => d.writable) };
+}
+
+export interface ContactModel {
+  open: boolean | null; // a window or door contact: STATE true is open
+}
+export function contactModel(dps: Datapoint[]): ContactModel {
+  const state = pick(dps, "STATE");
+  return { open: state && !neverReported(state) ? state.value === "true" : null };
+}
+
+export interface KeyModel {
+  short: Datapoint | null;
+  long: Datapoint | null;
+}
+export const keyModel = (dps: Datapoint[]): KeyModel => ({ short: pick(dps, "PRESS_SHORT") ?? null, long: pick(dps, "PRESS_LONG") ?? null });
+
+/** Does the datapoint (as the CCU holds it now) have the value that was sent? (a device rounds a level to its own steps) */
 export function matches(dp: Datapoint | undefined, sent: string | boolean): boolean {
   if (!dp || neverReported(dp)) return false;
   const want = String(sent);
-  if (dp.type === "NUMBER" || dp.type === "LIST") return Number.isFinite(Number(dp.value)) && Math.abs(Number(dp.value) - Number(want)) < 1e-6;
+  if (dp.type === "NUMBER" || dp.type === "LIST") return Number.isFinite(Number(dp.value)) && Math.abs(Number(dp.value) - Number(want)) < 0.005;
   return dp.value === want;
 }

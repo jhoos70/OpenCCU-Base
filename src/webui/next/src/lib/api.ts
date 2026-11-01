@@ -156,6 +156,7 @@ export interface Model {
   services: Section<ServiceMsg>;
   devices: Section<Device>;
   rooms: Section<Room>;
+  functions: Section<Room>; // a function (Gewerk) has the same shape as a room: a name and its channels
   sysvars: Section<SysVar>;
 }
 

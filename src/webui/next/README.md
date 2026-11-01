@@ -57,7 +57,13 @@ on any test system, so only an explicit `false` is an error.
 string tables and shows only the useful ones), and yes/no is used for every logic value (not "on"/"off", "open"/"closed").
 Rooms and Functions with live values are the next slice. Internal datapoints and channels are left out, as in the classic UI.
 
-## Favourites: the user's lists, as tiles
+## Favourites, Rooms and Functions: groups of channels, as tiles
+
+Favourites, Rooms and Functions are **one page** (`pages/Collection.tsx`, `components/TileBoard.tsx`): a set of named groups
+of channels, picked as buttons, whose members are shown as tiles. Only where the groups come from differs: the user's
+favourite lists, `GET /api/v2/model?sections=rooms`, `GET /api/v2/model?sections=functions` (a room or function holds
+channels only, sorted by name so that the channels of one device sit together; no variables, no programs, no separators).
+The text below says "list" where it applies to all three.
 
 The classic "Favorites" (Status and control): a user's own lists of channels, system variables and programs (and
 separators). Every user, an administrator too, sees only the lists assigned to them (the lists under their `_USER<id>`
@@ -67,14 +73,20 @@ are **tiles** in list order, a responsive grid (one column on a phone). Each til
 
 | Tile | Channel types | Shows / operates |
 |---|---|---|
-| Heating | `CLIMATECONTROL_RT_TRANSCEIVER` (HM, also the heating groups), `HEATING_CLIMATECONTROL_TRANSCEIVER` (HmIP), `CLIMATECONTROL_*_RECEIVER` | target temperature (- / + in steps of 0.5), actual temperature and humidity, mode chips Auto / Manual / Boost, valve opening |
-| Shutter | `SHUTTER_VIRTUAL_RECEIVER`, `BLIND_VIRTUAL_RECEIVER` | percent open (0 closed, 1 open, 1.01 = unknown shown as open), Open / Stop / Close |
+| Heating | `CLIMATECONTROL_RT_TRANSCEIVER` (HM, also the heating groups), `HEATING_CLIMATECONTROL_TRANSCEIVER` (HmIP), `THERMALCONTROL_TRANSMIT` (a wall thermostat), `CLIMATECONTROL_*_RECEIVER` | target temperature (- / + in steps of 0.5), actual temperature and humidity, mode chips Auto / Manual / Boost, valve opening |
+| Shutter | `SHUTTER_VIRTUAL_RECEIVER`, `BLIND_VIRTUAL_RECEIVER` (+ the `*_TRANSMITTER` feedback channel of the same device) | percent open (0 closed, 1 open, 1.01 = unknown shown as open; the position comes from the feedback channel, the commands go to the control channel), Open / Stop / Close |
 | Switch | `SWITCH`, `SWITCH_TRANSMITTER`, `SWITCH_VIRTUAL_RECEIVER` (+ `POWERMETER`, `ENERGIE_METER_TRANSMITTER` of the same device) | the channels of one device share ONE tile: the state comes from the feedback channel, the control from the channel whose state can be written (HmIP: the virtual receiver), the power from the meter; a meter alone is a read-only power tile |
-| Weather | `WEATHER`, `WEATHER_TRANSMIT` | temperature, humidity; read only |
+| Weather / motion | `WEATHER`, `WEATHER_TRANSMIT`, `MOTION_DETECTOR`, `COND_SWITCH_TRANSMITTER_TEMPERATURE` | temperature, humidity, brightness, motion; read only (a probe that is not connected reports -3276.8, shown as no value) |
+| Window / door | `SHUTTER_CONTACT` | open or closed (read only) |
+| Light | `DIMMER`, `DIMMER_*`, `VIR-LG-*-DIM-CH` (Hue) | level in percent, a slider (one command 1.2 s after it rests), Off / On; a dimmer with a feedback channel is one tile |
+| Button | `KEY`, `VIRTUAL_KEY` | Short press / Long press (sent, nothing to confirm) |
 | Variable | a system variable on the list | a logic variable is a switch, others show the value and open the System variables dialog |
 | Other | any other channel type, and programs | the channel's values as a table behind "Show values" (as in Devices); a program is only named |
 
-`BLIND_WEEK_PROFILE` and maintenance channels are not shown; the page says how many were left out and which.
+`BLIND_WEEK_PROFILE`, maintenance channels, `KEY_TRANSCEIVER` (the events of a wall key: nothing to press), the thermostats'
+`WINDOW_SWITCH_RECEIVER` / `REMOTECONTROL_RECEIVER` and `STATE_RESET_RECEIVER` (no datapoint), and the switch feedback
+channel of a heating actuator (the heating tile says it) are not shown; the page says how many were left out and which.
+Two tiles whose titles would be the same ("Schalter Kaffeemaschine" twice) keep their full channel names.
 
 **A command is "sent", never "done".** A tile says *Sending... waiting for the device* until the CCU holds the value that
 was sent (it reads again every 3 s meanwhile), then *confirmed*; after 30 s it says *No confirmation from the device* and
@@ -96,7 +108,7 @@ chips write `SET_POINT_MODE` 0 and 1 and Boost writes `BOOST_MODE`; that is what
 but **it could not be tried on a real HmIP thermostat** (the classic JS that does it is not in the repository). Nothing
 was seen to succeed on real hardware at all: no interface works on any test system. Party mode, comfort / lowering
 temperature, the week schedule, heating/cooling and the window-open state are not offered. Lists cannot be edited here.
-No dark mode yet (the colour tokens are in `index.css`).
+No dark mode yet (the colour tokens are in `index.css`). Rooms and functions that hold hundreds of channels are not paged (the largest on the test copy, 52 channels, is one request of 0.3 s and 270 KB); the server reads at most 100 channels per request and the page asks in chunks.
 
 ## System log: read, export and clear
 
@@ -235,6 +247,9 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
 - `src/webui/tests/e2e/next_values.py`: the values and the operation of a device with the device list, `/values` and the
   answers to a command **mocked** (no device and no working interface on a test CCU, so a command can only be mocked);
   login and the page are real. Nothing on the CCU is changed.
+- `src/webui/tests/e2e/next_rooms.py`: the Rooms and Functions pages with the device model, the rooms, the functions, the values and
+  the answers to a command **mocked**: window contacts, a wall thermostat, a shutter with its feedback channel, a dimmer,
+  a motion sensor, keys, a socket with its meter, hidden channels, the same-title rule, German, expired session.
 - `src/webui/tests/e2e/next_favourites.py`: the Favourites tiles with `/favourites`, the device model, the channels' values,
   the system variables and the answers to a command **mocked** (the test CCU has no device and no list); the mocked device
   confirms a command a moment after it was sent, one command is never confirmed (the browser clock is fast-forwarded to see

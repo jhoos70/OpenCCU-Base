@@ -13,6 +13,9 @@ const PATHS = {
   sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
   list: "M4 7h16M4 12h10M4 17h16",
   dots: "M5 12h.01M12 12h.01M19 12h.01",
+  contact: "M5 3h14v18H5zM12 3v18M5 12h14",
+  key: "M12 5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 12v8M9 17h6",
+  bulb: "M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z",
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -4,7 +4,7 @@ import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components
 import type { Datapoint } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useCommand } from "@/lib/use-command";
-import { sensorModel, shutterModel, switchModel, thermostatModel, type ModeName } from "@/lib/widgets";
+import { contactModel, dimmerModel, keyModel, sensorModel, shutterModel, switchModel, thermostatModel, type ModeName } from "@/lib/widgets";
 import { Icon } from "./Icon";
 import { CommandStatus, TileShell, type Health } from "./TileShell";
 
@@ -74,7 +74,7 @@ export function ThermostatTile(p: TileProps) {
         </div>
         {m.setpoint?.writable ? <RoundButton label={t("raiseTarget")} icon="plus" onClick={() => step(0.5)} disabled={!can} /> : <span />}
       </div>
-      <Sub>{sub || t("noValueTile")}</Sub>
+      <Sub>{sub || (shown === null ? t("noValueTile") : "")}</Sub>
       {m.modes.length > 0 && (
         <div role="group" aria-label={t("modeGroup")} className="mt-2 flex gap-1.5">
           {m.modes.map((mode) => (
@@ -176,12 +176,94 @@ export function SensorTile(p: TileProps) {
   const { t, lang } = useI18n();
   const m = sensorModel(p.dps);
   const fmt = (v: number) => v.toLocaleString(lang, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  const sub = [m.humidity !== null ? t("humidityPct", { value: Math.round(m.humidity) }) : ""].filter(Boolean).join(" · ");
+  const motionSensor = m.motion !== null || (m.temperature === null && m.brightness !== null);
+  const sub = [m.humidity !== null ? t("humidityPct", { value: Math.round(m.humidity) }) : "", m.brightness !== null ? t("brightnessValue", { value: Math.round(m.brightness) }) : ""].filter(Boolean).join(" · ");
   return (
-    <TileShell kind={t("kindWeather")} icon="sun" title={p.title} health={p.health}>
-      {m.temperature !== null ? <Big value={fmt(m.temperature)} unit="°C" /> : <span className="text-4xl text-[var(--muted-foreground)]">–</span>}
-      <Sub>{sub || t("noValueTile")}</Sub>
+    <TileShell kind={motionSensor ? t("kindMotion") : t("kindWeather")} icon="sun" title={p.title} health={p.health} on={m.motion === true}>
+      {motionSensor ? (
+        <p className="m-0 text-[22px] font-semibold">{m.motion === null ? "–" : m.motion ? t("motionYes") : t("motionNo")}</p>
+      ) : m.temperature !== null ? (
+        <Big value={fmt(m.temperature)} unit="°C" />
+      ) : (
+        <span className="text-4xl text-[var(--muted-foreground)]">–</span>
+      )}
+      <Sub>{sub || (m.temperature === null && m.motion === null ? t("noValueTile") : "")}</Sub>
       <p className="m-0 text-[11px] text-[var(--muted-foreground)]">{t("readOnlyTile")}</p>
+    </TileShell>
+  );
+}
+
+/** A window or door contact: open or closed, nothing to operate. */
+export function ContactTile(p: TileProps) {
+  const { t } = useI18n();
+  const m = contactModel(p.dps);
+  return (
+    <TileShell kind={t("kindContact")} icon="contact" title={p.title} health={p.health} on={m.open === true}>
+      <p className={`m-0 text-[22px] font-semibold ${m.open ? "text-[var(--warn)]" : ""}`}>{m.open === null ? "–" : m.open ? t("contactOpen") : t("contactClosed")}</p>
+      <p className="m-0 text-[11px] text-[var(--muted-foreground)]">{t("readOnlyTile")}</p>
+    </TileShell>
+  );
+}
+
+/** A button (a wall key, a virtual key of the central): pressing it is a command with nothing to confirm. */
+export function KeyTile(p: TileProps) {
+  const { t } = useI18n();
+  const m = keyModel(p.dps);
+  const cmd = useCommand(p.sid, p.dps, p.refresh, p.onExpired, t);
+  const can = p.mayChange && !p.health.unreachable;
+  return (
+    <TileShell kind={t("kindKey")} icon="key" title={p.title} health={p.health} status={<CommandStatus state={cmd.state} retry={cmd.retry} note={p.health.unreachable ? t("unreachableNote") : undefined} />}>
+      <div className="mt-1 grid grid-cols-2 gap-1.5">
+        {m.short && (
+          <TileButton disabled={!can || !m.short.writable} onClick={() => void cmd.run(m.short!, true, t("pressShort"))}>
+            {t("pressShort")}
+          </TileButton>
+        )}
+        {m.long && (
+          <TileButton disabled={!can || !m.long.writable} onClick={() => void cmd.run(m.long!, true, t("pressLong"))}>
+            {t("pressLong")}
+          </TileButton>
+        )}
+      </div>
+    </TileShell>
+  );
+}
+
+/** A dimmable light: the level in percent and a slider; the command goes out when the slider has rested. */
+export function DimmerTile(p: TileProps) {
+  const { t } = useI18n();
+  const m = dimmerModel(p.dps);
+  const cmd = useCommand(p.sid, p.dps, p.refresh, p.onExpired, t);
+  const [draft, setDraft] = React.useState<number | null>(null);
+  const timer = React.useRef<number | undefined>(undefined);
+  React.useEffect(() => () => window.clearTimeout(timer.current), []);
+  React.useEffect(() => {
+    if (cmd.state.phase === "ok" || cmd.state.phase === "error") setDraft(null);
+  }, [cmd.state.phase]);
+  const can = p.mayChange && !p.health.unreachable && m.operable;
+  const shown = draft ?? m.percent;
+  const set = (v: number) => {
+    const lvl = m.level;
+    if (!lvl) return;
+    setDraft(v);
+    window.clearTimeout(timer.current);
+    const value = (v / 100).toFixed(2);
+    timer.current = window.setTimeout(() => void cmd.run(lvl, value, t("levelWhat", { value: v }), { dp: lvl, value }), DEBOUNCE_MS);
+  };
+  return (
+    <TileShell kind={t("kindLight")} icon="bulb" title={p.title} health={p.health} on={(shown ?? 0) > 0} status={<CommandStatus state={cmd.state} retry={cmd.retry} note={p.health.unreachable ? t("unreachableNote") : undefined} />}>
+      {shown !== null ? <Big value={String(shown)} unit="%" /> : <span className="text-4xl text-[var(--muted-foreground)]">–</span>}
+      <input type="range" min={0} max={100} step={5} value={shown ?? 0} aria-label={`${t("lightLevel")}: ${p.title}`} disabled={!can} onChange={(e) => set(Number(e.target.value))} className="my-1 w-full accent-[var(--accent)]" />
+      {p.mayChange && (
+        <div className="grid grid-cols-2 gap-1.5">
+          <TileButton disabled={!can} onClick={() => set(0)}>
+            {t("tileOff")}
+          </TileButton>
+          <TileButton disabled={!can} onClick={() => set(100)}>
+            {t("tileOn")}
+          </TileButton>
+        </div>
+      )}
     </TileShell>
   );
 }
