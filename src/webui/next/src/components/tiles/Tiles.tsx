@@ -29,12 +29,12 @@ const Big = ({ value, unit }: { value: string; unit?: string }) => (
 );
 const Sub = ({ children }: { children: React.ReactNode }) => <p className="m-0 text-[13px] text-[var(--muted-foreground)]">{children}</p>;
 const RoundButton = ({ label, icon, onClick, disabled }: { label: string; icon: "minus" | "plus"; onClick: () => void; disabled: boolean }) => (
-  <button type="button" aria-label={label} disabled={disabled} onClick={onClick} className="grid h-11 w-11 place-items-center rounded-full border border-[var(--border)] bg-white hover:border-[var(--accent)] active:bg-[var(--accent-soft)] disabled:opacity-40">
+  <button type="button" aria-label={label} disabled={disabled} onClick={onClick} className="grid h-11 w-11 place-items-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--accent)] active:bg-[var(--accent-soft)] disabled:opacity-40">
     <Icon name={icon} className="h-5 w-5" />
   </button>
 );
 const TileButton = ({ children, onClick, disabled, label }: { children: React.ReactNode; onClick: () => void; disabled: boolean; label?: string }) => (
-  <button type="button" aria-label={label} disabled={disabled} onClick={onClick} className="inline-flex h-[38px] min-w-0 items-center justify-center gap-1 rounded-[10px] border border-[var(--border)] bg-white px-1 text-[13px] hover:border-[var(--accent)] disabled:opacity-40">
+  <button type="button" aria-label={label} disabled={disabled} onClick={onClick} className="inline-flex h-[38px] min-w-0 items-center justify-center gap-1 rounded-[10px] border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] px-1 text-[13px] hover:border-[var(--accent)] disabled:opacity-40">
     {children}
   </button>
 );
@@ -84,7 +84,7 @@ export function ThermostatTile(p: TileProps) {
               aria-pressed={m.mode === mode.name}
               disabled={!can}
               onClick={() => void cmd.run(mode.dp, mode.value, modeLabel[mode.name], mode.expect)}
-              className={`h-8 flex-1 rounded-lg border text-[13px] disabled:opacity-40 ${m.mode === mode.name ? "border-[var(--accent)] bg-[var(--accent-soft)] font-semibold text-[var(--accent)]" : "border-[var(--border)] bg-white hover:border-[var(--accent)]"}`}
+              className={`h-8 flex-1 rounded-lg border text-[13px] disabled:opacity-40 ${m.mode === mode.name ? "border-[var(--accent)] bg-[var(--accent-soft)] font-semibold text-[var(--accent)]" : "border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--accent)]"}`}
             >
               {modeLabel[mode.name]}
             </button>

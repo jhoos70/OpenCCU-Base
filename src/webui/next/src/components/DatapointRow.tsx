@@ -30,7 +30,7 @@ function Field({ dp, busy, onSubmit, onCancel }: { dp: Datapoint; busy: boolean;
           aria-label={dp.param}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          className="h-9 rounded-md border border-[var(--border)] bg-white px-2 text-sm"
+          className="h-9 rounded-md border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] px-2 text-sm"
         >
           {input === "" && <option value="" />}
           {listEntries(dp).map((label, i) => (

@@ -27,6 +27,7 @@ def main():
 
     def sign_in(pg):
         pg.goto(a.base + "/webui/next/"); pg.wait_for_selector("#user")
+        pg.evaluate("localStorage.removeItem('openccu.next.lang')")
         pg.fill("#user", a.user); pg.fill("#password", a.password); pg.keyboard.press("Enter")
         pg.wait_for_selector("[aria-label='Account menu'], [role=alert]")
         if pg.get_by_role("alert").count():
@@ -49,7 +50,7 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        ctx = browser.new_context(viewport={"width": 1100, "height": 800})
+        ctx = browser.new_context(locale="en-US", viewport={"width": 1100, "height": 800})
         pg = ctx.new_page()
         console, sids = [], []
 

@@ -187,10 +187,10 @@ export function FavouriteListDialog({
   return (
     <Dialog.Root open onOpenChange={(open) => !open && !busy && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg bg-white p-6 shadow-lg"
+          className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg bg-[var(--card)] text-[var(--foreground)] p-6 shadow-lg border border-[var(--border)]"
         >
           <form onSubmit={submit} className="space-y-4">
             <Dialog.Title className="text-lg font-semibold">{initial.id ? t("editListTitle") : t("newListTitle")}</Dialog.Title>
@@ -288,7 +288,7 @@ export function FavouriteListDialog({
                       type="button"
                       aria-pressed={pickerKind === k}
                       onClick={() => setPickerKind(k)}
-                      className={`h-7 rounded px-2.5 text-xs ${pickerKind === k ? "bg-[var(--primary)] text-white" : "border border-[var(--border)] bg-white"}`}
+                      className={`h-7 rounded px-2.5 text-xs ${pickerKind === k ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)]"}`}
                     >
                       {label}
                     </button>

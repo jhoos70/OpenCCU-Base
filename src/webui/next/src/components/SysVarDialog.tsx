@@ -40,8 +40,8 @@ export function SysVarDialog({ sv, sid, strings, onClose, onChanged, onExpired }
   return (
     <Dialog.Root open onOpenChange={(open) => !open && !busy && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-        <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-50 w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-lg">
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs" />
+        <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-50 w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-[var(--card)] text-[var(--foreground)] p-6 shadow-lg border border-[var(--border)]">
           <form onSubmit={submit} className="space-y-4">
             <div>
               <Dialog.Title className="text-lg font-semibold">{t("changeTitle")}</Dialog.Title>
@@ -50,7 +50,7 @@ export function SysVarDialog({ sv, sid, strings, onClose, onChanged, onExpired }
             <div className="space-y-1.5">
               <Label htmlFor={inputId}>{t("newValue")}</Label>
               {sv.type === "LOGIC" || sv.type === "LIST" ? (
-                <select id={inputId} value={input} onChange={(e) => setInput(e.target.value)} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                <select id={inputId} value={input} onChange={(e) => setInput(e.target.value)} className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] px-3 text-sm">
                   {options.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}

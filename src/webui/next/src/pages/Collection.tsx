@@ -153,7 +153,7 @@ export default function Collection({ kind, sid, onExpired }: { kind: CollectionK
                   aria-pressed={g.id === group?.id}
                   aria-label={t("openList", { name: g.name })}
                   onClick={() => setPicked(g.id)}
-                  className={`h-9 rounded-full border px-3.5 text-[15px] ${g.id === group?.id ? "border-[var(--primary)] bg-[var(--primary)] text-white" : "border-[var(--border)] bg-white hover:border-[var(--accent)]"}`}
+                  className={`h-9 rounded-full border px-3.5 text-[15px] ${g.id === group?.id ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--accent)]"}`}
                 >
                   {text(g.name, strings)}
                 </button>

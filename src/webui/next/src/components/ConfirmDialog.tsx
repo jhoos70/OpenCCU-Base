@@ -21,8 +21,8 @@ export function ConfirmDialog({ title, message, confirmLabel, tone = "destructiv
   return (
     <Dialog.Root open onOpenChange={(open) => !open && !busy && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-        <Dialog.Content aria-describedby="confirm-message" className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-lg">
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs" />
+        <Dialog.Content aria-describedby="confirm-message" className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-[var(--card)] text-[var(--foreground)] p-6 shadow-lg border border-[var(--border)]">
           <div className="space-y-4">
             <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
             <p id="confirm-message" className="text-sm">

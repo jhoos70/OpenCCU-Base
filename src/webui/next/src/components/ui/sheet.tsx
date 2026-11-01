@@ -11,8 +11,8 @@ export const SheetTitle = D.Title;
 export function SheetContent({ className, children, ...p }: React.ComponentProps<typeof D.Content>) {
   return (
     <D.Portal>
-      <D.Overlay className="fixed inset-0 z-40 bg-black/40" />
-      <D.Content aria-describedby={undefined} className={cn("fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] overflow-y-auto bg-white p-4 shadow-lg", className)} {...p}>
+      <D.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs" />
+      <D.Content aria-describedby={undefined} className={cn("fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] overflow-y-auto bg-[var(--card)] text-[var(--foreground)] p-4 shadow-lg", className)} {...p}>
         {children}
       </D.Content>
     </D.Portal>

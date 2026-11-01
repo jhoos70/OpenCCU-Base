@@ -8,8 +8,11 @@ import { MessagesProvider } from "@/lib/use-messages";
 import { useProfile } from "@/lib/use-profile";
 import { useRoute } from "@/lib/use-route";
 import { AppBar } from "@/components/AppBar";
+import { AppSidebar } from "@/components/AppSidebar";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { NavList } from "@/components/NavList";
+import { OpenCCULogo } from "@/components/OpenCCULogo";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -49,9 +52,12 @@ function LoginForm({ onLogin }: { onLogin: (s: Stored) => void }) {
   return (
     <Card className="w-full max-w-sm">
       <form onSubmit={submit} className="space-y-4">
-        <div>
-          <CardTitle>{t("signIn")}</CardTitle>
-          <CardDescription>{t("preview")}</CardDescription>
+        <div className="flex items-center gap-3 pb-1">
+          <OpenCCULogo className="size-10" />
+          <div>
+            <CardTitle>{t("signIn")}</CardTitle>
+            <CardDescription>{t("preview")}</CardDescription>
+          </div>
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="user">{t("userName")}</Label>
@@ -99,29 +105,65 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
   }
 
   const Page = PAGES[route];
+  const [collapsed, setCollapsed] = React.useState<boolean>(() => {
+    try {
+      return localStorage.getItem("openccu.next.sidebar.collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapsed = React.useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("openccu.next.sidebar.collapsed", String(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <ProfileContext.Provider value={profile}>
-    <MessagesProvider sid={session.sid} enabled={indicators} onExpired={onLogout}>
-      <div className="min-h-screen">
-        <AppBar profile={profile} nav={nav} current={route} classicHref={classicHref} onSignOut={signOut} busy={busy} />
-        <div className="mx-auto flex max-w-6xl gap-6 p-4">
+      <MessagesProvider sid={session.sid} enabled={indicators} onExpired={onLogout}>
+        <div className="flex min-h-screen bg-[var(--background)]">
           {nav.groups.length > 0 && (
-            <aside className="hidden w-56 shrink-0 md:block">
-              <NavList nav={nav} current={route} classicHref={classicHref} />
-            </aside>
+            <AppSidebar
+              nav={nav}
+              current={route}
+              classicHref={classicHref}
+              collapsed={collapsed}
+              onToggleCollapse={toggleCollapsed}
+            />
           )}
-          <main className="min-w-0 flex-1">
-            {state.status === "loading" && <p className="text-sm text-[var(--muted-foreground)]">{t("loading")}</p>}
-            {state.status === "error" && (
-              <p role="alert" className="text-sm text-[var(--destructive)]">
-                {state.message}
-              </p>
-            )}
-            {state.status === "ready" && (Page ? <Page sid={session.sid} onExpired={onLogout} /> : <p className="text-sm text-[var(--muted-foreground)]">{t("noAccess")}</p>)}
-          </main>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <AppBar
+              profile={profile}
+              nav={nav}
+              current={route}
+              classicHref={classicHref}
+              onSignOut={signOut}
+              busy={busy}
+              collapsed={collapsed}
+              onToggleCollapse={toggleCollapsed}
+            />
+            <main className="min-w-0 flex-1 p-4 md:p-6 lg:p-8">
+              <div className="mx-auto max-w-7xl">
+                {state.status === "loading" && <p className="text-sm text-[var(--muted-foreground)]">{t("loading")}</p>}
+                {state.status === "error" && (
+                  <p role="alert" className="text-sm text-[var(--destructive)]">
+                    {state.message}
+                  </p>
+                )}
+                {state.status === "ready" &&
+                  (Page ? <Page sid={session.sid} onExpired={onLogout} /> : <p className="text-sm text-[var(--muted-foreground)]">{t("noAccess")}</p>)}
+              </div>
+            </main>
+          </div>
         </div>
-      </div>
-    </MessagesProvider>
+      </MessagesProvider>
     </ProfileContext.Provider>
   );
 }
@@ -146,7 +188,10 @@ export default function App() {
   if (session) return <Shell session={session} onLogout={leave} />;
   return (
     <main className="relative flex min-h-screen items-center justify-center p-4">
-      <LanguageSwitch className="absolute right-4 top-4 text-[var(--primary)]" />
+      <div className="absolute right-4 top-4 flex items-center gap-2">
+        <ThemeToggle className="text-[var(--foreground)]" />
+        <LanguageSwitch className="text-[var(--primary)]" />
+      </div>
       <LoginForm onLogin={(s) => (saveSession(s), setSession(s))} />
     </main>
   );

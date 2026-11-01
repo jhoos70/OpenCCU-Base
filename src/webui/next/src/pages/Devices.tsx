@@ -1,31 +1,63 @@
 import * as React from "react";
+import {
+  type ColumnDef,
+  type FilterFn,
+  type SortingState,
+  type VisibilityState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DataTableColumnHeader, DataTableViewOptions } from "@/components/ui/data-table";
 import { DeviceValues } from "@/components/DeviceValues";
 import { TileBoard } from "@/components/TileBoard";
 import { HealthBadges, type Health } from "@/components/tiles/TileShell";
 import { getChannelValues, type Datapoint, type Device, type FavouriteItem } from "@/lib/api";
-import { filterDevices, healthChannelIds, sortByName } from "@/lib/devices";
+import { deviceIcon } from "@/lib/ccu-strings";
+import { healthChannelIds } from "@/lib/devices";
 import { text } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { useCurrentProfile } from "@/lib/profile-context";
-import { useCcuStrings } from "@/lib/use-ccu-strings";
+import { useCcuStrings, useDeviceIcons } from "@/lib/use-ccu-strings";
 import { useModel } from "@/lib/use-model";
 import { usePolled } from "@/lib/use-polled";
 import { healthOf, type ChannelInfo } from "@/lib/widgets";
 import { Status } from "./Status";
 
 const HEALTH_MS = 10_000;
+const STORAGE_KEY = "openccu.next.devices.columns";
 
 /** An opened device: its channels as tiles (as in Rooms), and the technical tables one click away. */
-function DeviceDetails({ device, sid, mayChange, strings, onExpired }: { device: Device; sid: string; mayChange: boolean; strings: Record<string, string>; onExpired: () => void }) {
+function DeviceDetails({
+  device,
+  sid,
+  mayChange,
+  strings,
+  onExpired,
+}: {
+  device: Device;
+  sid: string;
+  mayChange: boolean;
+  strings: Record<string, string>;
+  onExpired: () => void;
+}) {
   const { t } = useI18n();
   const [technical, setTechnical] = React.useState(false);
   const channels = React.useMemo(() => [...device.channels].sort((a, b) => a.index - b.index), [device]);
   const items = React.useMemo<FavouriteItem[]>(() => channels.map((c) => ({ id: c.id, type: "CHANNEL", name: c.name })), [channels]);
-  const info = React.useMemo(() => new Map<string, ChannelInfo>(channels.map((c) => [c.id, { id: c.id, name: c.name, channelType: c.channelType, deviceId: device.id, deviceAddress: device.address }])), [channels, device]);
+  const info = React.useMemo(
+    () =>
+      new Map<string, ChannelInfo>(
+        channels.map((c) => [c.id, { id: c.id, name: c.name, channelType: c.channelType, deviceId: device.id, deviceAddress: device.address }]),
+      ),
+    [channels, device],
+  );
   return (
     <>
       <TileBoard items={items} info={info} sid={sid} mayChange={mayChange} strings={strings} refreshSignal={0} onExpired={onExpired} />
@@ -59,44 +91,28 @@ function DeviceDetails({ device, sid, mayChange, strings, onExpired }: { device:
   );
 }
 
-function DeviceRows({ device, description, health, open, onToggle, sid, mayChange, strings, onExpired }: { device: Device; description: string; health: Health; open: boolean; onToggle: () => void; sid: string; mayChange: boolean; strings: Record<string, string>; onExpired: () => void }) {
-  const { t } = useI18n();
-  const channels = device.channels;
-  return (
-    <>
-      <TableRow>
-        <TableCell>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="flex items-start gap-2 text-left"
-              aria-expanded={open}
-              aria-label={t(open ? "hideChannels" : "showChannels", { name: device.name })}
-              onClick={onToggle}
-            >
-              <span aria-hidden="true" className="w-3 text-[var(--muted-foreground)]">{open ? "▾" : "▸"}</span>
-              <span>{device.name}</span>
-            </button>
-            <HealthBadges health={health} />
-          </div>
-        </TableCell>
-        <TableCell>
-          <div>{device.type}</div>
-          {description && <div className="text-xs text-[var(--muted-foreground)]">{description}</div>}
-        </TableCell>
-        <TableCell className="hidden sm:table-cell">{device.address}</TableCell>
-        <TableCell className="hidden md:table-cell">{device.interface}</TableCell>
-        <TableCell className="text-right">{channels.length}</TableCell>
-      </TableRow>
-      {open && (
-        <TableRow>
-          <TableCell colSpan={5} className="bg-[var(--background)]">
-            <DeviceDetails device={device} sid={sid} mayChange={mayChange} strings={strings} onExpired={onExpired} />
-          </TableCell>
-        </TableRow>
-      )}
-    </>
-  );
+function formatLastUpdated(ts: string | undefined, lang: string): string {
+  if (!ts || ts.startsWith("1970") || ts.trim() === "") return "–";
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(ts);
+  if (!m) return ts;
+  const [, y, mo, d, h, mi, s] = m.map(Number);
+  return new Date(y, mo - 1, d, h, mi, s).toLocaleString(lang, { dateStyle: "short", timeStyle: "medium" });
+}
+
+interface DeviceTableRow {
+  id: string;
+  device: Device;
+  name: string;
+  type: string;
+  description: string;
+  icon?: string;
+  health: Health;
+  rooms: string[];
+  funcs: string[];
+  lastUpdated?: string;
+  address: string;
+  interface: string;
+  channelCount: number;
 }
 
 export default function Devices({ sid, onExpired }: { sid: string; onExpired: () => void }) {
@@ -105,10 +121,61 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
   // a guest only looks, as in the classic UI
   const mayChange = profile?.level === "USER" || profile?.level === "ADMIN";
   const state = useModel("devices", sid, onExpired);
+  const roomsState = useModel("rooms", sid, onExpired);
+  const functionsState = useModel("functions", sid, onExpired);
   const strings = useCcuStrings("deviceDescription", "extension", "stringtable");
+  const icons = useDeviceIcons();
+
   const [query, setQuery] = React.useState("");
   const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
+  const [sorting, setSorting] = React.useState<SortingState>([{ id: "name", desc: false }]);
+  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return {};
+  });
+
+  const handleColumnVisibilityChange = React.useCallback(
+    (updaterOrValue: VisibilityState | ((old: VisibilityState) => VisibilityState)) => {
+      setColumnVisibility((prev) => {
+        const next = typeof updaterOrValue === "function" ? updaterOrValue(prev) : updaterOrValue;
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
   const describe = React.useCallback((d: Device) => strings[d.type] ?? "", [strings]);
+
+  const roomMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    if (roomsState.status === "ready") {
+      for (const r of roomsState.data.items) {
+        map.set(r.id, text(r.name, strings));
+      }
+    }
+    return map;
+  }, [roomsState, strings]);
+
+  const funcMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    if (functionsState.status === "ready") {
+      for (const f of functionsState.data.items) {
+        map.set(f.id, text(f.name, strings));
+      }
+    }
+    return map;
+  }, [functionsState, strings]);
+
   const chIds = React.useMemo(() => (state.status === "ready" ? healthChannelIds(state.data.items) : []), [state]);
   const chKey = chIds.join(",");
   const healthValues = usePolled(
@@ -117,12 +184,209 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
     onExpired,
   );
   const healthDps = healthValues.data ?? [];
-  const toggle = (id: string) =>
+
+  const toggle = React.useCallback((id: string) => {
     setOpen((prev) => {
       const next = new Set(prev);
       if (!next.delete(id)) next.add(id);
       return next;
     });
+  }, []);
+
+  // Prepare table data rows
+  const tableData = React.useMemo<DeviceTableRow[]>(() => {
+    if (state.status !== "ready") return [];
+    return state.data.items.map((d) => ({
+      id: d.id,
+      device: d,
+      name: text(d.name, strings),
+      type: d.type,
+      description: describe(d),
+      icon: deviceIcon(d.type, icons),
+      health: healthOf(healthDps, d.address),
+      rooms: (d.roomIds ?? []).map((id) => roomMap.get(id)).filter(Boolean) as string[],
+      funcs: (d.funcIds ?? []).map((id) => funcMap.get(id)).filter(Boolean) as string[],
+      lastUpdated: d.lastUpdated,
+      address: d.address,
+      interface: d.interface,
+      channelCount: d.channels.length,
+    }));
+  }, [state, strings, describe, icons, healthDps, roomMap, funcMap]);
+
+  // Column definitions
+  const columns = React.useMemo<ColumnDef<DeviceTableRow>[]>(() => {
+    return [
+      {
+        id: "name",
+        accessorKey: "name",
+        header: ({ column }) => <DataTableColumnHeader column={column} title={t("name")} />,
+        cell: ({ row }) => {
+          const d = row.original;
+          const isOpen = open.has(d.id);
+          return (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="flex items-center gap-2 text-left"
+                aria-expanded={isOpen}
+                aria-label={t(isOpen ? "hideChannels" : "showChannels", { name: d.name })}
+                onClick={() => toggle(d.id)}
+              >
+                <span aria-hidden="true" className="w-3 text-[var(--muted-foreground)]">
+                  {isOpen ? "▾" : "▸"}
+                </span>
+                {d.icon && (
+                  <img src={d.icon} alt="" aria-hidden="true" loading="lazy" className="h-9 w-9 shrink-0 rounded bg-white object-contain p-0.5" />
+                )}
+                <span>{d.name}</span>
+              </button>
+              <HealthBadges health={d.health} />
+            </div>
+          );
+        },
+        enableHiding: false,
+        sortingFn: (rowA, rowB, columnId) => {
+          const valA = String(rowA.getValue(columnId) ?? "");
+          const valB = String(rowB.getValue(columnId) ?? "");
+          return valA.localeCompare(valB, lang, { numeric: true, sensitivity: "base" });
+        },
+      },
+      {
+        id: "type",
+        accessorKey: "type",
+        header: ({ column }) => <DataTableColumnHeader column={column} title={t("type")} />,
+        cell: ({ row }) => {
+          const d = row.original;
+          return (
+            <div>
+              <div>{d.type}</div>
+              {d.description && <div className="text-xs text-[var(--muted-foreground)]">{d.description}</div>}
+            </div>
+          );
+        },
+        enableHiding: true,
+      },
+      {
+        id: "rooms",
+        accessorFn: (row) => row.rooms.join(", "),
+        header: ({ column }) => <DataTableColumnHeader column={column} title={t("rooms")} />,
+        cell: ({ row }) => {
+          const rooms = row.original.rooms;
+          if (rooms.length === 0) return <span className="text-[var(--muted-foreground)]">–</span>;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {rooms.map((r) => (
+                <span key={r} className="inline-flex items-center rounded bg-[var(--muted)] px-1.5 py-0.5 text-xs font-medium text-[var(--foreground)]">
+                  {r}
+                </span>
+              ))}
+            </div>
+          );
+        },
+        meta: { className: "hidden sm:table-cell" },
+        enableHiding: true,
+      },
+      {
+        id: "functions",
+        accessorFn: (row) => row.funcs.join(", "),
+        header: ({ column }) => <DataTableColumnHeader column={column} title={t("functions")} />,
+        cell: ({ row }) => {
+          const funcs = row.original.funcs;
+          if (funcs.length === 0) return <span className="text-[var(--muted-foreground)]">–</span>;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {funcs.map((f) => (
+                <span key={f} className="inline-flex items-center rounded bg-[var(--muted)] px-1.5 py-0.5 text-xs font-medium text-[var(--foreground)]">
+                  {f}
+                </span>
+              ))}
+            </div>
+          );
+        },
+        meta: { className: "hidden md:table-cell" },
+        enableHiding: true,
+      },
+      {
+        id: "lastUpdated",
+        accessorKey: "lastUpdated",
+        header: ({ column }) => <DataTableColumnHeader column={column} title={t("lastUpdated")} />,
+        cell: ({ row }) => (
+          <span className="text-xs text-[var(--muted-foreground)] whitespace-nowrap">
+            {formatLastUpdated(row.original.lastUpdated, lang)}
+          </span>
+        ),
+        meta: { className: "hidden lg:table-cell" },
+        enableHiding: true,
+      },
+      {
+        id: "address",
+        accessorKey: "address",
+        header: ({ column }) => <DataTableColumnHeader column={column} title={t("address")} />,
+        cell: ({ row }) => row.original.address,
+        meta: { className: "hidden xl:table-cell" },
+        enableHiding: true,
+      },
+      {
+        id: "interface",
+        accessorKey: "interface",
+        header: ({ column }) => <DataTableColumnHeader column={column} title={t("interface")} />,
+        cell: ({ row }) => row.original.interface,
+        meta: { className: "hidden 2xl:table-cell" },
+        enableHiding: true,
+      },
+      {
+        id: "channels",
+        accessorKey: "channelCount",
+        header: ({ column }) => (
+          <div className="text-right">
+            <DataTableColumnHeader column={column} title={t("channels")} className="justify-end" />
+          </div>
+        ),
+        cell: ({ row }) => <div className="text-right">{row.original.channelCount}</div>,
+        meta: { className: "text-right" },
+        enableHiding: true,
+      },
+    ];
+  }, [t, lang, open, toggle]);
+
+  const columnLabels = React.useMemo<Record<string, string>>(
+    () => ({
+      name: t("name"),
+      type: t("type"),
+      rooms: t("rooms"),
+      functions: t("functions"),
+      lastUpdated: t("lastUpdated"),
+      address: t("address"),
+      interface: t("interface"),
+      channels: t("channels"),
+    }),
+    [t],
+  );
+
+  const globalFilterFn = React.useCallback<FilterFn<DeviceTableRow>>((row, _columnId, filterValue: string) => {
+    const words = filterValue.toLowerCase().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return true;
+    const d = row.original;
+    const hay = `${d.name} ${d.type} ${d.description} ${d.address} ${d.interface} ${d.rooms.join(" ")} ${d.funcs.join(" ")}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  }, []);
+
+  const table = useReactTable({
+    data: tableData,
+    columns,
+    state: {
+      sorting,
+      globalFilter: query,
+      columnVisibility,
+    },
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setQuery,
+    onColumnVisibilityChange: handleColumnVisibilityChange,
+    globalFilterFn,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+  });
 
   return (
     <Card className="space-y-4">
@@ -133,30 +397,67 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
       <Status state={state}>
         {(devices) => {
           if (devices.items.length === 0) return <p className="text-sm text-[var(--muted-foreground)]">{t("noDevices")}</p>;
-          const shown = sortByName(filterDevices(devices.items, query, describe), lang);
+          const rows = table.getRowModel().rows;
           return (
             <>
-              <div className="space-y-1.5">
-                <Label htmlFor="device-filter">{t("filter")}</Label>
-                <Input id="device-filter" type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div className="flex-1 max-w-md space-y-1.5">
+                  <Label htmlFor="device-filter">{t("filter")}</Label>
+                  <Input id="device-filter" type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <DataTableViewOptions table={table} columnLabels={columnLabels} />
+                </div>
               </div>
-              {shown.length === 0 ? (
+              {rows.length === 0 ? (
                 <p className="text-sm text-[var(--muted-foreground)]">{t("noMatch")}</p>
               ) : (
                 <Table>
                   <TableHead>
-                    <TableRow>
-                      <TableHeader>{t("name")}</TableHeader>
-                      <TableHeader>{t("type")}</TableHeader>
-                      <TableHeader className="hidden sm:table-cell">{t("address")}</TableHeader>
-                      <TableHeader className="hidden md:table-cell">{t("interface")}</TableHeader>
-                      <TableHeader className="text-right">{t("channels")}</TableHeader>
-                    </TableRow>
+                    {table.getHeaderGroups().map((headerGroup) => (
+                      <TableRow key={headerGroup.id}>
+                        {headerGroup.headers.map((header) => {
+                          const metaClass = (header.column.columnDef.meta as { className?: string } | undefined)?.className;
+                          return (
+                            <TableHeader key={header.id} className={metaClass}>
+                              {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                            </TableHeader>
+                          );
+                        })}
+                      </TableRow>
+                    ))}
                   </TableHead>
                   <tbody>
-                    {shown.map((d) => (
-                      <DeviceRows key={d.id} device={{ ...d, name: text(d.name, strings) }} description={describe(d)} health={healthOf(healthDps, d.address)} open={open.has(d.id)} onToggle={() => toggle(d.id)} sid={sid} mayChange={mayChange} strings={strings} onExpired={onExpired} />
-                    ))}
+                    {rows.map((row) => {
+                      const isOpen = open.has(row.original.id);
+                      return (
+                        <React.Fragment key={row.original.id}>
+                          <TableRow>
+                            {row.getVisibleCells().map((cell) => {
+                              const metaClass = (cell.column.columnDef.meta as { className?: string } | undefined)?.className;
+                              return (
+                                <TableCell key={cell.id} className={metaClass}>
+                                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
+                          {isOpen && (
+                            <TableRow>
+                              <TableCell colSpan={row.getVisibleCells().length} className="bg-[var(--background)]">
+                                <DeviceDetails
+                                  device={row.original.device}
+                                  sid={sid}
+                                  mayChange={mayChange}
+                                  strings={strings}
+                                  onExpired={onExpired}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </Table>
               )}

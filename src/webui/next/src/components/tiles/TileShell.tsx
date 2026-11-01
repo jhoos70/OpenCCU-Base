@@ -35,7 +35,7 @@ export function TileShell({ kind, icon, title, health, on = false, children, sta
   return (
     <article
       aria-label={title}
-      className={`flex min-w-0 flex-col gap-1 rounded-2xl border p-3.5 shadow-sm transition-colors ${on ? "border-[var(--accent)] bg-[var(--tile-on)]" : "border-[var(--border)] bg-white"} ${health?.unreachable ? "opacity-75" : ""}`}
+      className={`flex min-w-0 flex-col gap-1 rounded-2xl border p-3.5 shadow-sm transition-colors ${on ? "border-[var(--accent)] bg-[var(--tile-on)]" : "border-[var(--border)] bg-[var(--card)]"} ${health?.unreachable ? "opacity-75" : ""}`}
     >
       <header className="flex min-h-[22px] flex-wrap items-center justify-between gap-x-1.5 gap-y-1">
         <span className="inline-flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">

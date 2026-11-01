@@ -31,7 +31,7 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        pg = browser.new_page(viewport={"width": 1280, "height": 900})
+        pg = browser.new_page(locale="en-US", viewport={"width": 1280, "height": 900})
         pg.on("console", lambda m: m.type == "error" and not any(n in m.text for n in NOISE) and console.append(m.text[:160]))
         pg.on("pageerror", lambda e: console.append("pageerror: " + str(e)[:160]))
         try:
