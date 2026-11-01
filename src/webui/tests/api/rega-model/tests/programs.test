@@ -96,10 +96,10 @@ test programs-7 {only POST is allowed (405 with Allow: POST); without a session 
   lappend out [status $n] [llength [dict get $n rega_calls]]
 } -result {405/POST 405/POST 405/POST 401 0}
 
-test programs-8 {both scripts look the id up in the program collection and the id is a script variable, never code} -body {
+test programs-8 {all three scripts (read, run, switch) look the id up in the program collection and the id is a script variable, never code} -body {
   set fd [open [file join $gen rega-model v2 programs.tcl] r]; set c [read $fd]; close $fd
   list [regexp -all {foreach\(i, dom.GetObject\(ID_PROGRAMS\).EnumIDs\(\)\)} $c] [regexp {dom.GetObject\(\$} $c] [regexp -all {ProgramExecute\(\)} $c]
-} -result {2 0 1}
+} -result {3 0 1}
 
 proc modelprograms {extra} {
   set rec [concat {ID 1053 NAME Evening TIME {2026-10-12 21:00:00} ACTIVE true INTERNAL false} $extra]
@@ -114,5 +114,46 @@ test programs-9 {the model's programs carry the description, whether users may o
   list [regexp {"lastExecuteTime":"2026-10-12 21:00:00","description":"Licht am Abend","isOperable":true,"isCopy":false\}} $a] \
        [regexp {"isOperable":false,"isCopy":true\}} $b] [regexp {"description":"","isOperable":false,"isCopy":false\}} $c]
 } -result {1 1 1}
+
+set SETACT {*newActive*}
+proc setactive {found body args} {
+  array set o [list -sessions $::ADMIN -out {ACTIVE {false}}]
+  array set o $args
+  return [post $body -sessions $o(-sessions) -rega [list [list $::READ $found] [list $::SETACT $o(-out)]]]
+}
+
+test programs-10 {an administrator switches a program off and on: the flag as ReGa holds it comes back} -body {
+  set a [setactive $::FOUND {{"id":"7","active":false}}]
+  set b [setactive $::FOUND {{"id":"7","active":true}} -out {ACTIVE {true}}]
+  list [status $a] [body $a] [status $b] [body $b] [regexp {var newActive = "false";} [scripts $a]] [regexp {var newActive = "true";} [scripts $b]]
+} -result {200 {{"id":"7","isActive":false}} 200 {{"id":"7","isActive":true}} 1 1}
+
+test programs-11 {switching is the editor's job: a user and a guest are refused (HTTP 403, administrator needed) and nothing is written} -body {
+  set a [setactive $::FOUND {{"id":"7","active":false}} -sessions $::USER]
+  set b [setactive $::FOUND {{"id":"7","active":false}} -sessions $::GUEST]
+  list [err $a] [regexp {newActive} [scripts $a]] [status $b] [regexp {newActive} [scripts $b]]
+} -result {{403 400 {access denied (\"ADMIN\" needed, session level 2)}} 0 403 0}
+
+test programs-12 {exactly one of execute and active; active must be a boolean; a wrong body writes nothing} -body {
+  set out {}
+  foreach json {{{"id":"7","active":false,"execute":true}} {{"id":"7","active":"yes"}} {{"id":"7","active":1}} {{"id":"7","active":null}}} {
+    set r [setactive $::FOUND $json]
+    lappend out [err $r] [regexp {newActive} [scripts $r]]
+  }
+  set out
+} -result [list {422 403 {invalid argument (execute)}} 0 {422 403 {invalid argument (active)}} 0 {422 403 {invalid argument (active)}} 0 {422 403 {invalid argument (active)}} 0]
+
+test programs-13 {an internal program is not switched (HTTP 403), an unknown id or a copy is 404, as for a run} -body {
+  set a [setactive {FOUND {true} INTERNAL {true} COPY {false} FULL {true}} {{"id":"7","active":false}}]
+  set b [post {{"id":"9999","active":false}} -rega [list [list $::READ {}]]]
+  set c [setactive {FOUND {true} INTERNAL {false} COPY {true} FULL {true}} {{"id":"7","active":false}}]
+  list [err $a] [err $b] [err $c] [regexp {newActive} [scripts $a][scripts $b][scripts $c]]
+} -result {{403 400 {access denied (program)}} {404 501 {program not found}} {404 501 {program not found}} 0}
+
+test programs-14 {the script looks the id up in the program collection; the value is a string variable and ReGa is only asked to set it with a fixed script} -body {
+  set fd [open [file join $gen rega-model v2 programs.tcl] r]; set c [read $fd]; close $fd
+  regexp {proc programs_setActive.*?\n\}\n} $c body
+  list [regexp {foreach\(i, dom.GetObject\(ID_PROGRAMS\).EnumIDs\(\)\)} $body] [regexp {p.Active\(true\)} $body] [regexp {p.Active\(newActive\)} $body] [regexp {dom.GetObject\(\$} $body]
+} -result {1 1 0 0}
 
 cleanupTests
