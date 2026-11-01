@@ -27,7 +27,16 @@ is hidden, last known numbers kept if an update fails; the classic UI asks every
 the alarm system variables that are oncoming and true; the service count is the open service messages, minus the
 sticky-unreach ones while the CCU hides them (`CCU.getStickyUnreachState`; a user who may not ask is treated as
 "hide", as the classic UI does). Message texts that contain `${key}` references are resolved from the classic
-language files. Acknowledging a message is not built (the classic UI does it with `ReceiptAlarm`).
+language files.
+
+**Confirming messages.** The Alarm messages and Service messages pages have a **Confirm** button per message and **Confirm
+all** (for a user or administrator). The rule is the classic `ReceiptAlarm`: a message can be confirmed if it has no trigger
+datapoint or its trigger datapoint can be written; a message that the device reports by itself (a read-only trigger, e.g. an
+"unreachable" report) has no button, the page says why instead (`canAcknowledge` in the model). A click calls
+`POST /api/v2/messages {"id"}`, and the lists and the header counters are read again at once. A message that the device
+raises again (the watchdog alarm "no internet" on a container without internet) comes back in the list: that is the answer
+`acknowledged: false` or the next update, not an error. Confirm all tries every message that can be confirmed, and says
+"N of M confirmed" if some could not be (a refusal, or a message somebody else confirmed meanwhile).
 
 ## Devices: live values and operation
 

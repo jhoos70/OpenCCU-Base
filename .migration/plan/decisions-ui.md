@@ -173,4 +173,10 @@ OK button or similar in a dialog, not by a global save. First slice: system vari
   table and datapoint table moved under "Technical details" (closed by default, loaded when opened). A language change builds
   the page again, so the section closes. Found while updating the tests: the focus returns to the Change button on the next
   tick, not within the key press (the old test was racy).
-- Next for "Status und Bedienung": Diagrams, editing favourite lists, device health in the list itself (the same route by channel), Diagrams, a "real device" test on a CCU with a radio (not available, so mocks plus the copy).
+- Tenth: confirming alarm and service messages (`POST /api/v2/messages`, `canAcknowledge` in the model). The rule was read
+  from the classic `functions.fn::ReceiptAlarm` on the running CCU (the repository's copy of that file does not define
+  it): `AlReceipt()` if the message has no trigger datapoint or its trigger datapoint is writable. Only an alarm that
+  is triggered now can be confirmed (404 otherwise, also for any other id), a user needs the full access right of an
+  alarm variable, a refusal happens before anything is written. Real ReGa: five container watchdog alarms, one confirmed
+  (5 to 4, syslog line written); the watchdog raises "no internet" again at once, so a message can come back.
+- Next for "Status und Bedienung": program activation, Diagrams, editing favourite lists, device health in the list itself (the same route by channel), Diagrams, a "real device" test on a CCU with a radio (not available, so mocks plus the copy).

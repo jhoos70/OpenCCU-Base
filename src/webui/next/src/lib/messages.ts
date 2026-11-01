@@ -234,6 +234,14 @@ export const en = {
   brightnessValue: "Brightness {value}",
   lightLevel: "Brightness",
   levelWhat: "Brightness {value} %",
+  // confirming messages
+  confirm: "Confirm",
+  confirmAll: "Confirm all",
+  confirmed: "Confirmed.",
+  confirmedCount: "{count} confirmed.",
+  confirmSome: "{done} of {total} confirmed; the rest could not be.",
+  cannotConfirm: "The device reports this by itself; it cannot be confirmed here.",
+  confirmWhat: "Confirm: {name}",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -468,4 +476,12 @@ export const de: Record<MessageKey, string> = {
   brightnessValue: "Helligkeit {value}",
   lightLevel: "Helligkeit",
   levelWhat: "Helligkeit {value} %",
+  // confirming messages
+  confirm: "Bestätigen",
+  confirmAll: "Alle bestätigen",
+  confirmed: "Bestätigt.",
+  confirmedCount: "{count} bestätigt.",
+  confirmSome: "{done} von {total} bestätigt; die übrigen nicht.",
+  cannotConfirm: "Das Gerät meldet dies selbst; es kann hier nicht bestätigt werden.",
+  confirmWhat: "Bestätigen: {name}",
 };

@@ -129,6 +129,7 @@ export interface AlarmMsg {
   id: string;
   name: string;
   occurredAt: string; // "2026-10-31 19:35:05", CCU local time
+  canAcknowledge: boolean; // the classic rule: no trigger datapoint, or a trigger datapoint that can be written
 }
 
 export interface ServiceMsg {
@@ -137,6 +138,7 @@ export interface ServiceMsg {
   channelName: string;
   message: string; // string table text, may contain ${key} references (see ccu-strings.ts)
   isSticky: boolean; // a sticky-unreach message: the classic header may leave it out of the count
+  canAcknowledge: boolean;
 }
 
 export interface Program {
@@ -177,6 +179,19 @@ export interface MessageSnapshot {
   alarms: AlarmMsg[];
   services: ServiceMsg[];
 }
+
+/** POST /messages: confirms one alarm or service message. `acknowledged` is false if the device raised it again at once. */
+export function makeAcknowledge(doFetch: Fetch = defaultFetch): (sid: string, id: string) => Promise<{ id: string; acknowledged: boolean }> {
+  return async function acknowledgeMessage(sid: string, id: string) {
+    const { doc, status } = await send(doFetch, "/messages", { method: "POST", headers: headersFor(sid, true), body: JSON.stringify({ id }) });
+    throwIfError(doc, status);
+    const d = doc as { id?: string; acknowledged?: boolean } | null;
+    if (!d || typeof d.acknowledged !== "boolean") throw new ApiError(0, "unexpected answer", status);
+    return { id: String(d.id ?? id), acknowledged: d.acknowledged };
+  };
+}
+const acknowledgeDefault = makeAcknowledge();
+export const acknowledgeMessage = (sid: string, id: string) => acknowledgeDefault(sid, id);
 
 /** The alarm and service messages (the classic header's two counters) in one request. */
 export function makeGetMessages(doFetch: Fetch = defaultFetch): (sid: string) => Promise<MessageSnapshot> {

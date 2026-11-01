@@ -1,5 +1,5 @@
 import * as React from "react";
-import { getHideSticky, getMessages, isSessionExpired, type AlarmMsg, type ServiceMsg } from "./api";
+import { acknowledgeMessage, getHideSticky, getMessages, isSessionExpired, type AlarmMsg, type ServiceMsg } from "./api";
 import { countServices } from "./service-messages";
 
 /** The classic UI asks every 3 seconds; this is slower on purpose (a request runs a script on the CCU) and stops while the tab is hidden. */
@@ -16,9 +16,12 @@ export interface MessagesState {
   hideSticky: boolean;
   alarmCount: number;
   serviceCount: number;
+  /** Confirms one message and reads the lists again; rejects with the server's error (the page says what went wrong). */
+  acknowledge: (id: string) => Promise<void>;
+  refresh: () => void;
 }
 
-const idle: MessagesState = { enabled: false, loaded: false, failed: false, alarms: [], services: [], hideSticky: false, alarmCount: 0, serviceCount: 0 };
+const idle: MessagesState = { enabled: false, loaded: false, failed: false, alarms: [], services: [], hideSticky: false, alarmCount: 0, serviceCount: 0, acknowledge: async () => {}, refresh: () => {} };
 const Ctx = React.createContext<MessagesState>(idle);
 export const useMessages = (): MessagesState => React.useContext(Ctx);
 
@@ -30,6 +33,22 @@ export function MessagesProvider({ sid, enabled, onExpired, children }: { sid: s
     loaded: false,
     failed: false,
   });
+
+  const tickRef = React.useRef<() => void>(() => {});
+  const refresh = React.useCallback(() => tickRef.current(), []);
+  const acknowledge = React.useCallback(
+    async (id: string) => {
+      try {
+        await acknowledgeMessage(sid, id);
+      } catch (e) {
+        if (isSessionExpired(e)) onExpired();
+        throw e;
+      } finally {
+        tickRef.current(); // read again at once, so the lists and the header counters follow
+      }
+    },
+    [sid, onExpired],
+  );
 
   React.useEffect(() => {
     if (!enabled) return;
@@ -53,6 +72,7 @@ export function MessagesProvider({ sid, enabled, onExpired, children }: { sid: s
       }
     }
 
+    tickRef.current = () => void tick();
     const visible = () => document.visibilityState === "visible";
     void tick();
     const timer = window.setInterval(() => visible() && void tick(), POLL_MS);
@@ -66,8 +86,8 @@ export function MessagesProvider({ sid, enabled, onExpired, children }: { sid: s
   }, [sid, enabled, onExpired]);
 
   const value = React.useMemo<MessagesState>(
-    () => (enabled ? { enabled, ...data, alarmCount: data.alarms.length, serviceCount: countServices(data.services, data.hideSticky) } : idle),
-    [enabled, data],
+    () => (enabled ? { enabled, ...data, alarmCount: data.alarms.length, serviceCount: countServices(data.services, data.hideSticky), acknowledge, refresh } : idle),
+    [enabled, data, acknowledge, refresh],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
