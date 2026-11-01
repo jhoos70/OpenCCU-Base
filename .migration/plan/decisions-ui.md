@@ -1,0 +1,176 @@
+# UI migration decisions
+
+Decided 2026-10-31 (user). These supersede the "working hypothesis" in `.migration/plan-context.md`
+and the strangler-inside-the-shell approach in `webui-shell-build.plan.md` (phases 1-4).
+
+## D1. Charset: staged UTF-8
+
+- Stage 1: the build fails loudly instead of silently dropping non-Latin-1 characters
+  (`www_source/utf82ansi.py` uses `errors="ignore"`). Served output stays ISO-8859-1 and
+  byte-identical, so the 64 OpenCCU rootfs patches (41 on `webui.js`) keep applying.
+- Stage 2 (later, coordinated with OpenCCU): serve UTF-8 in one release; regenerate the patches.
+
+## D2. Architecture: hybrid, classic and nextGen side by side
+
+- The classic UI (shell, `webui.js`, `cp_*`/`ic_*` fragments) stays intact and keeps working at `/`.
+- The nextGen UI is a separate app with its own entry point (working name `/next/`), built on
+  `/api/v2`, sharing backend and session with the classic UI.
+- Pages the nextGen UI does not cover link back to the classic UI.
+- Consequence: the shell-build phases 1-4 (theming, Bootstrap, bundler, components) apply to the
+  new app, not to the classic bundle. The classic `webui.js` structure and the OpenCCU patches
+  stay untouched.
+- Consequence: pages that need program or room editing stay classic until the API has endpoints
+  for them.
+
+## Process
+
+- No push and no PR for `feature/webui-api-hardening` or `chore/retire-www-copy` until the nextGen
+  UI exists and is tested end to end. Everything stays local (origin is a public fork).
+
+## D3. Dependencies: open source only
+
+- Only OSI-approved open-source licences compatible with the project's Apache-2.0 (MIT, BSD, Apache-2.0, ISC).
+  No commercial or paid UI libraries (KendoReact is ruled out). Check the licence of each dependency
+  and its transitive dependencies before adoption.
+
+## D4. nextGen stack: React + TypeScript + Vite + shadcn/ui (Tailwind)
+
+Decided 2026-10-31 after a spike (scratch build, not in the repo): one screen with form, Radix dialog
+and table built clean and ran without console errors; React 19 = 91 KB gzipped JS, Preact via
+`preact/compat` = 32 KB and behaved the same (dialog, label and slot only were tested).
+
+- Start on React; the Preact alias in `vite.config.ts` stays an optional later optimisation.
+- Components are copied into the repo in the shadcn/ui way (Radix primitives, cva, tailwind-merge);
+  we own and maintain that code.
+- Licences: shipped dependencies of the spike are MIT, Apache-2.0 and 0BSD; build tools are permissive
+  except lightningcss (MPL-2.0, build only, not shipped). Verify shadcn/ui's own licence before
+  copying its code; re-scan the real dependency tree when the app skeleton exists.
+- Node enters the build as an optional CMake target (`npm ci && npm run build`, pinned lockfile),
+  off by default until the sibling OpenCCU build can run it; a build without Node still produces
+  the classic UI. Built output is not committed (see the removal of the committed `www/`).
+
+## D5. Routing: Route B now, Route A (sibling lighttpd config) maybe later
+
+lighttpd's config lives in the OpenCCU packaging repository (`overlay/base/etc/lighttpd/conf.d/webui.conf`).
+It forwards every URL outside `^/(config/|upnp/|webui/|ise/|api/|tools/|pda|addons|tailscale/)` to ReGa, and
+only `*.cgi` goes to Tcl, so neither `/next/` nor `/api/v2/rpc` work without changing that repository.
+
+- Route B (decided 2026-10-31, implemented for the API): nextGen is served under `/webui/next/` (already
+  a static prefix); the v2 API answers on `/api/homematic.cgi/v2/...` (PATH_INFO, router change in
+  `www/api/v2/router.tcl`, needs `v2_enabled true`). No change outside this repository.
+- Route A (later, optional): add `next/` to the allowlist and a rewrite for `/api/v2/*` in the packaging
+  repository's `webui.conf` for clean URLs; coordinate with its pin and patch set.
+- The nextGen build output must stay in its own subfolder and never touch the classic `webui.js`.
+
+## D6. Shell and navigation (2026-10-31)
+
+Analysis of the classic header (browser, `header.htm`, `mainmenu.js`, `admin.js`, `user.js`): it mixes identity
+("Admin (Administrator) | Mode: simple", click opens the account popup), a breadcrumb, alarm and service counters
+(live, not for guests), Logout, "Save changes", a hidden diagnostics panel (duty cycle, interfaces, restart ReGa)
+and a two-level menu of landing pages. The menu is data (`admin.js` 45 lines, `user.js` 26 lines); guests have none.
+
+Decided by the user: **object-centric navigation** (not the Status/Settings split, six nouns appear twice there);
+**no global "Save changes"** (dialogs that save have their own buttons); Teach-in and Help need no prominent place.
+Built: app bar with user menu, sidebar and drawer, nav config with a drift test against the real menu files, and the
+user level from `GET /profile` (`level`, added in the API branch).
+
+Facts found on the way:
+- "Save changes" and the logo both call `saveObjectModel()`, which calls `system.saveObjectModel` (flushes the ReGa
+  object model to disk). When editing is built, check whether an edit needs it to persist (the classic dialogs
+  may rely on ReGa saving itself); until then the new UI only reads.
+- There is no API to change the expert mode (`User.isNoExpert` only reads); the new UI shows it only.
+- v2 limits logins to 10 per minute and IP, always on.
+- The hidden diagnostics panel of the classic header (duty cycle, interfaces, restart ReGa, API tools) is not
+  carried over; the duty cycle became its own page, see below.
+
+### Alarm and service indicators (built)
+
+The classic counters come from the ReGa script `UpdateUI` (system.fn), polled every 3 s, that returns JavaScript;
+the JSON API had nothing for them. The v2 model got two sections, `alarms` and `services` (API branch). Rules taken
+from UpdateUI: alarms = alarm system variables with AlState oncoming and State true; service messages = oncoming
+alarm objects of ID_SERVICES, the sticky-unreach ones left out of the count when `CCU.getStickyUnreachState` says
+so; LED green at 0, red (alarms) or yellow (services) above 0; not shown to guests. Verified on a real ReGa: the
+new count equals the classic header's. Lesson: HomeMatic script does not short-circuit a chain of `&&`, nest the ifs.
+Not verified: service messages with real data (the test CCU has none); acknowledging (`ReceiptAlarm`) is not built.
+
+### Overview and duty cycle (built)
+
+The Overview is the classic start page: system information, the duty cycle and favourites (a pointer to the classic
+UI). The classic UI shows the duty cycle there, not in the header; the hidden header panel is a test tool and is not
+carried over. The method `Interface.getDutyCycle`, the data file `/tmp/dutycycle.json` (written by OpenCCU's
+`updateDCVars.tcl`) and the classic bars are **OpenCCU additions (rootfs patch 0057)**, not Base: the card uses them
+where they exist and says "not available on this system" where the method is unknown. Thresholds as the classic start
+page (duty cycle 70 / 90 %, carrier sense 11 / 20 %). The system values needed a new route, `GET /api/v2/system`
+(time, sunrise, sunset from one ReGa script; the version from `/VERSION`, since `CCU.getVersion` is admin only).
+Checked against the live classic start page of the test CCU: date, sunrise, sunset, firmware and time agree.
+OpenCCU's start page differs from the Base template (date and time share one field, sunrise and sunset another, and
+it has extra rows for available device firmware and add-ons). Not carried over: the user's own start-page system
+variables (an extra API section that could not be verified here), the firmware and add-on availability rows (they need
+an internet check) and the favourites. The duty cycle was tested with mocks, through the real API path with a
+hand-written data file, and the real empty answer; not with a real radio interface (the test CCU has none).
+
+## D7. The new UI writes (2026-10-31)
+
+Decided by the user: the new UI is to replace the classic one later, so **writing is a must**. Data is mostly stored by an
+OK button or similar in a dialog, not by a global save. First slice: system variables, status and control.
+
+- Every write is a v2 mutation route with fixed server-side scripts, validation by type, the id restricted to the
+  object kind, the level check (USER or ADMIN; a non-admin also needs the object's full access right) and one syslog
+  line per change. These routes were planned and blocked for lack of a live ReGa (EG-6); the test CCU unblocks them.
+- First route: `POST /api/v2/sysvars {id, value}` (see `www/api/v2/sysvars.tcl`). Alarm, internal and hidden variables
+  are not changeable. The model's sysvars got `description` and `lastModified`.
+- The classic UI writes a variable through a ReGa page script (`saveSysVar`); the JSON API has no setter for a string and
+  `SysVar.setEnum` redefines the value list instead of choosing a value, so the v1 methods are not used.
+- hmscript injects a variable as `var name = "<escaped>";` (backslash, quotes, line breaks escaped): the value is data
+  in a string literal, which is only safe while that escaping holds. A test checks that an injected string stays one
+  well-formed literal.
+- A write is verified by reading the value back (the route answers with the value and time as ReGa has them) and, in
+  the tests, through an independent path (the v1 API and the classic list).
+- Second route: `POST /api/v2/programs {id, execute: true}` (the planned IC010 route, for running; activating is the
+  editor's and not built). Same pattern: the id only from the program collection, internal 403, a copy 404, a non-admin
+  needs the full access right, one syslog line; the v1 `Program.execute` runs `ProgramExecute()` on any id unchecked. The
+  model's programs got `description`, `isOperable` (the classic list's rule) and `isCopy`. The test CCU has no program,
+  so a bare one is created by a ReGa script for the tests (and deleted): it can be run and its last run moves; what a
+  real program does is not tested.
+- ReGa appends a number to a name it has used before ("ZZtestprog 1"), also after a delete: tests use the name that
+  creation returns.
+- Third and fourth: `GET /api/v2/log?limit&offset` and `DELETE /api/v2/log` (the system log: the history archive,
+  `dom.GetHistoryData`; the classic page also pages it by 20 and merges the records of one group). The user said clearing
+  is part of it: a destructive write, so the page asks first (Cancel has the focus), the route is USER and up as in the
+  classic UI, clearing is one syslog line, the answer says whether the log is empty afterwards. Export is the classic
+  link `/HistoryBuffer.csv?sid=@...@` served by ReGa itself. Values of channel datapoints are raw (a limit, see the
+  README); the test CCU has no device, so real channel entries are untested. The OpenCCU script that keeps the DutyCycle
+  variable current adds entries of its own while that variable is logged, so tests compare "at least" what they caused.
+- Fifth: `GET|POST /api/v2/values` (devices: live values and operation; slice 1 of Devices, Rooms and Functions). The
+  restored copy of a real CCU (isolated, no radio) was used for the real ReGa: it gave the datapoint metadata (type,
+  subtype, unit, min, max, list, operation flags), so the route and the controls are generic, driven by that and not
+  by device type. A write goes through ReGa's `State` (the classic way). Found there: `State` returns `false` and ReGa
+  only logs the failed XML-RPC setValue when the interface refuses, so the route answers HTTP 502 for an explicit
+  `false` (a command that cannot be delivered must not look like success); the `true` of a working interface is
+  unproven (no interface worked). The UI says "sent", not "done". Datapoint values on the copy are defaults (a backup
+  holds no values), so live values are only seen on a real, connected CCU.
+- Sixth: `GET /api/v2/favourites` and `GET /values?channels=` (Favourites). The structure was read from the restored
+  copy: a user's lists are the children of the object named `_USER<id>` below ID_FAVORITES (the same id the session
+  holds), a list's members are its children (CHANNEL, VARDP, PROGRAM, OBJECT = separator). The copy's test user had no
+  lists, so three real lists were assigned to it on the copy (as the classic UI does) for the real-data check. The
+  classic viewer (loadFavViewer) is not in the repository, so the generic datapoint controls are used with a short
+  "usual parameters" list, not the classic per-channel-type widgets. Programs on a list are not run (Programs page).
+- Seventh: the Favourites page became TILES (decided after a static mockup built from the real lists, `~/dev/ccu-mockups/`,
+  not in the repository because it holds real names): one tile per channel chosen by channel type, the channels of one
+  device sharing a tile (an HmIP socket is a read-only SWITCH_TRANSMITTER, an operable SWITCH_VIRTUAL_RECEIVER and a meter),
+  week profiles hidden, a generic table as the fallback. The user wanted no confirm step for a click (as in the classic
+  UI): taps on the target temperature are debounced (1.2 s) into one command. Reading the real datapoints of each channel type
+  found a bug in the values route that only a socket channel showed (a channel's DPs() can hold a program: the read stopped
+  half way through a record and answered HTTP 500, also on the Devices page): fixed, with a test. The maintenance
+  channel's UNREACH / LOWBAT are added for the health badges.
+- Eighth: Rooms and Functions are the Favourites page with another source of groups (`Collection`, `TileBoard`), so
+  the tiles, the command states and the tests are shared. What real rooms hold (survey of the restored copy: 45 window
+  contacts, 30 thermostats, switches, weather, wall keys, HmIP shutter feedback channels, 50 virtual keys in the function
+  "Zentrale") decided the extra tile kinds (window contact, button, light, motion) and what is hidden (helper channels with
+  no datapoint or events only). The old Rooms table (name, description, channel count) is gone: the room's description is
+  shown under the buttons. The test copy's channels have no values, so only the structure is seen on real data.
+- Ninth: the Devices page's expander shows the device's channels as tiles (TileBoard, the same as Rooms), the old channel
+  table and datapoint table moved under "Technical details" (closed by default, loaded when opened). A language change builds
+  the page again, so the section closes. Found while updating the tests: the focus returns to the Change button on the next
+  tick, not within the key press (the old test was racy).
+- Next for "Status und Bedienung": Diagrams, editing favourite lists, device health in the list itself (the same route by channel), Diagrams, a "real device" test on a CCU with a radio (not available, so mocks plus the copy).
