@@ -5,7 +5,7 @@ ReGaHss, `rfd`, `hs485d` or lighttpd. Do not install this on a CCU you rely on.
 
 What you get: `out/webui-api-bundle.tar.gz` (the 99 files that differ from upstream `5b8179c4`) and
 `smoke.py` (a read-only test you run from your computer). Rebuild the bundle after changes with
-`.migration/webui-api/deploy/make-bundle.sh` from the repository root.
+`.migration/webui-api/deploy/make-bundle.sh` **from the repository root**.
 
 ## Why not just copy the files
 
@@ -19,10 +19,21 @@ silently drops OpenCCU's changes. `install.sh` compares every file with its upst
 | equals the new version | leaves it |
 | differs (patched on the device) | skips it and says so; with `--patch` applies only our difference as a patch, if it applies cleanly |
 | new file | adds it |
+| equals a version this installer wrote earlier (new or old bundle) | **upgrades** it: replaces it by the new version (the backup keeps the old one) |
+| was PATCHED by an earlier run onto an OpenCCU-modified file | not touched, and said so: replacing it would drop the OpenCCU changes it was patched onto. If it came from this very bundle it is just "already installed"; to move to a newer bundle, `restore` the older backups (newest first), then install |
 
 Expect, on an OpenCCU image: 74 replaced, 19 added, 2 patched (`methods.conf`, `getpositiondata.tcl`)
 and 4 skipped (`downloadFirmware.tcl`, `{restart,start,stop}hmipserver.tcl`; the known conflicts
 with OpenCCU patches 0001 and 0164, see `src/webui/tests/api/PATCH-CONFLICTS.md`).
+
+### Upgrading
+
+After every install the installer records the md5 of each file it wrote in `/usr/local/webui-api-installed.txt` (history is
+kept, nothing is removed), so a **newer bundle can be installed over an older one**: the files the installer wrote whole are
+recognised as its own and replaced. A device installed by an older installer (before this file existed) is recorded by the
+first run of the new installer for every file that already equals the bundle; files that were patched then stay "skipped" as
+before. `sh .migration/webui-api/deploy/install-test.sh` tests the rules on a fake device (a miniature bundle in two
+versions: install, upgrade, a patched file, a hand-edited file, restore); it needs no CCU.
 
 ## Steps
 
