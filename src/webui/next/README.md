@@ -38,6 +38,36 @@ raises again (the watchdog alarm "no internet" on a container without internet) 
 `acknowledged: false` or the next update, not an error. Confirm all tries every message that can be confirmed, and says
 "N of M confirmed" if some could not be (a refusal, or a message somebody else confirmed meanwhile).
 
+## Object-Centric Device View & Management
+
+Instead of scattering device controls, configuration parameters, direct links, and diagnostics across four disconnected menus in the classic WebUI ("Status und Bedienung", "Einstellungen -> Geräte", "Einstellungen -> Direktverknüpfungen", "Status -> Funk-Telegramme"), the NextGen WebUI unites them under **one object-centric device view**:
+
+1. **Status & Control (`DeviceDetail.tsx`)**:
+   - Channel tiles with real-time feedback (heating, dimmers, shutters, switches, contacts).
+   - Technical channel table with raw datapoints and on-the-fly value writing.
+2. **Parameters & Configuration (`DeviceConfig.tsx`)**:
+   - Reads device and channel MASTER paramsets via `GET /api/v2/links?device=ID`.
+   - Categorized parameter editing with client-side range/enum validation and pending state tracking.
+   - Saves modified parameters via `POST /api/v2/links/paramset`.
+3. **Direct Links (`DeviceDirectLinks.tsx`)**:
+   - Lists all inbound and outbound direct peerings for the device channels via `GET /api/v2/links?device=ID`.
+   - Shows partner device and channel names, link description, and configuration profile.
+   - Interactive creation of new direct links via `DirectLinkDialog` (`POST /api/v2/links`) with automatic link pairing.
+   - Link deletion with confirmation prompt (`DELETE /api/v2/links`).
+4. **Maintenance & Diagnostics (`DeviceMaintenance.tsx`)**:
+   - RF Signal quality metrics: Inbound and outbound RSSI dBm values with signal health ratings (Excellent, Good, Fair, Poor).
+   - Communication status: Sticky unreach, active unreach, config pending, low battery.
+   - Firmware management: Current firmware version and update availability.
+
+## Heating Groups (Heizungsgruppen)
+
+Heating groups (`pages/HeatingGroups.tsx`, `components/HeatingGroupDialog.tsx`) allow group-wide coordination of wall thermostats, radiator valves, and window sensors:
+
+- **Overview (`#/heating-groups`)**: Lists all virtual heating groups (`HEATING_CLIMATECONTROL_TRANSCEIVER`, `CLIMATECONTROL_RT_TRANSCEIVER`), their assigned room, member count, and live control status (target temp, current temp, humidity, control mode).
+- **Group Detail**: Opens the group's dedicated view showing member devices categorized by role (Wall Thermostat, Radiator Thermostat, Window Sensor).
+- **Manage Members**: Seamlessly add or remove devices to/from the virtual group via `POST /api/v2/heating` (`action: "add_member" | "remove_member"`), coordinating direct peerings across all group channels automatically.
+- **Group Creation & Deletion**: Create new heating groups with room assignment or delete existing virtual groups with proper cleanup.
+
 ## Devices: live values and operation
 
 Each row in the Devices list shows the device's **health badges** (*Unreachable*, *Battery low*) next to its name without
@@ -313,16 +343,25 @@ Both drive a real browser against a CCU that has the app installed and `v2_enabl
   resolved from the classic strings, and the Devices page. The test CCU has no devices, so the real answer is the
   empty state; the rest uses a mocked model answer with realistic devices (shape of `v2/model.tcl`).
 
+- `src/webui/tests/e2e/test_device_config.py`: tests the object-centric device tabs (Status/Control, Parameters, Direct Links, Maintenance/RSSI diagnostics).
+- `src/webui/tests/e2e/test_heating_groups.py`: tests virtual heating groups overview, group creation, member assignment, and detail view.
+- `src/webui/tests/e2e/capture_screenshots.py`: automated Playwright script capturing all 9 high-DPI screenshots of the NextGen WebUI into `docs/screenshots/`.
+
+## Standalone CCU Addon Packaging
+
+The NextGen WebUI can be packaged and distributed as an independent CCU Add-on (`.tar.gz` archive):
+
+```sh
+# Run from repository root
+./scripts/package_addon.sh v0.1.0-beta.2
+```
+
+This builds the production Vite bundle, packages the add-on update scripts (`update_script`), install hooks, CCU control panel registration (`/etc/config/addons/www/nextgen`), and Lighttpd routing configurations into `dist-addon/openccu-nextgen-addon-<version>.tar.gz`.
+
 ## Login limit
 
 The v2 API limits logins to 10 per minute and IP (and requests per session), always on. A test or script that signs
 in more often gets "Too many attempts". The classic API (v1) is not limited unless `rate_limit` is set.
-
-## Not yet
-
-acknowledging messages, pages beyond devices, rooms and system variables (programs, the device inbox), editing, push events,
-device pages checked against real hardware (there is none in the test CCU), and the clean
-`/next/` and `/api/v2` URLs (they need a change in the OpenCCU packaging repository, "Route A").
 
 ## Licences
 
