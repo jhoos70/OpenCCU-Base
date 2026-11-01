@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Menu, PanelLeft, PanelLeftClose, Radio, X } from "lucide-react";
+import { Menu, PanelLeft, PanelLeftClose, Radio, Search, X } from "lucide-react";
 import { OpenCCULogo } from "@/components/OpenCCULogo";
 import { useI18n } from "@/lib/i18n";
 import type { NavView } from "@/lib/nav";
@@ -20,6 +20,7 @@ export function AppBar({
   busy,
   collapsed = false,
   onToggleCollapse,
+  onOpenCommand,
 }: {
   profile: Profile | null;
   nav: NavView;
@@ -29,6 +30,7 @@ export function AppBar({
   busy: boolean;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  onOpenCommand?: () => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = React.useState(false);
@@ -46,7 +48,7 @@ export function AppBar({
 
   return (
     <header className="sticky top-0 z-30 flex h-14 w-full shrink-0 items-center justify-between border-b border-[var(--border)] bg-[var(--card)]/95 px-3 sm:px-4 backdrop-blur shadow-xs">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0 flex-1 sm:flex-initial">
         {/* Mobile menu trigger */}
         {hasNav && (
           <Sheet open={open} onOpenChange={setOpen}>
@@ -93,14 +95,29 @@ export function AppBar({
         {hasNav && <div className="mx-1 hidden h-4 w-px bg-[var(--border)] md:block" />}
 
         {/* Breadcrumb / Current page title */}
-        <div className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+        <div className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)] min-w-0">
           <CurrentIcon className="size-4 text-[var(--primary)] shrink-0 hidden sm:block" aria-hidden="true" />
           <span className="truncate">{currentTitle}</span>
         </div>
       </div>
 
       {/* Right controls */}
-      <div className="flex items-center gap-1 sm:gap-2">
+      <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        {onOpenCommand && (
+          <button
+            type="button"
+            onClick={onOpenCommand}
+            aria-label={t("search")}
+            title={`${t("search")} (⌘K / Ctrl+K)`}
+            className="flex size-8 md:h-8 md:w-auto items-center justify-center md:justify-start gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--muted)]/40 px-0 md:px-2.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]"
+          >
+            <Search className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="hidden md:inline">{t("searchPrompt")}</span>
+            <kbd className="pointer-events-none hidden md:inline-flex h-4.5 select-none items-center gap-0.5 rounded border border-[var(--border)] bg-[var(--card)] px-1 font-mono text-[10px] font-medium text-[var(--muted-foreground)]">
+              <span className="text-xs">⌘</span>K
+            </kbd>
+          </button>
+        )}
         <StatusIndicators />
         <ThemeToggle className="size-8" />
         <div className="h-4 w-px bg-[var(--border)]" />

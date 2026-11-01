@@ -9,6 +9,7 @@ import { useProfile } from "@/lib/use-profile";
 import { useRoute } from "@/lib/use-route";
 import { AppBar } from "@/components/AppBar";
 import { AppSidebar } from "@/components/AppSidebar";
+import { CommandMenu } from "@/components/CommandMenu";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NavList } from "@/components/NavList";
@@ -91,6 +92,19 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
   const indicators = profile !== null && showsIndicators(profile.level);
   const route = useRoute([...nav.groups.flatMap((g) => g.items.map((i) => i.id)), ...(indicators ? INDICATOR_ROUTES : [])]);
   const [busy, setBusy] = React.useState(false);
+  const [commandOpen, setCommandOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setCommandOpen((open) => !open);
+      }
+    };
+    document.addEventListener("keydown", down);
+    return () => document.removeEventListener("keydown", down);
+  }, []);
+
   // The classic UI takes the same session id, so both UIs run side by side.
   const classicHref = `/pages/index.htm?sid=@${session.sid}@`;
 
@@ -148,6 +162,7 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
               busy={busy}
               collapsed={collapsed}
               onToggleCollapse={toggleCollapsed}
+              onOpenCommand={() => setCommandOpen(true)}
             />
             <main className="min-w-0 flex-1 p-4 md:p-6 lg:p-8">
               <div className="mx-auto max-w-7xl">
@@ -162,6 +177,16 @@ function Shell({ session, onLogout }: { session: Stored; onLogout: () => void })
               </div>
             </main>
           </div>
+          <CommandMenu
+            open={commandOpen}
+            onOpenChange={setCommandOpen}
+            nav={nav}
+            current={route}
+            sid={session.sid}
+            classicHref={classicHref}
+            onSignOut={signOut}
+            indicators={indicators}
+          />
         </div>
       </MessagesProvider>
     </ProfileContext.Provider>
