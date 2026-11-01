@@ -4,18 +4,60 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DeviceValues } from "@/components/DeviceValues";
-import type { Device } from "@/lib/api";
+import { TileBoard } from "@/components/TileBoard";
+import type { Device, FavouriteItem } from "@/lib/api";
 import { filterDevices, sortByName } from "@/lib/devices";
 import { text } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { useCurrentProfile } from "@/lib/profile-context";
 import { useCcuStrings } from "@/lib/use-ccu-strings";
 import { useModel } from "@/lib/use-model";
+import type { ChannelInfo } from "@/lib/widgets";
 import { Status } from "./Status";
 
-function DeviceRows({ device, description, open, onToggle, sid, mayChange, onExpired }: { device: Device; description: string; open: boolean; onToggle: () => void; sid: string; mayChange: boolean; onExpired: () => void }) {
+/** An opened device: its channels as tiles (as in Rooms), and the technical tables one click away. */
+function DeviceDetails({ device, sid, mayChange, strings, onExpired }: { device: Device; sid: string; mayChange: boolean; strings: Record<string, string>; onExpired: () => void }) {
   const { t } = useI18n();
-  const channels = [...device.channels].sort((a, b) => a.index - b.index);
+  const [technical, setTechnical] = React.useState(false);
+  const channels = React.useMemo(() => [...device.channels].sort((a, b) => a.index - b.index), [device]);
+  const items = React.useMemo<FavouriteItem[]>(() => channels.map((c) => ({ id: c.id, type: "CHANNEL", name: c.name })), [channels]);
+  const info = React.useMemo(() => new Map<string, ChannelInfo>(channels.map((c) => [c.id, { id: c.id, name: c.name, channelType: c.channelType, deviceId: device.id, deviceAddress: device.address }])), [channels, device]);
+  return (
+    <>
+      <TileBoard items={items} info={info} sid={sid} mayChange={mayChange} strings={strings} refreshSignal={0} onExpired={onExpired} />
+      <details className="mt-4" onToggle={(e) => setTechnical((e.currentTarget as HTMLDetailsElement).open)}>
+        <summary className="cursor-pointer text-sm">{t("technicalDetails")}</summary>
+        {technical && (
+          <div className="mt-2 space-y-4">
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableHeader className="w-16">{t("channelNumber")}</TableHeader>
+                  <TableHeader>{t("name")}</TableHeader>
+                  <TableHeader>{t("channelType")}</TableHeader>
+                </TableRow>
+              </TableHead>
+              <tbody>
+                {channels.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell>{c.index}</TableCell>
+                    <TableCell>{c.name}</TableCell>
+                    <TableCell>{c.channelType}</TableCell>
+                  </TableRow>
+                ))}
+              </tbody>
+            </Table>
+            <DeviceValues deviceId={device.id} sid={sid} mayChange={mayChange} onExpired={onExpired} />
+          </div>
+        )}
+      </details>
+    </>
+  );
+}
+
+function DeviceRows({ device, description, open, onToggle, sid, mayChange, strings, onExpired }: { device: Device; description: string; open: boolean; onToggle: () => void; sid: string; mayChange: boolean; strings: Record<string, string>; onExpired: () => void }) {
+  const { t } = useI18n();
+  const channels = device.channels;
   return (
     <>
       <TableRow>
@@ -42,27 +84,7 @@ function DeviceRows({ device, description, open, onToggle, sid, mayChange, onExp
       {open && (
         <TableRow>
           <TableCell colSpan={5} className="bg-[var(--background)]">
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableHeader className="w-16">{t("channelNumber")}</TableHeader>
-                  <TableHeader>{t("name")}</TableHeader>
-                  <TableHeader>{t("channelType")}</TableHeader>
-                </TableRow>
-              </TableHead>
-              <tbody>
-                {channels.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>{c.index}</TableCell>
-                    <TableCell>{c.name}</TableCell>
-                    <TableCell>{c.channelType}</TableCell>
-                  </TableRow>
-                ))}
-              </tbody>
-            </Table>
-            <div className="mt-4">
-              <DeviceValues deviceId={device.id} sid={sid} mayChange={mayChange} onExpired={onExpired} />
-            </div>
+            <DeviceDetails device={device} sid={sid} mayChange={mayChange} strings={strings} onExpired={onExpired} />
           </TableCell>
         </TableRow>
       )}
@@ -118,7 +140,7 @@ export default function Devices({ sid, onExpired }: { sid: string; onExpired: ()
                   </TableHead>
                   <tbody>
                     {shown.map((d) => (
-                      <DeviceRows key={d.id} device={{ ...d, name: text(d.name, strings) }} description={describe(d)} open={open.has(d.id)} onToggle={() => toggle(d.id)} sid={sid} mayChange={mayChange} onExpired={onExpired} />
+                      <DeviceRows key={d.id} device={{ ...d, name: text(d.name, strings) }} description={describe(d)} open={open.has(d.id)} onToggle={() => toggle(d.id)} sid={sid} mayChange={mayChange} strings={strings} onExpired={onExpired} />
                     ))}
                   </tbody>
                 </Table>

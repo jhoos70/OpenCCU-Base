@@ -31,11 +31,17 @@ language files. Acknowledging a message is not built (the classic UI does it wit
 
 ## Devices: live values and operation
 
-Opening a device in the Devices page (the arrow before its name) lists its channels and, below them, its **values**:
-every datapoint of every channel with the parameter name, the value (number with unit and decimals, list entry, yes or
-no) and, for a user or administrator, the control. The list is read again every 10 seconds while the tab is visible,
-and with **Refresh**. A device that never reported a value (the CCU holds the epoch as the time and a default value)
-shows a dash, not a made-up 0.
+Opening a device in the Devices page (the arrow before its name) shows its channels as **tiles**, the same tiles as in
+Rooms and Favourites (heating, shutter, switch, window contact, ... see below), with their live values, the controls and the
+health of the device; channels that carry nothing (helper channels, week profiles) are counted, not shown. Because the
+channels of one device often have the same name, a tile in a device keeps the channel's full name (":2").
+
+**Technical details** (a closed section below the tiles) holds what the page showed before the tiles existed: the channel
+table (number, name, channel type) and, below it, the **values** of every datapoint of every channel with the parameter name,
+the value (number with unit and decimals, list entry, yes or no) and, for a user or administrator, the control. This is the
+complete, technical view and the place for anything a tile does not offer. The list is read again every 10 seconds while the
+section is open and the tab visible, and with **Refresh**. A device that never reported a value (the CCU holds the epoch as
+the time and a default value) shows a dash, not a made-up 0.
 
 - yes/no datapoints get two buttons, a button datapoint (a key press, a mode switch) gets **Send**, and a number,
   list or text datapoint gets **Change**, which opens a field with its range and an **OK** button (Escape cancels, the

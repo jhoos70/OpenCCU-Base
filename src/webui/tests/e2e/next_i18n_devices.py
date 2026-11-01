@@ -108,7 +108,9 @@ def main():
             check("channels are collapsed first", btn.get_attribute("aria-expanded") == "false")
             btn.click()
             exp = pg.get_by_role("button", name="Kanäle von Büro Licht ausblenden")
-            check("a click shows the channels, sorted by number", exp.get_attribute("aria-expanded") == "true" and pg.inner_text("main").index("MAINTENANCE") < pg.inner_text("main").index("SWITCH"))
+            pg.get_by_text("Technische Details").click()
+            pg.get_by_text("MAINTENANCE").first.wait_for()
+            check("a click shows the channels as tiles; the technical table lists them sorted by number", exp.get_attribute("aria-expanded") == "true" and pg.inner_text("main").index("MAINTENANCE") < pg.inner_text("main").index("SWITCH"))
             exp.click()
             check("a second click hides them", "SWITCH" not in pg.inner_text("main"))
 

@@ -80,6 +80,9 @@ def main():
             pg.fill("#user", a.user); pg.fill("#password", a.password); pg.keyboard.press("Enter")
             pg.get_by_role("link", name="Devices", exact=True).click()
             pg.get_by_role("button", name="Show channels of Wohnzimmer Heizung").click()
+            pg.get_by_role("button", name="Raise the target temperature").wait_for()
+            check("an opened device shows its channel as a tile", pg.locator("article").count() == 1)
+            pg.get_by_text("Technical details").click()
             pg.get_by_role("button", name="Change SET_TEMPERATURE").wait_for()
             row = lambda param: pg.locator("tbody tbody tr", has=pg.get_by_text(param, exact=True))
             check("the page says status and control", pg.get_by_text("Status and control").first.is_visible())
@@ -118,7 +121,12 @@ def main():
             before = len(posts)
             field.press("Escape")
             check("Escape cancels without sending", len(posts) == before and pg.get_by_role("button", name="Change SET_TEMPERATURE").is_visible())
-            check("the focus returns to the Change button", pg.evaluate("document.activeElement.getAttribute('aria-label')") == "Change SET_TEMPERATURE")
+            try:  # the focus is restored on the next tick, not within the key press
+                pg.wait_for_function("document.activeElement && document.activeElement.getAttribute('aria-label') === 'Change SET_TEMPERATURE'", timeout=2000)
+                focused = True
+            except Exception:
+                focused = False
+            check("the focus returns to the Change button", focused)
             pg.get_by_role("button", name="Change SET_TEMPERATURE").click()
             pg.get_by_label("SET_TEMPERATURE", exact=True).fill("22.5")
             st["post"] = (200, dp("2", "SET_TEMPERATURE", "NUMBER", "22.5", unit="°C", min="4.5", max="30.5"))
@@ -149,6 +157,9 @@ def main():
 
             # German
             pg.get_by_role("button", name="Account menu").click(); pg.get_by_role("menuitemradio", name="Deutsch").click()
+            pg.get_by_role("heading", name="Werte").or_(pg.get_by_text("Technische Details")).first.wait_for()
+            if pg.locator("details[open]").count() == 0:  # a language change builds the page again: the details are closed
+                pg.get_by_text("Technische Details").click()
             pg.get_by_role("button", name="WINDOW_OPEN auf ja setzen").wait_for()
             check("German texts", pg.get_by_text("Werte", exact=True).is_visible() and pg.get_by_text("Status und Bedienung").first.is_visible())
 
@@ -156,6 +167,7 @@ def main():
             st["profile"] = {"level": "USER"}
             pg.reload()
             pg.get_by_role("button", name="Kanäle von Wohnzimmer Heizung anzeigen").click()
+            pg.get_by_text("Technische Details").click()
             pg.get_by_role("button", name="SET_TEMPERATURE ändern").wait_for()
             check("a user has the controls", pg.get_by_role("button", name="WINDOW_OPEN auf ja setzen").is_visible())
             st["profile"] = {"level": "GUEST"}
@@ -164,6 +176,7 @@ def main():
             st["profile"] = {"level": "USER"}
             pg.reload()
             pg.get_by_role("button", name="Kanäle von Wohnzimmer Heizung anzeigen").click()
+            pg.get_by_text("Technische Details").click()
             pg.get_by_role("button", name="SET_TEMPERATURE ändern").wait_for()
 
             # an expired session returns to the sign-in form
